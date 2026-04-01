@@ -6,6 +6,7 @@ news encoding, and dataset construction.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -46,8 +47,17 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     interval: str = config.get("interval", "1D")
     ohlcv_source: str = config.get("ohlcv_source", "KBS")
     news_source: str = config.get("news_source", "VCI")
+    news_sources: tuple[str, ...] = tuple(
+        config.get("news_sources", ("cafef_banking", "vietstock"))
+    )
+    news_use_cache: bool = bool(config.get("news_use_cache", True))
+    news_export_trace: bool = bool(config.get("news_export_trace", True))
+    news_similarity_threshold: float = float(config.get("news_similarity_threshold", 85.0))
+    log_news_coverage: bool = bool(config.get("log_news_coverage", True))
     seq_len: int = config.get("sequence_len", 30)
     horizon: int = config.get("horizon", 1)
+    target_horizon_days: int = int(config.get("target_horizon_days", 1))
+    target_col = f"fwd_ret_{target_horizon_days}d"
     train_end: str = config["train_end"]
     val_end: str = config["val_end"]
     norm_method: str = config.get("normalize_method", "zscore")
@@ -69,9 +79,28 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
             logger.exception("Skipping {} — OHLCV fetch failed", symbol)
             continue
 
-        # 2. News (web scraping with VCI fallback)
+        # 2. News (source controlled by config)
         try:
-            df_news = fetcher.fetch_news_multi_source(symbol, start, end)
+            mode = str(news_source).strip().lower()
+            if mode in {"vci", "api"}:
+                df_news = fetcher.fetch_news(symbol, source="VCI")
+                if not df_news.empty:
+                    start_ts = pd.Timestamp(start)
+                    end_ts = pd.Timestamp(end)
+                    df_news = df_news[
+                        (df_news["published_date"] >= start_ts)
+                        & (df_news["published_date"] <= end_ts)
+                    ]
+            else:
+                df_news = fetcher.fetch_news_multi_source(
+                    symbol,
+                    start,
+                    end,
+                    sources=news_sources,
+                    use_cache=news_use_cache,
+                    export_trace=news_export_trace,
+                    similarity_threshold=news_similarity_threshold,
+                )
         except Exception:
             logger.warning("News fetch failed for {} — proceeding without news", symbol)
             df_news = pd.DataFrame(columns=["published_date", "title", "content"])
@@ -79,6 +108,17 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         # 3. Temporal alignment
         df_aligned = aligner.assign_news_to_bars(df_ohlcv, df_news)
         df_aligned = aligner.add_null_mask(df_aligned)
+        if log_news_coverage:
+            bars_with_news = int(df_aligned["has_news"].sum()) if "has_news" in df_aligned else 0
+            total_bars = len(df_aligned)
+            pct = (100.0 * bars_with_news / total_bars) if total_bars else 0.0
+            logger.info(
+                "News coverage | {} | {} / {} bars ({:.2f}%)",
+                symbol,
+                bars_with_news,
+                total_bars,
+                pct,
+            )
 
         # 4. Technical indicators
         df_featured = engineer.compute_technical(df_aligned)
@@ -98,13 +138,24 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
 
     # 6. Encode news
     df_all = encoder.encode_dataframe(df_all, text_col="news_content")
+    if log_news_coverage and "has_news" in df_all.columns:
+        has_news_count = int(df_all["has_news"].sum())
+        total_rows = len(df_all)
+        pct = (100.0 * has_news_count / total_rows) if total_rows else 0.0
+        logger.info(
+            "Encoded news coverage | {} / {} rows ({:.2f}%) have non-zero news",
+            has_news_count,
+            total_rows,
+            pct,
+        )
 
     # 7. Normalise market features (fit on train split only)
     market_feature_cols = [
         c
         for c in df_all.columns
-        if c not in {
-            "fwd_ret_1d", "news_emb", "has_news", "news_count",
+        if not re.match(r"^fwd_ret_\d+d$", str(c))
+        and c not in {
+            "news_emb", "has_news", "news_count",
             "news_titles", "news_content", "news_missing_flag", "symbol",
         }
         and df_all[c].dtype in ("float64", "float32", "int64", "int32")
@@ -119,13 +170,14 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     )
 
     # Drop rows with NaN target (first / last rows from indicator warm-up)
-    df_all = df_all.dropna(subset=["fwd_ret_1d"])
+    df_all = df_all.dropna(subset=[target_col])
 
     # 8. Build dataset
     dataset = CMTFDataset(
         df_featured=df_all,
         sequence_len=seq_len,
         horizon=horizon,
+        target_horizon_days=target_horizon_days,
     )
 
     logger.info("Pipeline complete | dataset length = {}", len(dataset))

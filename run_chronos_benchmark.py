@@ -36,12 +36,14 @@ def extract_per_symbol_data(
     dataset,
     raw_ohlcv: dict[str, pd.DataFrame],
     seq_len: int = 30,
+    target_horizon_days: int = 1,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Build per-symbol arrays of close windows, news embeddings, targets.
 
     Returns:
         {symbol: {'close_windows': (N, seq_len),
                   'last_close': (N,),
+                  'market_tabular': (N, n_market_features),
                   'news_embs': (N, seq_len, 768),
                   'targets': (N,),
                   'times': array of Timestamps}}
@@ -77,31 +79,41 @@ def extract_per_symbol_data(
         news_list = sym_df["news_emb"].tolist()
         news_arr = np.stack(news_list).astype(np.float32)  # (n, 768)
 
+        # Engineered market features from pipeline (OHLCV + technical indicators)
+        market_cols = list(getattr(dataset, "market_cols", []))
+        market_tabular = sym_df[market_cols].values.astype(np.float32)
+
         # Forward returns (target)
-        target_col = sym_df["fwd_ret_1d"].values.astype(np.float32)
+        target_col_name = f"fwd_ret_{int(target_horizon_days)}d"
+        if target_col_name not in sym_df.columns:
+            logger.warning("{} missing target column {} — skipping", sym, target_col_name)
+            continue
+        target_col = sym_df[target_col_name].values.astype(np.float32)
 
         # Build windows
         close_windows = []
         last_closes = []
+        market_tabs = []
         news_embs = []
         targets = []
         times = []
 
         valid_start = seq_len - 1
-        valid_end = n - 1  # Need target at actual_idx + 1
+        valid_end = n
 
         for i in range(valid_start, valid_end):
             window = raw_c[i - seq_len + 1 : i + 1]   # (seq_len,)
             # Keep per-bar news embeddings as a sequence for cross-attention
             news_window = news_arr[i - seq_len + 1 : i + 1]  # (seq_len, 768)
 
-            target_val = target_col[i + 1] if (i + 1) < n else np.nan
+            target_val = target_col[i]
 
             if np.isnan(target_val):
                 continue
 
             close_windows.append(window)
             last_closes.append(raw_c[i])
+            market_tabs.append(market_tabular[i])
             news_embs.append(news_window)
             targets.append(target_val)
             times.append(sym_df.iloc[i]["time"])
@@ -109,6 +121,7 @@ def extract_per_symbol_data(
         result[sym] = {
             "close_windows": np.array(close_windows),
             "last_close": np.array(last_closes),
+            "market_tabular": np.array(market_tabs),
             "news_embs": np.array(news_embs),
             "targets": np.array(targets),
             "times": np.array(times),
@@ -123,8 +136,23 @@ def split_by_date(
     times: np.ndarray,
     train_end: str,
     val_end: str,
+    target_horizon_days: int = 1,
 ) -> dict[str, dict[str, np.ndarray]]:
-    """Walk-forward split arrays by date.
+    """Walk-forward split arrays by date with horizon-aware purge buffer.
+
+    For horizons H > 1, a sample at time T has a label using price at time T+H.
+    To prevent label leakage, we exclude the last H trading days before each
+    split boundary from that split (purge buffer). This ensures:
+    - Train samples: T+H <= val_start (no val prices in train labels)
+    - Val samples: T+H <= test_start (no test prices in val labels)
+    - Test samples: Go to the end (no future prices exist; labels may be NaN)
+
+    Args:
+        data: Dict of arrays (targets, close_windows, etc.)
+        times: Array of timestamps for each sample.
+        train_end: End date of training period (exclusive after purge).
+        val_end: End date of validation period (exclusive after purge).
+        target_horizon_days: Prediction horizon H; purge H bars at boundaries.
 
     Returns:
         {'train': {...}, 'val': {...}, 'test': {...}}
@@ -132,13 +160,56 @@ def split_by_date(
     train_end_ts = pd.Timestamp(train_end)
     val_end_ts = pd.Timestamp(val_end)
 
-    train_mask = times <= train_end_ts
-    val_mask = (times > train_end_ts) & (times <= val_end_ts)
+    # Apply purge buffer: exclude last H bars before each boundary
+    purge_days = pd.Timedelta(days=target_horizon_days)
+    train_end_purged = train_end_ts - purge_days
+    val_end_purged = val_end_ts - purge_days
+
+    train_mask = times <= train_end_purged
+    val_mask = (times > train_end_ts) & (times <= val_end_purged)
     test_mask = times > val_end_ts
 
     splits = {}
     for name, mask in [("train", train_mask), ("val", val_mask), ("test", test_mask)]:
         splits[name] = {k: v[mask] for k, v in data.items()}
+
+    logger.info(
+        "Walk-forward split (horizon={}D, purge={}D) | train={} | val={} | test={}",
+        target_horizon_days,
+        target_horizon_days,
+        np.sum(train_mask),
+        np.sum(val_mask),
+        np.sum(test_mask),
+    )
+    return splits
+
+
+def impute_tabular_splits(
+    splits: dict[str, dict[str, np.ndarray]],
+) -> dict[str, dict[str, np.ndarray]]:
+    """Impute NaNs in market_tabular using train-only column means.
+
+    This avoids leakage while keeping validation/test aligned with train stats.
+    """
+    if "market_tabular" not in splits.get("train", {}):
+        return splits
+
+    train_tab = splits["train"]["market_tabular"]
+    if train_tab.size == 0:
+        return splits
+
+    col_means = np.nanmean(train_tab, axis=0)
+    col_means = np.where(np.isnan(col_means), 0.0, col_means).astype(np.float32)
+
+    for split_name in ("train", "val", "test"):
+        tab = splits[split_name].get("market_tabular")
+        if tab is None or tab.size == 0:
+            continue
+        splits[split_name]["market_tabular"] = np.where(
+            np.isnan(tab),
+            col_means,
+            tab,
+        ).astype(np.float32)
 
     return splits
 
@@ -307,22 +378,24 @@ def main() -> None:
 
     # ----- Pipeline config -----
     config = {
-        "symbols": ["VCB", "VIC", "VHM"],
-        "start": "2022-01-01",
-        "end": "2024-12-31",
+        "symbols": ["VCB", "MBB"],
+        "start": "2025-04-01",
+        "end": "2026-03-31",
         "interval": "1D",
         "ohlcv_source": "KBS",
-        "news_source": "VCI",
+        "news_source": "web",
+        "news_sources": ("cafef_banking", "vietstock"),
+        "news_use_cache": False,
+        "news_export_trace": True,
+        "news_similarity_threshold": 85.0,
+        "log_news_coverage": True,
         "sequence_len": 30,
         "horizon": 1,
-        "train_end": "2023-12-31",
-        "val_end": "2024-06-30",
+        "target_horizons_days": [1, 5, 20],
+        "train_end": "2025-10-31",
+        "val_end": "2025-12-31",
         "normalize_method": "zscore",
     }
-
-    # ----- 1. Build CMTF dataset -----
-    logger.info("═══ Building CMTF dataset ═══")
-    dataset = run_pipeline(config)
 
     # ----- 2. Fetch raw OHLCV (cached) for Chronos -----
     logger.info("═══ Fetching raw OHLCV for Chronos ═══")
@@ -331,141 +404,169 @@ def main() -> None:
         config["symbols"], config["start"], config["end"],
     )
 
-    # ----- 3. Extract per-symbol data -----
-    logger.info("═══ Extracting per-symbol arrays ═══")
-    per_symbol = extract_per_symbol_data(
-        dataset, raw_ohlcv, seq_len=config["sequence_len"],
-    )
-
-    # ----- 4. Load Chronos (once, shared) -----
+    # ----- 3. Load Chronos (once, shared) -----
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("═══ Loading Chronos (device={}) ═══", device)
     chronos = ChronosMarketPredictor(device=device)
 
-    # ----- 5. Run experiments per symbol -----
-    all_results: list[dict] = []
-    all_preds: dict[str, list[np.ndarray]] = {
-        "Chronos Zero-Shot": [],
-        "Chronos Linear-Probe": [],
-        "Chronos + CMTF": [],
-    }
-    all_y_true: list[np.ndarray] = []
+    # ----- 4. Run experiments for each target horizon -----
+    horizons = [int(h) for h in config.get("target_horizons_days", [1])]
+    for target_h in horizons:
+        logger.info("═══ Horizon {}D benchmark ═══", target_h)
+        run_cfg = {**config, "target_horizon_days": target_h}
 
-    for sym, data in per_symbol.items():
-        logger.info("━━━ Benchmark: {} ━━━", sym)
+        logger.info("Building dataset for target horizon {}D", target_h)
+        dataset = run_pipeline(run_cfg)
 
-        splits = split_by_date(
-            {k: v for k, v in data.items() if k != "times"},
-            data["times"],
-            config["train_end"],
-            config["val_end"],
+        logger.info("Extracting per-symbol arrays for target horizon {}D", target_h)
+        per_symbol = extract_per_symbol_data(
+            dataset,
+            raw_ohlcv,
+            seq_len=run_cfg["sequence_len"],
+            target_horizon_days=target_h,
         )
 
-        if len(splits["test"]["targets"]) == 0:
-            logger.warning("{}: no test samples — skipping", sym)
-            continue
-
-        y_test = splits["test"]["targets"]
-        all_y_true.append(y_test)
-
-        # --- Experiment 1: Zero-shot ---
-        logger.info("[{}] Running Chronos zero-shot …", sym)
-        preds_zs = chronos.zero_shot_predict(
-            splits["test"]["close_windows"],
-            splits["test"]["last_close"],
-        )
-        metrics_zs = compute_all(y_test, preds_zs)
-        metrics_zs.update({"Experiment": "Chronos Zero-Shot", "Symbol": sym})
-        all_results.append(metrics_zs)
-        all_preds["Chronos Zero-Shot"].append(preds_zs)
-
-        # --- Experiment 2: Linear-probe (market only) ---
-        logger.info("[{}] Running Chronos linear-probe …", sym)
-        preds_lp = chronos.linear_probe_predict(
-            splits["train"]["close_windows"], splits["train"]["targets"],
-            splits["val"]["close_windows"], splits["val"]["targets"],
-            splits["test"]["close_windows"],
-        )
-        metrics_lp = compute_all(y_test, preds_lp)
-        metrics_lp.update({"Experiment": "Chronos Linear-Probe", "Symbol": sym})
-        all_results.append(metrics_lp)
-        all_preds["Chronos Linear-Probe"].append(preds_lp)
-
-        # --- Experiment 3: CMTF fusion ---
-        logger.info("[{}] Running Chronos + CMTF fusion …", sym)
-        cmtf = ChronosCMTFPredictor(chronos, device=device)
-        cmtf.fit(
-            splits["train"]["close_windows"], splits["train"]["news_embs"],
-            splits["train"]["targets"],
-            splits["val"]["close_windows"], splits["val"]["news_embs"],
-            splits["val"]["targets"],
-        )
-        preds_cmtf = cmtf.predict(
-            splits["test"]["close_windows"], splits["test"]["news_embs"],
-        )
-        metrics_cmtf = compute_all(y_test, preds_cmtf)
-        metrics_cmtf.update({"Experiment": "Chronos + CMTF", "Symbol": sym})
-        all_results.append(metrics_cmtf)
-        all_preds["Chronos + CMTF"].append(preds_cmtf)
-
-        # Per-symbol prediction plot
-        plot_predictions(
-            y_test,
-            {"Zero-Shot": preds_zs, "Linear-Probe": preds_lp, "CMTF": preds_cmtf},
-            f"Chronos Predictions — {sym}",
-            FIGURES_DIR / f"predictions_{sym}.png",
-        )
-
-    # ----- 6. Aggregate results -----
-    results_df = pd.DataFrame(all_results)
-
-    # Compute cross-symbol average
-    for exp_name in results_df["Experiment"].unique():
-        exp_rows = results_df[results_df["Experiment"] == exp_name]
-        avg = {
-            "Experiment": exp_name,
-            "Symbol": "AVG",
-            "MAE": exp_rows["MAE"].mean(),
-            "RMSE": exp_rows["RMSE"].mean(),
-            "DA%": exp_rows["DA%"].mean(),
-            "Sharpe": exp_rows["Sharpe"].mean(),
-            "IC": exp_rows["IC"].mean(),
+        all_results: list[dict] = []
+        all_preds: dict[str, list[np.ndarray]] = {
+            "Chronos Zero-Shot": [],
+            "Chronos Linear-Probe": [],
+            "Chronos + CMTF": [],
         }
-        all_results.append(avg)
+        all_y_true: list[np.ndarray] = []
 
-    results_df = pd.DataFrame(all_results)
+        for sym, data in per_symbol.items():
+            logger.info("━━━ Benchmark: {} ({}D) ━━━", sym, target_h)
 
-    # ----- 7. Print & save -----
-    print("\n" + "=" * 76)
-    print("  CHRONOS BENCHMARK RESULTS: Market-Only vs Cross-Modal Fusion")
-    print("=" * 76)
-    col_order = ["Experiment", "Symbol", "MAE", "RMSE", "DA%", "Sharpe", "IC"]
-    results_df = results_df[col_order]
-    print(results_df.to_string(index=False, float_format="{:.4f}".format))
-    print("=" * 76 + "\n")
+            splits = split_by_date(
+                {k: v for k, v in data.items() if k != "times"},
+                data["times"],
+                run_cfg["train_end"],
+                run_cfg["val_end"],
+                target_horizon_days=target_h,
+            )
+            splits = impute_tabular_splits(splits)
 
-    csv_path = RESULTS_DIR / "chronos_benchmark.csv"
-    results_df.to_csv(csv_path, index=False)
-    logger.info("Results saved → {}", csv_path)
+            if len(splits["test"]["targets"]) == 0:
+                logger.warning("{}: no test samples — skipping", sym)
+                continue
 
-    # Ablation chart (AVG only)
-    avg_df = results_df[results_df["Symbol"] == "AVG"]
-    plot_ablation(avg_df, FIGURES_DIR / "ablation_chronos.png")
+            y_test = splits["test"]["targets"]
+            all_y_true.append(y_test)
 
-    # Per-symbol heatmap (all symbols, no AVG)
-    plot_per_symbol(results_df, FIGURES_DIR / "per_symbol_heatmap.png")
+            # --- Experiment 1: Zero-shot ---
+            logger.info("[{}] Running Chronos zero-shot …", sym)
+            preds_zs = chronos.zero_shot_predict(
+                splits["test"]["close_windows"],
+                splits["test"]["last_close"],
+            )
+            metrics_zs = compute_all(y_test, preds_zs)
+            metrics_zs.update({
+                "Experiment": "Chronos Zero-Shot",
+                "Symbol": sym,
+                "TargetHorizonD": target_h,
+            })
+            all_results.append(metrics_zs)
+            all_preds["Chronos Zero-Shot"].append(preds_zs)
 
-    # Combined prediction plot
-    if all_y_true:
-        combined_y = np.concatenate(all_y_true)
-        combined_preds = {
-            k: np.concatenate(v) for k, v in all_preds.items() if v
-        }
-        plot_predictions(
-            combined_y, combined_preds,
-            "Chronos Predictions — All Symbols Combined",
-            FIGURES_DIR / "predictions_combined.png",
-        )
+            # --- Experiment 2: Linear-probe (market + tabular) ---
+            logger.info("[{}] Running Chronos linear-probe (+tabular market) …", sym)
+            preds_lp = chronos.linear_probe_predict(
+                splits["train"]["close_windows"], splits["train"]["targets"],
+                splits["val"]["close_windows"], splits["val"]["targets"],
+                splits["test"]["close_windows"],
+                tabular_train=splits["train"].get("market_tabular"),
+                tabular_val=splits["val"].get("market_tabular"),
+                tabular_test=splits["test"].get("market_tabular"),
+            )
+            metrics_lp = compute_all(y_test, preds_lp)
+            metrics_lp.update({
+                "Experiment": "Chronos Linear-Probe",
+                "Symbol": sym,
+                "TargetHorizonD": target_h,
+            })
+            all_results.append(metrics_lp)
+            all_preds["Chronos Linear-Probe"].append(preds_lp)
+
+            # --- Experiment 3: CMTF fusion (+tabular market) ---
+            logger.info("[{}] Running Chronos + CMTF fusion (+tabular market) …", sym)
+            tab_dim = int(splits["train"].get("market_tabular", np.zeros((1, 0))).shape[1])
+            cmtf = ChronosCMTFPredictor(chronos, tabular_dim=tab_dim, device=device)
+            cmtf.fit(
+                splits["train"]["close_windows"], splits["train"]["news_embs"],
+                splits["train"]["targets"],
+                splits["val"]["close_windows"], splits["val"]["news_embs"],
+                splits["val"]["targets"],
+                tabular_train=splits["train"].get("market_tabular"),
+                tabular_val=splits["val"].get("market_tabular"),
+            )
+            preds_cmtf = cmtf.predict(
+                splits["test"]["close_windows"],
+                splits["test"]["news_embs"],
+                tabular_test=splits["test"].get("market_tabular"),
+            )
+            metrics_cmtf = compute_all(y_test, preds_cmtf)
+            metrics_cmtf.update({
+                "Experiment": "Chronos + CMTF",
+                "Symbol": sym,
+                "TargetHorizonD": target_h,
+            })
+            all_results.append(metrics_cmtf)
+            all_preds["Chronos + CMTF"].append(preds_cmtf)
+
+            # Per-symbol prediction plot
+            plot_predictions(
+                y_test,
+                {"Zero-Shot": preds_zs, "Linear-Probe": preds_lp, "CMTF": preds_cmtf},
+                f"Chronos Predictions — {sym} ({target_h}D target)",
+                FIGURES_DIR / f"predictions_{sym}_{target_h}d.png",
+            )
+
+        # Aggregate results
+        results_df = pd.DataFrame(all_results)
+        for exp_name in results_df["Experiment"].unique():
+            exp_rows = results_df[results_df["Experiment"] == exp_name]
+            avg = {
+                "Experiment": exp_name,
+                "Symbol": "AVG",
+                "TargetHorizonD": target_h,
+                "MAE": exp_rows["MAE"].mean(),
+                "RMSE": exp_rows["RMSE"].mean(),
+                "DA%": exp_rows["DA%"].mean(),
+                "Sharpe": exp_rows["Sharpe"].mean(),
+                "IC": exp_rows["IC"].mean(),
+            }
+            all_results.append(avg)
+
+        results_df = pd.DataFrame(all_results)
+
+        print("\n" + "=" * 76)
+        print(f"  CHRONOS BENCHMARK RESULTS — TARGET HORIZON {target_h}D")
+        print("=" * 76)
+        col_order = ["Experiment", "Symbol", "TargetHorizonD", "MAE", "RMSE", "DA%", "Sharpe", "IC"]
+        results_df = results_df[col_order]
+        print(results_df.to_string(index=False, float_format="{:.4f}".format))
+        print("=" * 76 + "\n")
+
+        suffix = f"{target_h}d"
+        csv_path = RESULTS_DIR / f"chronos_benchmark_{suffix}.csv"
+        results_df.to_csv(csv_path, index=False)
+        logger.info("Results saved → {}", csv_path)
+
+        avg_df = results_df[results_df["Symbol"] == "AVG"]
+        plot_ablation(avg_df, FIGURES_DIR / f"ablation_chronos_{suffix}.png")
+        plot_per_symbol(results_df, FIGURES_DIR / f"per_symbol_heatmap_{suffix}.png")
+
+        if all_y_true:
+            combined_y = np.concatenate(all_y_true)
+            combined_preds = {
+                k: np.concatenate(v) for k, v in all_preds.items() if v
+            }
+            plot_predictions(
+                combined_y,
+                combined_preds,
+                f"Chronos Predictions — All Symbols Combined ({target_h}D target)",
+                FIGURES_DIR / f"predictions_combined_{suffix}.png",
+            )
 
     logger.info("═══ Benchmark complete ═══")
 

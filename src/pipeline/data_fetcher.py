@@ -208,15 +208,21 @@ class VnstockDataFetcher:
         symbol: str,
         start: str,
         end: str,
-        sources: tuple[str, ...] = ("cafef", "vnexpress"),
+        sources: tuple[str, ...] = ("cafef_banking", "vietstock"),
+        use_cache: bool = True,
+        export_trace: bool = True,
+        similarity_threshold: float = 85.0,
     ) -> pd.DataFrame:
-        """Fetch news from CafeF / VnExpress scrapers, with VCI fallback.
+        """Fetch news from banking web sources, with VCI fallback.
 
         Args:
             symbol: Ticker symbol.
             start: Start date ``'YYYY-MM-DD'``.
             end: End date ``'YYYY-MM-DD'``.
             sources: Web scraping backends to try.
+            use_cache: Whether to reuse disk cache in the web scraper.
+            export_trace: Whether to export row-level trace CSV.
+            similarity_threshold: Near-duplicate title threshold in [0, 100].
 
         Returns:
             DataFrame with columns ``[published_date, title, content]``.
@@ -225,7 +231,15 @@ class VnstockDataFetcher:
 
         scraper = NewsScraper()
         try:
-            df = scraper.fetch_news(symbol, start, end, sources=sources)
+            df = scraper.fetch_news(
+                symbol,
+                start,
+                end,
+                sources=sources,
+                use_cache=use_cache,
+                export_trace=export_trace,
+                similarity_threshold=similarity_threshold,
+            )
             if not df.empty:
                 logger.info(
                     "Web scraping returned {} articles for {}",

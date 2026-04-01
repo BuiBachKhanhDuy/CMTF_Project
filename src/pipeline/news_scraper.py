@@ -1,74 +1,118 @@
 """CMTF Data Pipeline — Web News Scraper module.
 
-Scrapes Vietnamese financial news from CafeF and VnExpress to provide
-dense news coverage for each symbol across the study period.
+Simplified banking-only scraper:
+- Symbols: VCB, MBB
+- Sources: CafeF banking category + Vietstock symbol news
+- No keyword-based filtering/search
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import re
 import time
+from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, TYPE_CHECKING
 
 import pandas as pd
 from loguru import logger
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    import requests
+
 
 _NEWS_CACHE_DIR = Path("./cache/news")
+_NEWS_TRACE_DIR = Path("./artifacts/news_trace")
+_SUPPORTED_BANK_SYMBOLS = ("VCB", "MBB")
+_REQUEST_DELAY = 1.5
+_MAX_ARTICLES_PER_SOURCE = 150
 
-# Map ticker symbols to Vietnamese company names for search queries.
-# Using company names produces far more relevant financial articles than
-# ticker symbols (which often match product names like "VCB Digibank").
-SYMBOL_KEYWORDS: dict[str, list[str]] = {
-    "VCB": ["Vietcombank", "Ngân hàng Ngoại thương"],
-    "VIC": ["Vingroup", "Tập đoàn Vingroup"],
-    "VHM": ["Vinhomes"],
-}
-
-_REQUEST_DELAY = 0.5  # seconds between HTTP requests (rate limiting)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _normalise_title(title: str) -> str:
-    """Lowercase, strip whitespace and punctuation for dedup comparison."""
+    """Lowercase and strip punctuation/extra spaces for title matching."""
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", title.lower())).strip()
 
 
-def _dedup_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove duplicate articles by normalised title."""
-    seen: set[str] = set()
+def _token_set_similarity(a: str, b: str) -> float:
+    """Return fuzzy token/sequence similarity in [0, 100]."""
+    na = _normalise_title(a)
+    nb = _normalise_title(b)
+    if not na or not nb:
+        return 0.0
+
+    ta = set(na.split())
+    tb = set(nb.split())
+    if not ta or not tb:
+        return 0.0
+
+    overlap = 2.0 * len(ta & tb) / (len(ta) + len(tb))
+    seq = SequenceMatcher(None, na, nb).ratio()
+    return max(overlap, seq) * 100.0
+
+
+def _build_article_id(article: dict[str, Any]) -> str:
+    """Build stable short id for traceability and dedup reporting."""
+    base = "|".join(
+        [
+            str(article.get("source", "")),
+            str(article.get("url", "")),
+            _normalise_title(str(article.get("title", ""))),
+        ]
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
+
+
+def _dedup_articles(
+    articles: list[dict[str, Any]], similarity_threshold: float = 85.0,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Remove near-duplicate articles by title similarity."""
     unique: list[dict[str, Any]] = []
+    duplicate_rows: list[dict[str, Any]] = []
+
     for art in articles:
-        key = _normalise_title(str(art.get("title", "")))
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(art)
-    return unique
+        title = str(art.get("title", ""))
+        if not title:
+            continue
+
+        best_score = -1.0
+        best_match: dict[str, Any] | None = None
+        for kept in unique:
+            score = _token_set_similarity(title, str(kept.get("title", "")))
+            if score > best_score:
+                best_score = score
+                best_match = kept
+
+        if best_match is not None and best_score >= similarity_threshold:
+            duplicate_rows.append(
+                {
+                    "article_id": art.get("article_id", ""),
+                    "source": art.get("source", ""),
+                    "source_url": art.get("source_url", art.get("url", "")),
+                    "title": title,
+                    "published_date": art.get("published_date"),
+                    "filter_reason": "duplicate",
+                    "matched_article_id": best_match.get("article_id", ""),
+                    "dedup_score": round(best_score, 2),
+                }
+            )
+            continue
+
+        unique.append(art)
+
+    return unique, duplicate_rows
 
 
 def _cache_path(symbol: str) -> Path:
-    """Return the JSON cache file path for a symbol."""
     _NEWS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return _NEWS_CACHE_DIR / f"{symbol}_news.json"
 
 
 def _load_cache(symbol: str) -> list[dict[str, Any]] | None:
-    """Load cached articles for *symbol*, or None if cache miss."""
     p = _cache_path(symbol)
     if p.exists():
         try:
@@ -81,15 +125,36 @@ def _load_cache(symbol: str) -> list[dict[str, Any]] | None:
 
 
 def _save_cache(symbol: str, articles: list[dict[str, Any]]) -> None:
-    """Persist scraped articles to disk cache."""
     p = _cache_path(symbol)
     p.write_text(json.dumps(articles, ensure_ascii=False, default=str), encoding="utf-8")
     logger.info("News cache saved for {} — {} articles", symbol, len(articles))
 
 
-# ---------------------------------------------------------------------------
-# CafeF scraper
-# ---------------------------------------------------------------------------
+def _trace_path(symbol: str, start: str, end: str) -> Path:
+    _NEWS_TRACE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_start = start.replace("-", "")
+    safe_end = end.replace("-", "")
+    return _NEWS_TRACE_DIR / f"{symbol}_{safe_start}_{safe_end}_{ts}.csv"
+
+
+def _export_trace_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "article_id",
+        "source",
+        "source_url",
+        "title",
+        "published_date",
+        "filter_reason",
+        "matched_article_id",
+        "dedup_score",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+
 
 @retry(
     stop=stop_after_attempt(3),
@@ -98,7 +163,7 @@ def _save_cache(symbol: str, articles: list[dict[str, Any]]) -> None:
     reraise=True,
 )
 def _http_get(url: str, **kwargs: Any) -> "requests.Response":
-    """GET with retry, rate-limiting, and standard headers."""
+    """GET with retry and browser-like headers."""
     import requests
 
     headers = kwargs.pop("headers", {})
@@ -114,96 +179,100 @@ def _http_get(url: str, **kwargs: Any) -> "requests.Response":
     return resp
 
 
-_MAX_ARTICLES_PER_SOURCE = 30  # cap individual article fetches per source
+def _cafef_banking_page_candidates(page: int) -> list[str]:
+    if page == 1:
+        return ["https://cafef.vn/tai-chinh-ngan-hang.chn"]
+    return [
+        f"https://cafef.vn/tai-chinh-ngan-hang/p{page}.chn",
+        f"https://cafef.vn/tai-chinh-ngan-hang/trang-{page}.chn",
+    ]
 
 
-def _scrape_cafef_listing(
-    symbol: str,
+def _scrape_cafef_banking(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
-    keywords: list[str] | None = None,
-    max_pages: int = 10,
+    max_pages: int = 30,
 ) -> list[dict[str, Any]]:
-    """Scrape article listing from CafeF search.
-
-    Uses the search endpoint ``https://cafef.vn/tim-kiem.chn?keywords=...``
-    since the old ``/ma-co-phieu/{SYMBOL}.chn`` tag pages no longer exist.
-    """
+    """Scrape CafeF banking category pages (no keyword filtering)."""
     from bs4 import BeautifulSoup
 
-    # Build search terms: use company keywords if provided, else ticker
-    search_terms = keywords or [symbol]
-    articles: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
 
-    for keyword in search_terms:
-        for page in range(1, max_pages + 1):
-            url = f"https://cafef.vn/tim-kiem.chn?keywords={keyword}&page={page}"
-            logger.debug("CafeF search page {} for '{}'", page, keyword)
+    for page in range(1, max_pages + 1):
+        page_links: list[str] = []
+        for url in _cafef_banking_page_candidates(page):
             try:
                 resp = _http_get(url)
+                soup = BeautifulSoup(resp.text, "lxml")
             except Exception:
-                logger.warning("CafeF page {} failed for '{}' — stopping", page, keyword)
-                break
+                continue
 
-            soup = BeautifulSoup(resp.text, "lxml")
-
-            # CafeF search results: h3 > a.box-category-link-title, or generic h3 a
-            items = soup.select("li.tlitem, div.tlitem, li.news-item, div.news-item")
-            if not items:
-                items = soup.select("h3 a[href]")
-                if not items:
-                    logger.debug("No more items on CafeF page {} for '{}'", page, keyword)
-                    break
-
-            for item in items:
-                link_tag = item if item.name == "a" else item.select_one("a[href]")
-                if link_tag is None:
-                    continue
-
-                href = link_tag.get("href", "")
+            links = soup.select("a.box-category-link-title[href], h3 a[href]")
+            extracted: list[str] = []
+            for link in links:
+                href = str(link.get("href", "")).strip()
                 if not href:
                     continue
                 if href.startswith("/"):
                     href = "https://cafef.vn" + href
+                if not href.startswith("http"):
+                    continue
+                if not href.endswith(".chn"):
+                    continue
+                if "tai-chinh-ngan-hang" in href and ("p" in href or "trang" in href):
+                    continue
+                extracted.append(href)
 
-                title = link_tag.get_text(strip=True)
+            if extracted:
+                page_links = extracted
+                break
 
-                articles.append({
+        if not page_links:
+            if page > 1:
+                break
+            continue
+
+        for href in page_links:
+            title = href.rsplit("/", 1)[-1].replace(".chn", "")
+            candidates.append(
+                {
+                    "article_id": _build_article_id(
+                        {"source": "cafef_banking", "url": href, "title": title}
+                    ),
                     "title": title,
                     "url": href,
+                    "source_url": href,
                     "published_date": None,
-                    "source": "cafef",
-                })
+                    "source": "cafef_banking",
+                }
+            )
 
-    logger.info("CafeF listing: {} candidate articles for {}", len(articles), symbol)
+    logger.info("CafeF banking listing: {} candidate articles", len(candidates))
 
-    # Fetch full content + date for each article (capped)
     enriched: list[dict[str, Any]] = []
-    for art in articles[:_MAX_ARTICLES_PER_SOURCE]:
+    for art in candidates[:_MAX_ARTICLES_PER_SOURCE]:
         try:
             content, pub_date = _scrape_cafef_article(art["url"])
             if pub_date is not None:
                 art["published_date"] = str(pub_date)
-                # Filter by date range
                 if pub_date < start_date or pub_date > end_date:
                     continue
             art["content"] = content
             if content and len(content) >= 100:
                 enriched.append(art)
         except Exception:
-            logger.debug("Failed to fetch CafeF article: {}", art.get("url", ""))
+            logger.debug("Failed to fetch CafeF banking article: {}", art.get("url", ""))
 
     return enriched
 
 
 def _scrape_cafef_article(url: str) -> tuple[str, pd.Timestamp | None]:
-    """Extract full article text and published date from a CafeF article page."""
+    """Extract full text/date from CafeF article page."""
     from bs4 import BeautifulSoup
 
     resp = _http_get(url)
     soup = BeautifulSoup(resp.text, "lxml")
 
-    # Content extraction — CafeF uses several div classes
     content_div = (
         soup.select_one("div.detail-content")
         or soup.select_one("div.contentdetail")
@@ -212,18 +281,11 @@ def _scrape_cafef_article(url: str) -> tuple[str, pd.Timestamp | None]:
     )
     content = ""
     if content_div:
-        # Remove script/style tags
         for tag in content_div.find_all(["script", "style"]):
             tag.decompose()
         content = content_div.get_text(separator=" ", strip=True)
 
-    # Date extraction — ordered by reliability:
-    # 1. meta article:published_time (CafeF provides this)
-    # 2. JSON-LD datePublished
-    # 3. span.pdate ("30-03-2026 - 13:57 PM")
-    # 4. span.dateandcate fallback
     pub_date = None
-
     meta_date = soup.select_one("meta[property='article:published_time']")
     if meta_date:
         try:
@@ -237,147 +299,128 @@ def _scrape_cafef_article(url: str) -> tuple[str, pd.Timestamp | None]:
         for script in soup.find_all("script", type="application/ld+json"):
             txt = script.string or ""
             match = re.search(r'"datePublished"\s*:\s*"([^"]+)"', txt)
-            if match:
-                try:
-                    pub_date = pd.to_datetime(match.group(1), errors="coerce")
-                    if pub_date is not None and pub_date.tzinfo is not None:
-                        pub_date = pub_date.tz_localize(None)
-                    break
-                except Exception:
-                    pass
+            if not match:
+                continue
+            try:
+                pub_date = pd.to_datetime(match.group(1), errors="coerce")
+                if pub_date is not None and pub_date.tzinfo is not None:
+                    pub_date = pub_date.tz_localize(None)
+                break
+            except Exception:
+                pass
 
     if pub_date is None:
-        date_tag = (
-            soup.select_one("span.pdate")
-            or soup.select_one("span.dateandcate")
-        )
+        date_tag = soup.select_one("span.pdate") or soup.select_one("span.dateandcate")
         if date_tag:
             try:
-                pub_date = pd.to_datetime(
-                    date_tag.get_text(strip=True),
-                    dayfirst=True,
-                    errors="coerce",
-                )
+                pub_date = pd.to_datetime(date_tag.get_text(strip=True), dayfirst=True, errors="coerce")
             except Exception:
                 pass
 
     return content, pub_date
 
 
-# ---------------------------------------------------------------------------
-# VnExpress scraper
-# ---------------------------------------------------------------------------
+def _vietstock_page_candidates(symbol: str, page: int) -> list[str]:
+    if page == 1:
+        return [f"https://vietstock.vn/{symbol}/tin-tuc.htm"]
+    return [
+        f"https://vietstock.vn/{symbol}/p{page}-tin-tuc.htm",
+        f"https://vietstock.vn/{symbol}/tin-tuc/trang-{page}.htm",
+    ]
 
-def _scrape_vnexpress(
-    keywords: list[str],
+
+def _scrape_vietstock(
+    symbol: str,
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
-    max_pages: int = 8,
+    max_pages: int = 25,
 ) -> list[dict[str, Any]]:
-    """Scrape articles from VnExpress search API with date range.
-
-    VnExpress supports ``fromdate`` and ``todate`` as Unix timestamps.
-    """
+    """Scrape Vietstock symbol news pages (no keyword filtering)."""
     from bs4 import BeautifulSoup
 
-    articles: list[dict[str, Any]] = []
-    from_epoch = int(start_date.timestamp())
-    to_epoch = int(end_date.timestamp())
+    candidates: list[dict[str, Any]] = []
 
-    for keyword in keywords:
-        for page in range(1, max_pages + 1):
-            url = (
-                f"https://timkiem.vnexpress.net/?q={keyword}"
-                f"&media_type=all"
-                f"&fromdate={from_epoch}"
-                f"&todate={to_epoch}"
-                f"&latest="
-                f"&cate_code=kinhdoanh"  # Business section — more relevant
-                f"&page={page}"
-            )
-            logger.debug("VnExpress search page {} for keyword '{}'", page, keyword)
+    for page in range(1, max_pages + 1):
+        page_links: list[str] = []
+        for url in _vietstock_page_candidates(symbol, page):
             try:
                 resp = _http_get(url)
+                soup = BeautifulSoup(resp.text, "lxml")
             except Exception:
-                logger.warning("VnExpress page {} failed for '{}' — stopping", page, keyword)
+                continue
+
+            links = soup.select("a[href$='.htm'][href*='vietstock.vn'], h3 a[href$='.htm'], a.news-title[href]")
+            extracted: list[str] = []
+            for link in links:
+                href = str(link.get("href", "")).strip()
+                if not href:
+                    continue
+                if href.startswith("/"):
+                    href = "https://vietstock.vn" + href
+                if not href.startswith("http"):
+                    continue
+                if "/tin-tuc" in href and href.endswith(".htm") and f"/{symbol}/" in href:
+                    # keep article urls, skip listing pages
+                    if re.search(r"/p\d+-tin-tuc\.htm$", href):
+                        continue
+                extracted.append(href)
+
+            extracted = [h for h in extracted if not re.search(r"/p\d+-tin-tuc\.htm$", h)]
+            extracted = [h for h in extracted if "tin-tuc.htm" not in h or "/tin-tuc/" in h]
+            if extracted:
+                page_links = extracted
                 break
 
-            soup = BeautifulSoup(resp.text, "lxml")
+        if not page_links:
+            if page > 1:
+                break
+            continue
 
-            # VnExpress search results
-            result_items = soup.select("article.item-news, div.item-news")
-            if not result_items:
-                # Try title links
-                result_items = soup.select("h3.title-news a[href]")
-                if not result_items:
-                    break
-
-            for item in result_items:
-                link_tag = item if item.name == "a" else item.select_one("h3.title-news a, a.title-news, h2 a")
-                if link_tag is None:
-                    continue
-
-                href = link_tag.get("href", "")
-                if not href or not href.startswith("http"):
-                    continue
-
-                title = link_tag.get_text(strip=True)
-
-                # Extract description/snippet
-                desc_tag = item.select_one("p.description")
-                description = desc_tag.get_text(strip=True) if desc_tag else ""
-
-                # Try date from listing
-                date_tag = item.select_one("span.time-ago, span.date, span.time-public")
-                pub_date = None
-                if date_tag:
-                    date_str = date_tag.get("datetime") or date_tag.get_text(strip=True)
-                    try:
-                        pub_date = pd.to_datetime(date_str, errors="coerce")
-                    except Exception:
-                        pass
-
-                articles.append({
+        for href in page_links:
+            title = href.rsplit("/", 1)[-1].replace(".htm", "")
+            candidates.append(
+                {
+                    "article_id": _build_article_id(
+                        {"source": "vietstock", "url": href, "title": title}
+                    ),
                     "title": title,
                     "url": href,
-                    "published_date": str(pub_date) if pub_date else None,
-                    "description": description,
-                    "source": "vnexpress",
-                })
+                    "source_url": href,
+                    "published_date": None,
+                    "source": "vietstock",
+                }
+            )
 
-    logger.info("VnExpress search: {} candidate articles", len(articles))
+    logger.info("Vietstock listing [{}]: {} candidate articles", symbol, len(candidates))
 
-    # Fetch full content for each article (capped)
     enriched: list[dict[str, Any]] = []
-    for art in articles[:_MAX_ARTICLES_PER_SOURCE]:
+    for art in candidates[:_MAX_ARTICLES_PER_SOURCE]:
         try:
-            content, pub_date = _scrape_vnexpress_article(art["url"])
+            content, pub_date = _scrape_vietstock_article(art["url"])
             if pub_date is not None:
                 art["published_date"] = str(pub_date)
-            art["content"] = content or art.get("description", "")
-            if art["content"] and len(art["content"]) >= 100:
+                if pub_date < start_date or pub_date > end_date:
+                    continue
+            art["content"] = content
+            if content and len(content) >= 100:
                 enriched.append(art)
         except Exception:
-            # Use description as fallback content
-            if art.get("description") and len(art["description"]) >= 100:
-                art["content"] = art["description"]
-                enriched.append(art)
+            logger.debug("Failed to fetch Vietstock article: {}", art.get("url", ""))
 
     return enriched
 
 
-def _scrape_vnexpress_article(url: str) -> tuple[str, pd.Timestamp | None]:
-    """Extract full article text and published date from a VnExpress article page."""
+def _scrape_vietstock_article(url: str) -> tuple[str, pd.Timestamp | None]:
+    """Extract full text/date from Vietstock article page."""
     from bs4 import BeautifulSoup
 
     resp = _http_get(url)
     soup = BeautifulSoup(resp.text, "lxml")
 
-    # Content extraction
     content_div = (
-        soup.select_one("article.fck_detail")
-        or soup.select_one("div.fck_detail")
-        or soup.select_one("div.content_detail")
+        soup.select_one("div.pContent")
+        or soup.select_one("div#vst_detail")
+        or soup.select_one("div.m-content")
         or soup.select_one("article")
     )
     content = ""
@@ -386,71 +429,43 @@ def _scrape_vnexpress_article(url: str) -> tuple[str, pd.Timestamp | None]:
             tag.decompose()
         content = content_div.get_text(separator=" ", strip=True)
 
-    # Date extraction — ordered by reliability:
-    # 1. meta[name='pubdate'] (VnExpress primary; ISO 8601 with TZ)
-    # 2. JSON-LD datePublished
-    # 3. span.date (human-readable Vietnamese format)
     pub_date = None
 
-    meta_pubdate = soup.select_one("meta[name='pubdate']")
-    if meta_pubdate:
+    meta_date = soup.select_one("meta[property='article:published_time']")
+    if meta_date:
         try:
-            pub_date = pd.to_datetime(meta_pubdate["content"], errors="coerce")
+            pub_date = pd.to_datetime(meta_date.get("content", ""), errors="coerce")
             if pub_date is not None and pub_date.tzinfo is not None:
                 pub_date = pub_date.tz_localize(None)
         except Exception:
             pass
 
     if pub_date is None:
-        for script in soup.find_all("script", type="application/ld+json"):
-            txt = script.string or ""
-            match = re.search(r'"datePublished"\s*:\s*"([^"]+)"', txt)
-            if match:
-                try:
-                    pub_date = pd.to_datetime(match.group(1), errors="coerce")
-                    if pub_date is not None and pub_date.tzinfo is not None:
-                        pub_date = pub_date.tz_localize(None)
-                    break
-                except Exception:
-                    pass
+        time_tag = soup.select_one("time[datetime]")
+        if time_tag:
+            try:
+                pub_date = pd.to_datetime(time_tag.get("datetime", ""), errors="coerce")
+                if pub_date is not None and pub_date.tzinfo is not None:
+                    pub_date = pub_date.tz_localize(None)
+            except Exception:
+                pass
 
     if pub_date is None:
-        date_tag = soup.select_one("span.date")
-        if date_tag:
-            # Format: "Thứ sáu, 6/12/2024, 09:54 (GMT+7)"
-            raw = date_tag.get_text(strip=True)
-            # Strip Vietnamese day prefix and timezone suffix
-            raw = re.sub(r"^[^,]+,\s*", "", raw)       # remove "Thứ ..., "
-            raw = re.sub(r"\s*\(.*\)\s*$", "", raw)  # remove "(GMT+7)"
+        raw_text = soup.get_text(" ", strip=True)
+        match = re.search(r"(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})", raw_text)
+        if match:
             try:
-                pub_date = pd.to_datetime(raw, dayfirst=True, errors="coerce")
+                pub_date = pd.to_datetime(match.group(1), dayfirst=True, errors="coerce")
             except Exception:
                 pass
 
     return content, pub_date
 
 
-# ---------------------------------------------------------------------------
-# Main class
-# ---------------------------------------------------------------------------
-
 class NewsScraper:
-    """Scrapes Vietnamese financial news from CafeF and VnExpress.
+    """Banking-only web news scraper for VCB and MBB."""
 
-    Provides dense news coverage to replace the sparse vnstock VCI API
-    (which returns only ~10 articles per symbol with date mismatches).
-
-    Attributes:
-        symbol_keywords: Mapping of ticker → company name search queries.
-        cache_dir: Path to the JSON cache directory.
-    """
-
-    def __init__(
-        self,
-        symbol_keywords: dict[str, list[str]] | None = None,
-        cache_dir: Path = _NEWS_CACHE_DIR,
-    ) -> None:
-        self.symbol_keywords = symbol_keywords or SYMBOL_KEYWORDS
+    def __init__(self, cache_dir: Path = _NEWS_CACHE_DIR) -> None:
         self.cache_dir = cache_dir
 
     def fetch_news(
@@ -458,22 +473,18 @@ class NewsScraper:
         symbol: str,
         start: str,
         end: str,
-        sources: tuple[str, ...] = ("cafef", "vnexpress"),
+        sources: tuple[str, ...] = ("cafef_banking", "vietstock"),
         use_cache: bool = True,
+        export_trace: bool = True,
+        similarity_threshold: float = 85.0,
     ) -> pd.DataFrame:
-        """Fetch news articles for *symbol* from web sources.
+        """Fetch banking news for one supported bank symbol."""
+        symbol = str(symbol).upper().strip()
+        if symbol not in _SUPPORTED_BANK_SYMBOLS:
+            raise ValueError(
+                f"Unsupported symbol '{symbol}'. Supported symbols: {_SUPPORTED_BANK_SYMBOLS}"
+            )
 
-        Args:
-            symbol: Ticker symbol (e.g. ``'VCB'``).
-            start: Start date ``'YYYY-MM-DD'``.
-            end: End date ``'YYYY-MM-DD'``.
-            sources: Which backends to query.
-            use_cache: Whether to use/populate the disk cache.
-
-        Returns:
-            DataFrame with columns ``[published_date, title, content]``.
-        """
-        # Check cache first
         if use_cache:
             cached = _load_cache(symbol)
             if cached is not None:
@@ -481,80 +492,117 @@ class NewsScraper:
                 if not df.empty:
                     return df
 
-        keywords = self.symbol_keywords.get(symbol, [symbol])
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
-
         all_articles: list[dict[str, Any]] = []
 
-        # --- CafeF ---
-        if "cafef" in sources:
+        if "cafef_banking" in sources:
             try:
-                logger.info("Scraping CafeF for {} …", symbol)
-                cafef_arts = _scrape_cafef_listing(
-                    symbol, start_ts, end_ts, keywords=keywords,
-                )
-                all_articles.extend(cafef_arts)
-                logger.info("CafeF: {} articles for {}", len(cafef_arts), symbol)
+                logger.info("Scraping CafeF banking source for {} ...", symbol)
+                all_articles.extend(_scrape_cafef_banking(start_ts, end_ts))
             except Exception:
-                logger.warning("CafeF scraping failed for {} — continuing", symbol)
+                logger.warning("CafeF banking scraping failed for {} — continuing", symbol)
 
-        # --- VnExpress ---
-        if "vnexpress" in sources:
+        if "vietstock" in sources:
             try:
-                logger.info("Scraping VnExpress for {} (keywords: {}) …", symbol, keywords)
-                vne_arts = _scrape_vnexpress(keywords, start_ts, end_ts)
-                all_articles.extend(vne_arts)
-                logger.info("VnExpress: {} articles for {}", len(vne_arts), symbol)
+                logger.info("Scraping Vietstock source for {} ...", symbol)
+                all_articles.extend(_scrape_vietstock(symbol, start_ts, end_ts))
             except Exception:
-                logger.warning("VnExpress scraping failed for {} — continuing", symbol)
+                logger.warning("Vietstock scraping failed for {} — continuing", symbol)
 
-        # Deduplicate
-        all_articles = _dedup_articles(all_articles)
-        logger.info(
-            "Total unique articles for {}: {} (after dedup)",
-            symbol,
-            len(all_articles),
+        for art in all_articles:
+            art["source_url"] = str(art.get("source_url", art.get("url", "")))
+            if not art.get("article_id"):
+                art["article_id"] = _build_article_id(art)
+
+        candidate_count = len(all_articles)
+        all_articles, duplicate_rows = _dedup_articles(
+            all_articles, similarity_threshold=similarity_threshold
         )
+        df = self._articles_to_dataframe(all_articles, start, end)
 
-        # Cache results
         if use_cache and all_articles:
             _save_cache(symbol, all_articles)
 
-        return self._articles_to_dataframe(all_articles, start, end)
+        if export_trace:
+            trace_rows: list[dict[str, Any]] = []
+            for art in all_articles:
+                trace_rows.append(
+                    {
+                        "article_id": art.get("article_id", ""),
+                        "source": art.get("source", ""),
+                        "source_url": art.get("source_url", art.get("url", "")),
+                        "title": art.get("title", ""),
+                        "published_date": art.get("published_date", ""),
+                        "filter_reason": "kept",
+                        "matched_article_id": "",
+                        "dedup_score": "",
+                    }
+                )
+            trace_rows.extend(duplicate_rows)
+            if trace_rows:
+                trace_file = _trace_path(symbol, start, end)
+                _export_trace_csv(trace_file, trace_rows)
+                logger.info(
+                    "News trace CSV exported: {} (candidates={}, kept={}, duplicates={})",
+                    trace_file,
+                    candidate_count,
+                    len(all_articles),
+                    len(duplicate_rows),
+                )
+
+        return df
 
     @staticmethod
     def _articles_to_dataframe(
-        articles: list[dict[str, Any]],
-        start: str,
-        end: str,
+        articles: list[dict[str, Any]], start: str, end: str
     ) -> pd.DataFrame:
-        """Convert article dicts to the standard news DataFrame schema."""
         if not articles:
-            return pd.DataFrame(columns=["published_date", "title", "content"])
+            return pd.DataFrame(
+                columns=[
+                    "published_date",
+                    "title",
+                    "content",
+                    "source",
+                    "source_url",
+                    "article_id",
+                    "filter_reason",
+                ]
+            )
 
         df = pd.DataFrame(articles)
-
-        # Ensure published_date is datetime
-        df["published_date"] = pd.to_datetime(df["published_date"], errors="coerce")
+        df["published_date"] = pd.to_datetime(df.get("published_date"), errors="coerce")
         if df["published_date"].dt.tz is not None:
             df["published_date"] = df["published_date"].dt.tz_localize(None)
 
-        # Ensure title and content columns exist
         if "title" not in df.columns:
             df["title"] = ""
         if "content" not in df.columns:
             df["content"] = ""
+        if "source" not in df.columns:
+            df["source"] = ""
+        if "source_url" not in df.columns:
+            df["source_url"] = ""
+        if "article_id" not in df.columns:
+            df["article_id"] = ""
 
-        # Drop rows with no valid date
+        df["filter_reason"] = "kept"
+
         df = df.dropna(subset=["published_date"])
-
-        # Filter to date range
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
         df = df[(df["published_date"] >= start_ts) & (df["published_date"] <= end_ts)]
 
-        # Return standard schema
-        df = df[["published_date", "title", "content"]].copy()
+        df = df[
+            [
+                "published_date",
+                "title",
+                "content",
+                "source",
+                "source_url",
+                "article_id",
+                "filter_reason",
+            ]
+        ].copy()
         df = df.sort_values("published_date").reset_index(drop=True)
         return df

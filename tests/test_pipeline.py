@@ -221,7 +221,7 @@ class TestDatasetTemporalSplit:
 
 from src.pipeline.news_scraper import (
     NewsScraper,
-    SYMBOL_KEYWORDS,
+    _SUPPORTED_BANK_SYMBOLS,
     _normalise_title,
     _dedup_articles,
 )
@@ -230,31 +230,40 @@ from src.pipeline.news_scraper import (
 class TestNewsScraperHelpers:
     """Verify scraper helper functions (no network calls)."""
 
-    def test_symbol_keywords_all_present(self):
-        """All 3 project symbols must have keyword mappings."""
-        for sym in ("VCB", "VIC", "VHM"):
-            assert sym in SYMBOL_KEYWORDS, f"Missing keywords for {sym}"
-            assert len(SYMBOL_KEYWORDS[sym]) >= 1
+    def test_supported_bank_symbols(self):
+        """Banking-only mode supports exactly VCB and MBB."""
+        assert set(_SUPPORTED_BANK_SYMBOLS) == {"VCB", "MBB"}
 
     def test_deduplication_removes_identical_titles(self):
         articles = [
             {"title": "Vietcombank lãi kỉ lục", "content": "A", "source": "cafef"},
-            {"title": "Vietcombank lãi kỉ lục", "content": "B", "source": "vnexpress"},
-            {"title": "Vingroup mở rộng", "content": "C", "source": "cafef"},
+            {"title": "Vietcombank lãi kỉ lục", "content": "B", "source": "vietstock"},
+            {"title": "MBB tăng trưởng tín dụng", "content": "C", "source": "cafef_banking"},
         ]
-        result = _dedup_articles(articles)
+        result, dup_rows = _dedup_articles(articles)
         assert len(result) == 2
+        assert len(dup_rows) == 1
         titles = [r["title"] for r in result]
         assert "Vietcombank lãi kỉ lục" in titles
-        assert "Vingroup mở rộng" in titles
+        assert "MBB tăng trưởng tín dụng" in titles
 
     def test_dedup_normalises_whitespace_and_case(self):
         articles = [
             {"title": "  Hello  World! ", "content": "A"},
             {"title": "hello world", "content": "B"},
         ]
-        result = _dedup_articles(articles)
+        result, _ = _dedup_articles(articles)
         assert len(result) == 1
+
+    def test_dedup_similarity_not_exact_match(self):
+        articles = [
+            {"title": "Vietcombank loi nhuan tang manh quy 1", "content": "A"},
+            {"title": "Loi nhuan Vietcombank tang manh trong quy 1", "content": "B"},
+        ]
+        result, dup_rows = _dedup_articles(articles, similarity_threshold=85.0)
+        assert len(result) == 1
+        assert len(dup_rows) == 1
+        assert dup_rows[0]["filter_reason"] == "duplicate"
 
     def test_date_filtering_in_articles_to_dataframe(self):
         articles = [
@@ -271,13 +280,30 @@ class TestNewsScraperHelpers:
             {"title": "Test", "content": "body text here", "published_date": "2023-03-01"},
         ]
         df = NewsScraper._articles_to_dataframe(articles, "2023-01-01", "2023-12-31")
-        assert list(df.columns) == ["published_date", "title", "content"]
+        assert list(df.columns) == [
+            "published_date",
+            "title",
+            "content",
+            "source",
+            "source_url",
+            "article_id",
+            "filter_reason",
+        ]
         assert pd.api.types.is_datetime64_any_dtype(df["published_date"])
+        assert (df["filter_reason"] == "kept").all()
 
     def test_empty_articles_returns_empty_df(self):
         df = NewsScraper._articles_to_dataframe([], "2023-01-01", "2023-12-31")
         assert df.empty
-        assert list(df.columns) == ["published_date", "title", "content"]
+        assert list(df.columns) == [
+            "published_date",
+            "title",
+            "content",
+            "source",
+            "source_url",
+            "article_id",
+            "filter_reason",
+        ]
 
     def test_normalise_title(self):
         assert _normalise_title("  Hello, World!  ") == "hello world"

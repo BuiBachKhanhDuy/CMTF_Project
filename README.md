@@ -15,6 +15,13 @@ pip install -r requirements.txt
 # 3. Run tests
 pytest -v
 
+# 3a. Run parser-only crawler tests (mocked HTTP)
+pytest tests/test_news_scraper_parsing.py -v
+
+# 3b. Optional live crawler smoke tests
+# (PowerShell) $env:RUN_LIVE_SCRAPER="1"
+pytest -m smoke tests/test_news_scraper_smoke.py -v
+
 # 4. Run the data pipeline
 python pipeline.py
 

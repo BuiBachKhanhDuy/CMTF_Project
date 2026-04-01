@@ -6,6 +6,7 @@ for the Cross-Modal Temporal Fusion model.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import numpy as np
@@ -27,14 +28,15 @@ class CMTFDataset(Dataset):
     Args:
         df_featured: DataFrame containing OHLCV features, technical
             indicators, ``news_emb`` (np.ndarray 768-dim per row),
-            ``has_news`` (bool), and ``fwd_ret_1d`` (target).
+            ``has_news`` (bool), and forward-return target columns.
         sequence_len: Number of look-back bars per sample.
         horizon: Forward prediction horizon (default 1).
+        target_horizon_days: Which forward-return label to learn,
+            e.g. 1 -> ``fwd_ret_1d``, 5 -> ``fwd_ret_5d``.
     """
 
     # Columns that are NOT market input features
     _EXCLUDE_COLS = {
-        "fwd_ret_1d",
         "news_emb",
         "has_news",
         "news_count",
@@ -49,24 +51,34 @@ class CMTFDataset(Dataset):
         df_featured: pd.DataFrame,
         sequence_len: int = 30,
         horizon: int = 1,
+        target_horizon_days: int = 1,
     ) -> None:
         self.sequence_len = sequence_len
         self.horizon = horizon
+        self.target_horizon_days = int(target_horizon_days)
+        self.target_col = f"fwd_ret_{self.target_horizon_days}d"
         self.df = df_featured.reset_index(drop=False)
+
+        if self.target_col not in self.df.columns:
+            raise ValueError(f"Missing target column: {self.target_col}")
+
+        fwd_cols = [c for c in self.df.columns if re.match(r"^fwd_ret_\d+d$", str(c))]
 
         # Identify column groups
         self.market_cols = [
             c
             for c in self.df.columns
             if c not in self._EXCLUDE_COLS
+            and c not in fwd_cols
             and c != "time"
             and self.df[c].dtype in (np.float64, np.float32, np.int64, np.int32, float, int)
         ]
         logger.info(
-            "CMTFDataset | {} market features | seq_len={} | horizon={}",
+            "CMTFDataset | {} market features | seq_len={} | horizon={} | target={}",
             len(self.market_cols),
             sequence_len,
             horizon,
+            self.target_col,
         )
 
         # Pre-compute numpy arrays for speed
@@ -80,7 +92,7 @@ class CMTFDataset(Dataset):
         self._mask = (~self.df["has_news"].astype(bool)).values  # True = no news
 
         # Target
-        self._target = self.df["fwd_ret_1d"].values.astype(np.float32)
+        self._target = self.df[self.target_col].values.astype(np.float32)
 
         # Valid indices (need seq_len history and horizon forward target)
         self._valid_start = self.sequence_len - 1
@@ -100,8 +112,8 @@ class CMTFDataset(Dataset):
         news = torch.from_numpy(self._news[start:end].copy())            # (seq_len, 768)
         mask = torch.from_numpy(self._mask[start:end].copy())            # (seq_len,)
 
-        # Target: forward returns for `horizon` steps starting at actual_idx + 1
-        target_vals = self._target[actual_idx + 1 : actual_idx + 1 + self.horizon]
+        # Target: forward returns for `horizon` steps starting at actual_idx
+        target_vals = self._target[actual_idx : actual_idx + self.horizon]
         target = torch.from_numpy(target_vals.copy())                     # (horizon,)
 
         return {

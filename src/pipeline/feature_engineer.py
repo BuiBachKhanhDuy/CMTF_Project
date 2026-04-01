@@ -50,7 +50,8 @@ class FeatureEngineer:
         Columns added:
             ``rsi_14``, ``macd``, ``macd_signal``, ``macd_hist``,
             ``bb_upper``, ``bb_mid``, ``bb_lower``, ``atr_14``,
-            ``vol_ratio``, ``log_ret``, ``fwd_ret_1d``.
+            ``vol_ratio``, ``log_ret``, ``fwd_ret_1d``, ``fwd_ret_5d``,
+            ``fwd_ret_20d``.
 
         Args:
             df_ohlcv: DataFrame with columns ``[open, high, low, close, volume]``
@@ -58,8 +59,8 @@ class FeatureEngineer:
 
         Returns:
             Copy of the input DataFrame with indicator columns appended.
-            ``fwd_ret_1d`` is the **prediction target** — never include it as
-            an input feature.
+            ``fwd_ret_1d`` / ``fwd_ret_5d`` / ``fwd_ret_20d`` are prediction
+            targets — never include them as input features.
         """
         df = df_ohlcv.copy()
 
@@ -90,8 +91,10 @@ class FeatureEngineer:
         # Log return
         df["log_ret"] = np.log(df["close"] / df["close"].shift(1))
 
-        # Forward return label (TARGET — NEVER use as input)
+        # Forward return labels (TARGETS — NEVER use as input)
         df["fwd_ret_1d"] = np.log(df["close"].shift(-1) / df["close"])
+        df["fwd_ret_5d"] = np.log(df["close"].shift(-5) / df["close"])
+        df["fwd_ret_20d"] = np.log(df["close"].shift(-20) / df["close"])
 
         logger.info("Technical indicators computed | {} rows", len(df))
         return df

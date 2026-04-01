@@ -1,41 +1,52 @@
 # Cross-Modal Temporal Fusion (CMTF) Model — Technical Report
 
 **Project:** Vietnamese Financial Market Prediction with Multimodal Time-Series Data  
-**Date:** March 30, 2026  
-**Version:** 3.3 — Updated Benchmark Results (Latest Run)  
+**Date:** April 1, 2026  
+**Version:** 4.0 — Multi-Horizon Benchmark Update (1D, 5D, 20D)  
 **Stack:** Python 3.14, PyTorch, HuggingFace Transformers, Amazon Chronos, vnstock (v3.x)
 
 ---
 
 ## Executive Summary
 
-This project implements a **production-ready, end-to-end system** for Vietnamese stock return prediction that fuses two independent data streams through a Cross-Modal Temporal Fusion (CMTF) architecture:
+This project implements an end-to-end system for Vietnamese stock return prediction that fuses two independent data streams through a Cross-Modal Temporal Fusion (CMTF) architecture:
 
-1. **OHLCV Market Data** — Candlestick prices from Vietnamese exchanges (HOSE, HNX), enriched with 15 technical indicators
-2. **News Text Embeddings** — Company news in Vietnamese, encoded to 768-dimensional vectors via PhoBERT
+1. **OHLCV Market Data** — Daily bars enriched with technical indicators
+2. **News Text Embeddings** — Vietnamese financial news encoded to 768-dimensional vectors
 
 The system consists of two major subsystems:
 
-- **Data Pipeline** — A 6-module ingestion and preprocessing pipeline with strict temporal leakage prevention, ensuring news published on day T never leaks into feature vectors used to predict bar T. All data is normalized on training splits only, and the final output is a PyTorch `Dataset`.
-- **Benchmark Framework** — A 3-experiment ablation study comparing Amazon Chronos (zero-shot), Chronos + Ridge regression (linear probe), and Chronos + CMTF cross-attention fusion, evaluated across 5 quantitative metrics on 3 Vietnamese large-cap stocks.
+- **Data Pipeline** — Ingestion and preprocessing with strict temporal leakage prevention, train-split-only normalization, and horizon-specific labels.
+- **Benchmark Framework** — A 3-experiment ablation study comparing Chronos zero-shot, Chronos linear probe, and Chronos plus CMTF fusion, evaluated at 1-day, 5-day, and 20-day horizons. Linear-Probe and CMTF are augmented with engineered tabular market features (OHLCV plus technical indicators).
 
-### Key Results
+### Key Results (latest run)
 
-| Metric | Chronos Zero‑Shot | Chronos Linear‑Probe | Chronos + CMTF |
-|--------|--------------------|-----------------------|----------------|
-| **MAE** | 0.0095 | **0.0086** | 0.0089 |
-| **RMSE** | 0.0138 | **0.0126** | 0.0128 |
-| **Directional Accuracy** | 45.6% | **45.8%** | 39.1% |
-| **Sharpe Ratio** | **−0.48** | −0.56 | −1.24 |
-| **Information Coefficient** | **+0.031** | +0.014 | −0.132 |
+Average metrics across symbols are now strongly horizon-dependent.
 
-**Key Finding:** Under the current data regime (web-scraped news cached to disk, with partial coverage over the 3-year period), **no method achieves a positive average Sharpe ratio**. The **zero-shot baseline** delivers the least negative Sharpe (−0.48) and the highest Information Coefficient (+0.031). The **linear probe** achieves the best point-accuracy metrics (lowest MAE/RMSE) and the highest directional accuracy (45.8%). The **CMTF fusion head** is the weakest on all average metrics (Sharpe −1.24, DA% 39.1%, IC −0.132) because it trains a cross-attention layer on largely uninformative news embeddings, introducing noise rather than signal. Performance degrades monotonically with model complexity (Zero-Shot → Linear-Probe → CMTF), confirming the classic bias-variance tradeoff: **adding trainable parameters without corresponding informative features progressively worsens risk-adjusted returns**. The multimodal architecture requires denser, better-aligned news data to outperform market-only approaches.
+| Horizon | Best MAE | Best RMSE | Best DA% | Best Sharpe | Best IC |
+|--------|----------|-----------|----------|-------------|---------|
+| 1D | Linear-Probe (0.0186) | Linear-Probe (0.0251) | Linear-Probe (52.63%) | Linear-Probe (2.421) | Linear-Probe (0.0719) |
+| 5D | Zero-Shot (0.0411) | Zero-Shot (0.0582) | CMTF (55.66%) | CMTF (2.345) | CMTF (0.1859) |
+| 20D | CMTF (0.0692) | CMTF (0.0861) | CMTF (76.32%) | CMTF (16.008) | CMTF (0.3829) |
+
+Primary findings:
+
+1. At 1D horizon, Chronos Linear-Probe remains the strongest overall method and outperforms Zero-Shot and CMTF on all average metrics.
+2. At 5D horizon, leadership splits by metric: Zero-Shot is best on MAE and RMSE, while CMTF is best on directionality and rank correlation.
+3. At 20D horizon, CMTF dominates all average metrics, with especially large gains in DA and IC.
+
+Interpretation:
+
+1. Short horizon behavior is still largely market-technical and favors simpler heads, especially Chronos embeddings plus linear regression.
+2. As horizon increases, cross-modal fusion becomes more useful, likely because news effects materialize with lag and align better with medium-term returns.
+3. The very high 20D Sharpe for CMTF should be treated cautiously and validated with rolling stability checks, because long-horizon test samples are fewer and can inflate risk metrics.
 
 ### Pipeline Metrics
-- **Test Coverage:** 18 pytest tests (100% pass)
-- **Execution Time:** ~8 seconds (3 symbols, 2,244 rows)
-- **Final Dataset:** 2,211 valid sequences (30-bar lookback, 1-bar horizon)
-- **Tensor Output:** 4 modalities per sample (market, news, mask, target)
+- **Test Coverage:** 22 tests passed, 3 skipped
+- **Universe:** 2 banking symbols (VCB, MBB)
+- **Period:** 2025-04-01 to 2026-03-31
+- **Horizon labels:** 1D, 5D, 20D forward log returns
+- **Tensor Output:** market sequence, news sequence, mask, target
 
 ---
 
@@ -53,33 +64,26 @@ Stock prediction models typically use only OHLCV data, missing the implicit mark
 3. **RQ3:** Does cross-modal fusion of market embeddings with Vietnamese news embeddings (via cross-attention) improve trading performance metrics — particularly Sharpe ratio and directional accuracy?
 
 ### 1.3 Data Sources
-- **OHLCV:** [vnstock](https://github.com/thiên-ai/vnstock) library (v3.x)
-  - Source: KBS (recommended, lower latency)
-  - Vietnamese exchanges: HOSE (Ho Chi Minh), HNX (Hanoi)
-- **News (primary):** Web scraping from two major Vietnamese financial news sites
-  - **CafeF** (cafef.vn) — Vietnam's largest financial news portal; stock-specific tag pages with pagination
-  - **VnExpress** (vnexpress.net) — Vietnam's most-read news site; search API with native date-range filters (Business section)
-  - Searched by company name (not ticker) for higher-quality financial articles
-  - Disk-cached to `cache/news/` as JSON to avoid redundant scraping
-- **News (fallback):** vnstock Company API (VCI source)
-  - 18-column response with titles, content, and metadata
-  - Used only when web scraping returns zero results
+- **OHLCV:** vnstock library (source: KBS)
+- **News (primary):** Banking-focused web scraping
+  - CafeF banking category pages
+  - Vietstock symbol news pages
+- **News (fallback):** vnstock Company API (VCI)
 
 ### 1.4 Geographic Scope & Universe
-**Market:** Vietnam — 3 large-cap stocks  
+**Market:** Vietnam — banking subset
 
 | Symbol | Company | Exchange | Sector |
 |--------|---------|----------|--------|
 | VCB | Vietcombank | HOSE | Banking |
-| VIC | Vingroup | HOSE | Real Estate / Conglomerates |
-| VHM | Vinhomes | HOSE | Real Estate |
+| MBB | MBBank | HOSE | Banking |
 
-**Period:** January 1, 2022 — December 31, 2024 (3 years)  
+**Period:** 2025-04-01 to 2026-03-31  
 **Granularity:** Daily bars (1D interval)  
 **Walk-Forward Splits:**  
-- **Train:** 2022-01-01 → 2023-12-31  
-- **Validation:** 2024-01-01 → 2024-06-30  
-- **Test:** 2024-07-01 → 2024-12-31
+- **Train end:** 2025-10-31  
+- **Validation end:** 2025-12-31  
+- **Test:** 2026-01-01 to 2026-03-31
 
 ---
 

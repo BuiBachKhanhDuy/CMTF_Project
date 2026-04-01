@@ -121,6 +121,9 @@ class ChronosMarketPredictor:
         close_val: np.ndarray,
         y_val: np.ndarray,
         close_test: np.ndarray,
+        tabular_train: Optional[np.ndarray] = None,
+        tabular_val: Optional[np.ndarray] = None,
+        tabular_test: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Chronos embeddings + Ridge regression.
 
@@ -130,6 +133,9 @@ class ChronosMarketPredictor:
             close_val: (N_val, seq_len) raw close windows.
             y_val: (N_val,) target returns (for alpha selection).
             close_test: (N_test, seq_len) raw close windows.
+            tabular_train: (N_train, F_tab) optional engineered OHLCV/TA features.
+            tabular_val: (N_val, F_tab) optional engineered OHLCV/TA features.
+            tabular_test: (N_test, F_tab) optional engineered OHLCV/TA features.
 
         Returns:
             (N_test,) predicted returns.
@@ -138,6 +144,24 @@ class ChronosMarketPredictor:
         emb_train = self.get_embeddings(close_train)
         emb_val = self.get_embeddings(close_val)
         emb_test = self.get_embeddings(close_test)
+
+        if tabular_train is not None and tabular_val is not None and tabular_test is not None:
+            logger.info(
+                "Linear probe using Chronos embeddings + {} tabular market features",
+                tabular_train.shape[1],
+            )
+            emb_train = np.concatenate([emb_train, tabular_train], axis=1)
+            emb_val = np.concatenate([emb_val, tabular_val], axis=1)
+            emb_test = np.concatenate([emb_test, tabular_test], axis=1)
+
+        # Safety net: if any NaN remains, impute from train-only column means.
+        if np.isnan(emb_train).any() or np.isnan(emb_val).any() or np.isnan(emb_test).any():
+            logger.warning("NaN detected in linear-probe features; applying train-mean imputation")
+            col_means = np.nanmean(emb_train, axis=0)
+            col_means = np.where(np.isnan(col_means), 0.0, col_means)
+            emb_train = np.where(np.isnan(emb_train), col_means, emb_train)
+            emb_val = np.where(np.isnan(emb_val), col_means, emb_val)
+            emb_test = np.where(np.isnan(emb_test), col_means, emb_test)
 
         # Select best Ridge alpha on validation set
         best_alpha, best_score = 1.0, float("inf")

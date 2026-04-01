@@ -10,16 +10,21 @@ from src.pipeline import run_pipeline  # noqa: F401
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     config = {
-        "symbols": ["VCB", "VIC", "VHM"],
-        "start": "2022-01-01",
-        "end": "2024-12-31",
+        "symbols": ["VCB", "MBB"],
+        "start": "2025-04-01",
+        "end": "2026-03-31",
         "interval": "1D",
         "ohlcv_source": "KBS",
-        "news_source": "VCI",
+        "news_source": "web",
+        "news_sources": ("cafef_banking", "vietstock"),
+        "news_use_cache": False,
+        "news_export_trace": True,
+        "news_similarity_threshold": 85.0,
+        "log_news_coverage": True,
         "sequence_len": 30,
         "horizon": 1,
-        "train_end": "2023-12-31",
-        "val_end": "2024-06-30",
+        "train_end": "2025-10-31",
+        "val_end": "2025-12-31",
         "normalize_method": "zscore",
     }
 

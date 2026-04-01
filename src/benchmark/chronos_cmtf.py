@@ -29,12 +29,15 @@ class CrossModalFusionHead(nn.Module):
         self,
         market_dim: int = 512,
         news_dim: int = 768,
+        tabular_dim: int = 0,
         fusion_dim: int = 256,
         n_heads: int = 4,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
+        self.tabular_dim = tabular_dim
         self.market_proj = nn.Linear(market_dim, fusion_dim)
+        self.tabular_proj = nn.Linear(tabular_dim, fusion_dim) if tabular_dim > 0 else None
         self.news_proj = nn.Linear(news_dim, fusion_dim)
 
         # Learned replacement for missing-news positions
@@ -55,12 +58,14 @@ class CrossModalFusionHead(nn.Module):
         self,
         market_emb: torch.Tensor,
         news_emb: torch.Tensor,
+        tabular_emb: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass.
 
         Args:
             market_emb: (B, market_dim) — Chronos encoder output.
             news_emb:   (B, seq_len, news_dim) — per-bar news embeddings.
+            tabular_emb: (B, tabular_dim) optional engineered market features.
 
         Returns:
             (B,) predicted return.
@@ -69,7 +74,11 @@ class CrossModalFusionHead(nn.Module):
         zero_mask = (news_emb.abs().sum(dim=-1, keepdim=True) == 0)  # (B, S, 1)
         news_filled = torch.where(zero_mask, self.news_default, news_emb)
 
-        q = self.market_proj(market_emb).unsqueeze(1)     # (B, 1, F)
+        market_q = self.market_proj(market_emb)
+        if self.tabular_proj is not None and tabular_emb is not None:
+            market_q = market_q + self.tabular_proj(tabular_emb)
+
+        q = market_q.unsqueeze(1)                         # (B, 1, F)
         kv = self.news_proj(news_filled)                  # (B, S, F)
 
         attn_out, _ = self.cross_attn(q, kv, kv)         # (B, 1, F)
@@ -85,6 +94,7 @@ class ChronosCMTFPredictor:
         self,
         chronos_predictor: ChronosMarketPredictor,
         news_dim: int = 768,
+        tabular_dim: int = 0,
         fusion_dim: int = 256,
         device: str = "cpu",
     ) -> None:
@@ -93,6 +103,7 @@ class ChronosCMTFPredictor:
         self.fusion = CrossModalFusionHead(
             market_dim=chronos_predictor.d_model,
             news_dim=news_dim,
+            tabular_dim=tabular_dim,
             fusion_dim=fusion_dim,
         ).to(device)
 
@@ -123,6 +134,8 @@ class ChronosCMTFPredictor:
         close_val: np.ndarray,
         news_val: np.ndarray,
         y_val: np.ndarray,
+        tabular_train: np.ndarray | None = None,
+        tabular_val: np.ndarray | None = None,
         epochs: int = 80,
         lr: float = 1e-3,
         patience: int = 15,
@@ -135,6 +148,7 @@ class ChronosCMTFPredictor:
             news_train:  (N_train, seq_len, 768) per-bar news embeddings.
             y_train:     (N_train,) target returns.
             close_val / news_val / y_val: validation data.
+            tabular_train / tabular_val: optional engineered market features.
             epochs: Maximum training epochs.
             lr: Learning rate.
             patience: Early-stopping patience.
@@ -150,13 +164,26 @@ class ChronosCMTFPredictor:
         train_m = torch.tensor(emb_train, dtype=torch.float32, device=self.device)
         train_n = torch.tensor(news_train, dtype=torch.float32, device=self.device)
         train_y = torch.tensor(y_train, dtype=torch.float32, device=self.device)
+        train_t = (
+            torch.tensor(tabular_train, dtype=torch.float32, device=self.device)
+            if tabular_train is not None
+            else None
+        )
 
         val_m = torch.tensor(emb_val, dtype=torch.float32, device=self.device)
         val_n = torch.tensor(news_val, dtype=torch.float32, device=self.device)
         val_y = torch.tensor(y_val, dtype=torch.float32, device=self.device)
+        val_t = (
+            torch.tensor(tabular_val, dtype=torch.float32, device=self.device)
+            if tabular_val is not None
+            else None
+        )
 
         # Mini-batch DataLoader
-        train_ds = TensorDataset(train_m, train_n, train_y)
+        if train_t is None:
+            train_ds = TensorDataset(train_m, train_n, train_y)
+        else:
+            train_ds = TensorDataset(train_m, train_n, train_t, train_y)
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True, drop_last=False,
         )
@@ -173,9 +200,14 @@ class ChronosCMTFPredictor:
             self.fusion.train()
             epoch_loss = 0.0
             n_batches = 0
-            for mb_m, mb_n, mb_y in train_loader:
+            for batch in train_loader:
+                if train_t is None:
+                    mb_m, mb_n, mb_y = batch
+                    mb_t = None
+                else:
+                    mb_m, mb_n, mb_t, mb_y = batch
                 optimizer.zero_grad()
-                pred = self.fusion(mb_m, mb_n)
+                pred = self.fusion(mb_m, mb_n, mb_t)
                 loss = self._combined_loss(pred, mb_y)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.fusion.parameters(), 1.0)
@@ -188,7 +220,7 @@ class ChronosCMTFPredictor:
             # --- Validate ---
             self.fusion.eval()
             with torch.no_grad():
-                val_pred = self.fusion(val_m, val_n)
+                val_pred = self.fusion(val_m, val_n, val_t)
                 val_loss = self._combined_loss(val_pred, val_y).item()
 
             history["train_loss"].append(avg_train)
@@ -220,12 +252,14 @@ class ChronosCMTFPredictor:
         self,
         close_test: np.ndarray,
         news_test: np.ndarray,
+        tabular_test: np.ndarray | None = None,
     ) -> np.ndarray:
         """Predict returns using frozen Chronos embeddings + trained fusion head.
 
         Args:
             close_test: (N_test, seq_len) raw close windows.
             news_test:  (N_test, seq_len, 768) per-bar news embeddings.
+            tabular_test: (N_test, F_tab) optional engineered market features.
 
         Returns:
             (N_test,) predicted returns.
@@ -234,7 +268,12 @@ class ChronosCMTFPredictor:
 
         test_m = torch.tensor(emb_test, dtype=torch.float32, device=self.device)
         test_n = torch.tensor(news_test, dtype=torch.float32, device=self.device)
+        test_t = (
+            torch.tensor(tabular_test, dtype=torch.float32, device=self.device)
+            if tabular_test is not None
+            else None
+        )
 
         self.fusion.eval()
         with torch.no_grad():
-            return self.fusion(test_m, test_n).cpu().numpy()
+            return self.fusion(test_m, test_n, test_t).cpu().numpy()
