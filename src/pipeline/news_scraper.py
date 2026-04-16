@@ -1,9 +1,8 @@
 """CMTF Data Pipeline — Web News Scraper module.
 
 Simplified banking-only scraper:
-- Symbols: VCB, MBB
-- Sources: CafeF banking category + Vietstock symbol news
-- No keyword-based filtering/search
+- Symbols: VCB, BID
+- Sources: CafeF banking category + VnExpress + Vietstock symbol news
 """
 
 from __future__ import annotations
@@ -28,9 +27,80 @@ if TYPE_CHECKING:
 
 _NEWS_CACHE_DIR = Path("./cache/news")
 _NEWS_TRACE_DIR = Path("./artifacts/news_trace")
-_SUPPORTED_BANK_SYMBOLS = ("VCB", "MBB")
+_SUPPORTED_BANK_SYMBOLS = ("VCB", "BID")
 _REQUEST_DELAY = 1.5
-_MAX_ARTICLES_PER_SOURCE = 150
+_MAX_ARTICLES_PER_SOURCE = 500
+_MARKET_CLOSE_HOUR = 15
+
+# VNExpress search keywords per symbol
+_VNEXPRESS_KEYWORDS: dict[str, list[str]] = {
+    "VCB": ["Vietcombank", "Ngan+hang+Vietcombank", "tin+tuc+Vietcombank", "VCB", "Ngan+hang+Ngoai+thuong"],
+    "BID": ["BIDV", "Ngan+hang+BIDV", "tin+tuc+BIDV", "BID", "Ngan+hang+Dau+tu", "Dau+tu+va+Phat+trien", "co+phieu+BIDV", "BIDV+Viet+Nam"],
+}
+
+# Sector-wide / macro keywords that affect ALL banking stocks
+_VNEXPRESS_SECTOR_KEYWORDS: list[str] = [
+    "ngan+hang+nha+nuoc",          # State Bank of Vietnam (SBV)
+    "lai+suat+ngan+hang",          # bank interest rates
+    "chinh+sach+tien+te",          # monetary policy
+    "tin+dung+ngan+hang",          # bank credit
+    "co+phieu+ngan+hang",          # banking stocks
+    "tang+truong+tin+dung",        # credit growth
+    "no+xau+ngan+hang",           # bank bad debt / NPL
+    "ty+gia+ngoai+te",            # foreign exchange rates
+]
+
+# Brand names / aliases for each symbol (used to filter generic banking news)
+_SYMBOL_BRAND_NAMES: dict[str, list[str]] = {
+    "VCB": ["Vietcombank", "VCB", "Ngoại thương", "Ngoai thuong"],
+    "BID": ["BIDV", "BID", "Đầu tư", "Dau tu", "Ngân hàng Đầu tư"],
+}
+
+# Sector keywords in readable form (for CafeF relevance filtering)
+_SECTOR_FILTER_KEYWORDS: list[str] = [
+    "ngân hàng nhà nước", "lãi suất", "chính sách tiền tệ",
+    "tín dụng", "tăng trưởng tín dụng", "nợ xấu",
+    "tỷ giá", "ngoại tệ", "cổ phiếu ngân hàng",
+    "ngan hang nha nuoc", "lai suat", "tin dung",
+    "no xau", "ty gia", "co phieu ngan hang",
+]
+
+# Module-level cache so sector news is scraped once per process
+_sector_news_cache: dict[str, list[dict[str, Any]]] = {}
+# Module-level cache so CafeF banking is scraped once per process
+_cafef_banking_cache: dict[str, list[dict[str, Any]]] = {}
+
+
+def _filter_cafef_by_relevance(
+    articles: list[dict[str, Any]],
+    symbol: str,
+) -> list[dict[str, Any]]:
+    """Keep CafeF banking articles relevant to *symbol* or to sector macro.
+
+    An article is kept if its title or content contains:
+    - Any brand name / alias for the target symbol, OR
+    - Any sector-wide macro keyword (interest rates, SBV, credit, etc.)
+    """
+    brand_names = _SYMBOL_BRAND_NAMES.get(symbol.upper(), [])
+    kept: list[dict[str, Any]] = []
+    for art in articles:
+        text = (
+            (art.get("title", "") + " " + art.get("content", ""))
+            .lower()
+        )
+        # Check symbol brand names
+        if any(bn.lower() in text for bn in brand_names):
+            kept.append(art)
+            continue
+        # Check sector keywords
+        if any(kw in text for kw in _SECTOR_FILTER_KEYWORDS):
+            kept.append(art)
+            continue
+    logger.info(
+        "CafeF relevance filter for {}: {} → {} articles",
+        symbol, len(articles), len(kept),
+    )
+    return kept
 
 
 def _normalise_title(title: str) -> str:
@@ -67,14 +137,57 @@ def _build_article_id(article: dict[str, Any]) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
 
 
+def _article_quality_score(article: dict[str, Any]) -> tuple[int, int, int, str]:
+    """Return deterministic quality score for dedup keep/drop decision.
+
+    Higher is better. We prefer richer content, then informative title, then
+    presence of a timestamp. Final string tiebreak keeps ordering deterministic.
+    """
+    content_len = len(str(article.get("content", "")).strip())
+    title_len = len(str(article.get("title", "")).strip())
+    has_timestamp = 1 if pd.notna(pd.to_datetime(article.get("published_date"), errors="coerce")) else 0
+    stable_key = f"{article.get('source', '')}|{article.get('url', '')}|{_normalise_title(str(article.get('title', '')))}"
+    return (content_len, title_len, has_timestamp, stable_key)
+
+
+def _effective_trading_timestamp(ts: pd.Timestamp) -> pd.Timestamp:
+    """Map publication timestamp to leakage-safe effective trading timestamp.
+
+    Rule:
+    - timestamp at or after market close (15:00) -> next calendar day
+    - timestamp at 00:00:00 is treated as unknown-time and shifted to next day
+    - otherwise, keep same timestamp
+    """
+    if pd.isna(ts):
+        return ts
+
+    ts = pd.Timestamp(ts)
+    has_midnight_time = (
+        ts.hour == 0 and ts.minute == 0 and ts.second == 0 and ts.microsecond == 0
+    )
+    if has_midnight_time or ts.hour >= _MARKET_CLOSE_HOUR:
+        return (ts.normalize() + pd.Timedelta(days=1))
+    return ts
+
+
 def _dedup_articles(
     articles: list[dict[str, Any]], similarity_threshold: float = 85.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Remove near-duplicate articles by title similarity."""
+    """Remove near-duplicate articles by title similarity.
+
+    The keep/drop decision is quality-aware and deterministic: higher-quality
+    articles are processed first so duplicates map to the best available copy.
+    """
+    ranked_articles = sorted(
+        articles,
+        key=_article_quality_score,
+        reverse=True,
+    )
+
     unique: list[dict[str, Any]] = []
     duplicate_rows: list[dict[str, Any]] = []
 
-    for art in articles:
+    for art in ranked_articles:
         title = str(art.get("title", ""))
         if not title:
             continue
@@ -107,13 +220,15 @@ def _dedup_articles(
     return unique, duplicate_rows
 
 
-def _cache_path(symbol: str) -> Path:
+def _cache_path(symbol: str, start: str = "", end: str = "") -> Path:
     _NEWS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return _NEWS_CACHE_DIR / f"{symbol}_news.json"
+    safe_start = start.replace("-", "")
+    safe_end = end.replace("-", "")
+    return _NEWS_CACHE_DIR / f"{symbol}_{safe_start}_{safe_end}_news.json"
 
 
-def _load_cache(symbol: str) -> list[dict[str, Any]] | None:
-    p = _cache_path(symbol)
+def _load_cache(symbol: str, start: str = "", end: str = "") -> list[dict[str, Any]] | None:
+    p = _cache_path(symbol, start, end)
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -124,9 +239,12 @@ def _load_cache(symbol: str) -> list[dict[str, Any]] | None:
     return None
 
 
-def _save_cache(symbol: str, articles: list[dict[str, Any]]) -> None:
-    p = _cache_path(symbol)
-    p.write_text(json.dumps(articles, ensure_ascii=False, default=str), encoding="utf-8")
+def _save_cache(symbol: str, start: str, end: str, articles: list[dict[str, Any]]) -> None:
+    p = _cache_path(symbol, start, end)
+    p.write_text(
+        json.dumps(articles, ensure_ascii=False, default=str, indent=2),
+        encoding="utf-8",
+    )
     logger.info("News cache saved for {} — {} articles", symbol, len(articles))
 
 
@@ -191,7 +309,7 @@ def _cafef_banking_page_candidates(page: int) -> list[str]:
 def _scrape_cafef_banking(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
-    max_pages: int = 30,
+    max_pages: int = 100,
 ) -> list[dict[str, Any]]:
     """Scrape CafeF banking category pages (no keyword filtering)."""
     from bs4 import BeautifulSoup
@@ -333,7 +451,7 @@ def _scrape_vietstock(
     symbol: str,
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
-    max_pages: int = 25,
+    max_pages: int = 120,
 ) -> list[dict[str, Any]]:
     """Scrape Vietstock symbol news pages (no keyword filtering)."""
     from bs4 import BeautifulSoup
@@ -462,18 +580,169 @@ def _scrape_vietstock_article(url: str) -> tuple[str, pd.Timestamp | None]:
     return content, pub_date
 
 
-class NewsScraper:
-    """Banking-only web news scraper for VCB and MBB."""
+def _scrape_vnexpress(
+    symbol: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+    max_pages: int = 50,
+) -> list[dict[str, Any]]:
+    """Scrape VNExpress search results for a symbol using time-bounded query."""
+    from bs4 import BeautifulSoup
 
-    def __init__(self, cache_dir: Path = _NEWS_CACHE_DIR) -> None:
-        self.cache_dir = cache_dir
+    keywords = _VNEXPRESS_KEYWORDS.get(symbol.upper(), [symbol])
+    fromdate = int(start_date.timestamp())
+    todate = int(end_date.timestamp())
+
+    seen_urls: set[str] = set()
+    all_articles: list[dict[str, Any]] = []
+
+    for keyword in keywords:
+        for page in range(1, max_pages + 1):
+            url = (
+                f"https://timkiem.vnexpress.net/?q={keyword}"
+                f"&media=1&fromdate={fromdate}&todate={todate}&page={page}"
+            )
+            try:
+                resp = _http_get(url)
+            except Exception:
+                logger.debug("VNExpress search failed for keyword: {} page: {}", keyword, page)
+                break
+
+            soup = BeautifulSoup(resp.text, "lxml")
+            items = soup.select("article.item-news")
+            logger.info("VNExpress search [{}] page {}: {} candidates", keyword, page, len(items))
+            if not items:
+                break
+
+            for item in items:
+                ts_str = item.get("data-publishtime")
+                article_url = str(item.get("data-url", ""))
+                if not ts_str or not article_url or article_url in seen_urls:
+                    continue
+
+                try:
+                    pub_date = pd.to_datetime(int(ts_str), unit="s")
+                except Exception:
+                    continue
+                if pub_date < start_date or pub_date > end_date:
+                    continue
+
+                title_el = item.select_one("h3.title-news a, h2 a")
+                title = title_el.get_text(strip=True) if title_el else ""
+                desc_el = item.select_one("p.description a, p.description, p")
+                snippet = desc_el.get_text(strip=True) if desc_el else ""
+                content = (title + " " + snippet).strip() if snippet else title
+
+                if not title:
+                    continue
+
+                seen_urls.add(article_url)
+                all_articles.append(
+                    {
+                        "article_id": _build_article_id(
+                            {"source": "vnexpress", "url": article_url, "title": title}
+                        ),
+                        "title": title,
+                        "url": article_url,
+                        "source_url": article_url,
+                        "published_date": str(pub_date),
+                        "content": content,
+                        "source": "vnexpress",
+                    }
+                )
+
+    logger.info("VNExpress scraped {} articles for {}", len(all_articles), symbol)
+    return all_articles
+
+
+def _scrape_vnexpress_sector(
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+    max_pages: int = 30,
+) -> list[dict[str, Any]]:
+    """Scrape VNExpress for sector-wide banking/macro news (shared across all symbols)."""
+    cache_key = f"{start_date}_{end_date}"
+    if cache_key in _sector_news_cache:
+        logger.info("VNExpress sector: returning {} cached articles", len(_sector_news_cache[cache_key]))
+        return list(_sector_news_cache[cache_key])
+
+    from bs4 import BeautifulSoup
+
+    fromdate = int(start_date.timestamp())
+    todate = int(end_date.timestamp())
+    seen_urls: set[str] = set()
+    all_articles: list[dict[str, Any]] = []
+
+    for keyword in _VNEXPRESS_SECTOR_KEYWORDS:
+        for page in range(1, max_pages + 1):
+            url = (
+                f"https://timkiem.vnexpress.net/?q={keyword}"
+                f"&media=1&fromdate={fromdate}&todate={todate}&page={page}"
+            )
+            try:
+                resp = _http_get(url)
+            except Exception:
+                logger.debug("VNExpress sector search failed: {} page {}", keyword, page)
+                break
+
+            soup = BeautifulSoup(resp.text, "lxml")
+            items = soup.select("article.item-news")
+            logger.info("VNExpress sector [{}] page {}: {} candidates", keyword, page, len(items))
+            if not items:
+                break
+
+            for item in items:
+                ts_str = item.get("data-publishtime")
+                article_url = str(item.get("data-url", ""))
+                if not ts_str or not article_url or article_url in seen_urls:
+                    continue
+                try:
+                    pub_date = pd.to_datetime(int(ts_str), unit="s")
+                except Exception:
+                    continue
+                if pub_date < start_date or pub_date > end_date:
+                    continue
+
+                title_el = item.select_one("h3.title-news a, h2 a")
+                title = title_el.get_text(strip=True) if title_el else ""
+                desc_el = item.select_one("p.description a, p.description, p")
+                snippet = desc_el.get_text(strip=True) if desc_el else ""
+                content = (title + " " + snippet).strip() if snippet else title
+                if not title:
+                    continue
+
+                seen_urls.add(article_url)
+                all_articles.append(
+                    {
+                        "article_id": _build_article_id(
+                            {"source": "vnexpress_sector", "url": article_url, "title": title}
+                        ),
+                        "title": title,
+                        "url": article_url,
+                        "source_url": article_url,
+                        "published_date": str(pub_date),
+                        "content": content,
+                        "source": "vnexpress_sector",
+                    }
+                )
+
+    logger.info("VNExpress sector scraped {} macro/banking articles", len(all_articles))
+    _sector_news_cache[cache_key] = all_articles
+    return list(all_articles)
+
+
+class NewsScraper:
+    """Banking web news scraper with symbol-specific + sector-wide macro coverage."""
+
+    def __init__(self) -> None:
+        pass
 
     def fetch_news(
         self,
         symbol: str,
         start: str,
         end: str,
-        sources: tuple[str, ...] = ("cafef_banking", "vietstock"),
+        sources: tuple[str, ...] = ("vnexpress", "cafef_banking", "vietstock"),
         use_cache: bool = True,
         export_trace: bool = True,
         similarity_threshold: float = 85.0,
@@ -486,7 +755,7 @@ class NewsScraper:
             )
 
         if use_cache:
-            cached = _load_cache(symbol)
+            cached = _load_cache(symbol, start, end)
             if cached is not None:
                 df = self._articles_to_dataframe(cached, start, end)
                 if not df.empty:
@@ -496,10 +765,25 @@ class NewsScraper:
         end_ts = pd.Timestamp(end)
         all_articles: list[dict[str, Any]] = []
 
+        if "vnexpress" in sources:
+            try:
+                logger.info("Scraping VNExpress for {} ...", symbol)
+                all_articles.extend(_scrape_vnexpress(symbol, start_ts, end_ts))
+            except Exception:
+                logger.warning("VNExpress scraping failed for {} — continuing", symbol)
+
         if "cafef_banking" in sources:
             try:
-                logger.info("Scraping CafeF banking source for {} ...", symbol)
-                all_articles.extend(_scrape_cafef_banking(start_ts, end_ts))
+                cafef_key = f"{start_ts}_{end_ts}"
+                if cafef_key in _cafef_banking_cache:
+                    logger.info("CafeF banking: returning {} cached articles for {}", len(_cafef_banking_cache[cafef_key]), symbol)
+                    cafef_raw = list(_cafef_banking_cache[cafef_key])
+                else:
+                    logger.info("Scraping CafeF banking source for {} ...", symbol)
+                    cafef_raw = _scrape_cafef_banking(start_ts, end_ts)
+                    _cafef_banking_cache[cafef_key] = cafef_raw
+                cafef_filtered = _filter_cafef_by_relevance(cafef_raw, symbol)
+                all_articles.extend(cafef_filtered)
             except Exception:
                 logger.warning("CafeF banking scraping failed for {} — continuing", symbol)
 
@@ -509,6 +793,15 @@ class NewsScraper:
                 all_articles.extend(_scrape_vietstock(symbol, start_ts, end_ts))
             except Exception:
                 logger.warning("Vietstock scraping failed for {} — continuing", symbol)
+
+        # Add sector-wide banking/macro news (shared across all symbols)
+        if "vnexpress" in sources:
+            try:
+                sector_articles = _scrape_vnexpress_sector(start_ts, end_ts, max_pages=10)
+                logger.info("VNExpress sector: {} macro/banking articles for {}", len(sector_articles), symbol)
+                all_articles.extend(sector_articles)
+            except Exception:
+                logger.warning("VNExpress sector scraping failed — continuing")
 
         for art in all_articles:
             art["source_url"] = str(art.get("source_url", art.get("url", "")))
@@ -522,7 +815,7 @@ class NewsScraper:
         df = self._articles_to_dataframe(all_articles, start, end)
 
         if use_cache and all_articles:
-            _save_cache(symbol, all_articles)
+            _save_cache(symbol, start, end, all_articles)
 
         if export_trace:
             trace_rows: list[dict[str, Any]] = []
@@ -574,6 +867,7 @@ class NewsScraper:
         df["published_date"] = pd.to_datetime(df.get("published_date"), errors="coerce")
         if df["published_date"].dt.tz is not None:
             df["published_date"] = df["published_date"].dt.tz_localize(None)
+        df["published_date"] = df["published_date"].apply(_effective_trading_timestamp)
 
         if "title" not in df.columns:
             df["title"] = ""

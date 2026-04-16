@@ -1,6 +1,6 @@
 # Cross-Modal Temporal Fusion (CMTF) — Vietnamese Stock Prediction
 
-A multimodal time-series forecasting system that fuses **OHLCV market data** with **Vietnamese news embeddings** through a cross-attention architecture, benchmarked against Amazon Chronos foundation model baselines.
+A multimodal time-series forecasting system that fuses **OHLCV market data** with **Vietnamese financial news embeddings** through a FiLM-conditioned fusion architecture, benchmarked against Amazon Chronos foundation model baselines.
 
 ## Quick Start
 
@@ -25,8 +25,13 @@ pytest -m smoke tests/test_news_scraper_smoke.py -v
 # 4. Run the data pipeline
 python pipeline.py
 
-# 5. Run the benchmark (3 experiments × 3 symbols)
+# 5. Run the benchmark
 python run_chronos_benchmark.py
+
+# 5a. Run specific stages
+python run_chronos_benchmark.py --stage hpo    # Optuna HPO only
+python run_chronos_benchmark.py --stage cmtf   # Retrain CMTF only
+python run_chronos_benchmark.py --stage plot   # Regenerate plots
 ```
 
 ## Project Structure
@@ -38,17 +43,16 @@ python run_chronos_benchmark.py
 │   ├── pipeline/                # Data ingestion & preprocessing
 │   │   ├── orchestrator.py      # End-to-end pipeline orchestration
 │   │   ├── data_fetcher.py      # vnstock API + multi-source news
-│   │   ├── news_scraper.py      # CafeF + VnExpress web scraping
+│   │   ├── news_scraper.py      # CafeF + VnExpress + Vietstock scraping
 │   │   ├── temporal_aligner.py  # Leakage-free news → bar assignment
 │   │   ├── feature_engineer.py  # 15 technical indicators + normalization
 │   │   ├── news_encoder.py      # PhoBERT → 768-dim embeddings
 │   │   └── dataset_builder.py   # PyTorch Dataset with walk-forward splits
 │   └── benchmark/               # Chronos experiments & evaluation
-│       ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC
+│       ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1
 │       ├── chronos_market.py    # Zero-shot + linear probe
-│       └── chronos_cmtf.py      # Cross-modal fusion head
-├── tests/
-│   └── test_pipeline.py         # 18 unit tests
+│       └── chronos_cmtf.py      # FiLM + GRN fusion head
+├── tests/                       # 85 unit tests (4 skipped smoke tests)
 ├── results/                     # Benchmark outputs (CSV + figures)
 └── report.md                    # Full technical report
 ```
@@ -56,18 +60,29 @@ python run_chronos_benchmark.py
 ## Stack
 
 - **Python 3.14** · PyTorch · Amazon Chronos T5-Small · PhoBERT
-- **Data:** vnstock v3.x (OHLCV) · CafeF + VnExpress (news scraping)
-- **Symbols:** VCB, VIC, VHM — Vietnamese large-caps (2022–2024)
+- **Data:** vnstock v3.x (OHLCV) · CafeF + VnExpress + Vietstock (news)
+- **Symbols:** VCB, BID — Vietnamese banking large-caps
+- **Date Range:** 2022-01-01 to 2026-03-31
 
 ## Experiments
 
 | # | Experiment | Description |
 |---|-----------|-------------|
 | 1 | Chronos Zero-Shot | Foundation model predicts directly (no training) |
-| 2 | Chronos Linear-Probe | Ridge regression on Chronos encoder embeddings |
-| 3 | Chronos + CMTF | Cross-attention fusion of market + news embeddings |
+| 2 | Chronos Linear-Probe | Ridge regression on Chronos embeddings + tabular features |
+| 3 | Chronos + CMTF | FiLM + GRN fusion of market + news embeddings |
 
-See [report.md](report.md) for full results, analysis, and methodology.
+## Key Results (20-Day Horizon, VCB + BID)
+
+| Model | DA% | Sharpe | F1 | IC |
+|-------|-----|--------|----|----|
+| Chronos Zero-Shot | 46.8 | −0.32 | 0.48 | −0.13 |
+| Chronos Linear-Probe | 56.6 | 1.10 | 0.55 | 0.25 |
+| **Chronos + CMTF** | **62.9** | **0.82** | **0.52** | **0.48** |
+
+CMTF achieves the target ordering: ZeroShot < LinearProbe < CMTF across DA% and IC at the 20-day horizon.
+
+See [report.md](report.md) for full methodology, results, and references.
 
 ## License
 

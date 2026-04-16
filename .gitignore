@@ -35,3 +35,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Diagnostic / scratch scripts (not part of main pipeline)
+diag_cmtf.py

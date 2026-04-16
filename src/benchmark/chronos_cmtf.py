@@ -1,11 +1,17 @@
 """Chronos + Cross-Modal Temporal Fusion predictor.
 
-Freezes the Chronos encoder and trains a lightweight cross-attention
-fusion head that merges market embeddings with a *sequence* of news
-embeddings (one per bar in the look-back window).
+Freezes the Chronos encoder and trains a lightweight fusion head that
+merges market embeddings with aggregated news embeddings.
+
+Uses FiLM modulation (Perez et al., AAAI 2018) and Gated Residual
+Networks (Lim et al., IJoF 2021) instead of cross-attention to avoid
+the rank-collapse problem with sparse news sequences (Dong et al.,
+ICML 2021).
 """
 
 from __future__ import annotations
+
+import random
 
 import numpy as np
 import torch
@@ -16,13 +22,21 @@ from .chronos_market import ChronosMarketPredictor
 
 
 class CrossModalFusionHead(nn.Module):
-    """Cross-attention fusion: market query attends to a news *sequence*.
+    """Pooled fusion with FiLM modulation and Gated Residual Network.
 
-    Market embedding (B, market_dim) is projected once as the query.
-    News embeddings (B, seq_len, news_dim) form the key/value sequence,
-    giving the attention layer multiple positions to attend over.
-    A learned ``news_default`` token replaces all-zero news rows so the
-    model can distinguish "no news" from "neutral news".
+    Replaces cross-attention with a more robust approach for sparse news:
+
+    1. **Masked mean-pooling** aggregates non-zero news positions into a
+       single vector, avoiding the rank-collapse that cross-attention
+       exhibits when most positions are zero-padded (Dong et al., ICML 2021).
+    2. **FiLM modulation** (Perez et al., AAAI 2018): news generates
+       scale (γ) and shift (β) that modulate market features.  Unlike
+       attention, this preserves per-sample diversity in market embeddings.
+    3. **GRN gating** (Lim et al., IJoF 2021, from Temporal Fusion
+       Transformers): learns when to ignore news entirely, providing a
+       safe market-only fallback.
+
+    Dual-head output: regression + direction classification (BCE auxiliary).
     """
 
     def __init__(
@@ -30,61 +44,140 @@ class CrossModalFusionHead(nn.Module):
         market_dim: int = 512,
         news_dim: int = 768,
         tabular_dim: int = 0,
-        fusion_dim: int = 256,
+        fusion_dim: int = 128,
         n_heads: int = 4,
-        dropout: float = 0.1,
+        dropout: float = 0.2,
+        seq_len: int = 30,
     ) -> None:
         super().__init__()
         self.tabular_dim = tabular_dim
+        self.seq_len = seq_len
+        self.n_heads = n_heads  # stored for model recreation (not used)
+        self.market_dim = market_dim
         self.market_proj = nn.Linear(market_dim, fusion_dim)
         self.tabular_proj = nn.Linear(tabular_dim, fusion_dim) if tabular_dim > 0 else None
-        self.news_proj = nn.Linear(news_dim, fusion_dim)
 
-        # Learned replacement for missing-news positions
-        self.news_default = nn.Parameter(torch.randn(1, 1, news_dim) * 0.02)
+        # Direct linear regression path: [market_emb, tabular] → scalar.
+        # This is the LP-equivalent path — a single linear function of all
+        # raw market features, with NO activation, NO dropout, NO bottleneck.
+        # Ensures CMTF ≥ LP: even when the fusion path collapses, this path
+        # carries the full market signal.  Final output = direct + fusion.
+        direct_in = market_dim + (tabular_dim if tabular_dim > 0 else 0)
+        self.direct_reg = nn.Linear(direct_in, 1, bias=True)
 
-        self.cross_attn = nn.MultiheadAttention(
-            fusion_dim, num_heads=n_heads, batch_first=True, dropout=dropout,
+        # News compression: 768 → fusion_dim
+        self.news_compress = nn.Sequential(
+            nn.Linear(news_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
         )
-        self.norm = nn.LayerNorm(fusion_dim)
-        self.head = nn.Sequential(
-            nn.Linear(fusion_dim, 64),
+
+        # FiLM conditioning network: news_pool + density → γ, β
+        # (Perez et al., AAAI 2018 "FiLM: Visual Reasoning with a
+        #  General Conditioning Layer")
+        self.film = nn.Sequential(
+            nn.Linear(fusion_dim + 1, fusion_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(64, 1),
         )
+        self.film_gamma = nn.Linear(fusion_dim, fusion_dim)
+        self.film_beta = nn.Linear(fusion_dim, fusion_dim)
+
+        # GRN gate: learns when news modulation helps vs market-only
+        # (Lim et al., IJoF 2021 "Temporal Fusion Transformers")
+        self.grn_gate = nn.Sequential(
+            nn.Linear(fusion_dim * 2, fusion_dim),
+            nn.Sigmoid(),
+        )
+        self.grn_norm = nn.LayerNorm(fusion_dim)
+
+        # FFN block
+        ffn_hidden = fusion_dim * 2
+        self.ffn = nn.Sequential(
+            nn.Linear(fusion_dim, ffn_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_hidden, fusion_dim),
+        )
+        self.ffn_norm = nn.LayerNorm(fusion_dim)
+
+        # Nonlinear fusion regression head (adds on top of direct path)
+        self.reg_head = nn.Sequential(
+            nn.Linear(fusion_dim, fusion_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_dim // 2, 1),
+        )
+
+        # Classification head (direction: up=1 / down=0)
+        self.cls_head = nn.Sequential(
+            nn.Linear(fusion_dim, fusion_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_dim // 2, 1),
+        )
+
+        # Init FiLM to identity modulation: γ=1, β=0 at start
+        # → model begins at market-only baseline (like LP)
+        nn.init.zeros_(self.film_gamma.weight)
+        nn.init.zeros_(self.film_gamma.bias)
+        nn.init.zeros_(self.film_beta.weight)
+        nn.init.zeros_(self.film_beta.bias)
+
+        # Init fusion reg_head output layer to zero so the model starts
+        # at the direct (LP-like) path with zero fusion contribution.
+        nn.init.zeros_(self.reg_head[-1].weight)
+        nn.init.zeros_(self.reg_head[-1].bias)
 
     def forward(
         self,
         market_emb: torch.Tensor,
         news_emb: torch.Tensor,
         tabular_emb: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Forward pass.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # --- News aggregation: masked mean-pooling ---
+        news_mask = (news_emb.abs().sum(-1) > 0)  # (B, S) bool
+        news_count = news_mask.sum(-1, keepdim=True).clamp(min=1).float()
+        density = news_count / news_emb.shape[1]  # (B, 1) ∈ [0, 1]
 
-        Args:
-            market_emb: (B, market_dim) — Chronos encoder output.
-            news_emb:   (B, seq_len, news_dim) — per-bar news embeddings.
-            tabular_emb: (B, tabular_dim) optional engineered market features.
+        news_compressed = self.news_compress(news_emb)  # (B, S, F)
+        news_masked = news_compressed * news_mask.unsqueeze(-1).float()
+        news_pool = news_masked.sum(1) / news_count  # (B, F)
 
-        Returns:
-            (B,) predicted return.
-        """
-        # Replace all-zero news positions with the learned default token
-        zero_mask = (news_emb.abs().sum(dim=-1, keepdim=True) == 0)  # (B, S, 1)
-        news_filled = torch.where(zero_mask, self.news_default, news_emb)
-
-        market_q = self.market_proj(market_emb)
+        # --- Market projection ---
+        market_h = self.market_proj(market_emb)  # (B, F)
         if self.tabular_proj is not None and tabular_emb is not None:
-            market_q = market_q + self.tabular_proj(tabular_emb)
+            market_h = market_h + self.tabular_proj(tabular_emb)
 
-        q = market_q.unsqueeze(1)                         # (B, 1, F)
-        kv = self.news_proj(news_filled)                  # (B, S, F)
+        # --- FiLM modulation: news scales/shifts market features ---
+        film_input = torch.cat([news_pool, density], dim=-1)  # (B, F+1)
+        film_h = self.film(film_input)
+        gamma = 1.0 + self.film_gamma(film_h)  # centred at 1
+        beta = self.film_beta(film_h)
+        modulated = gamma * market_h + beta  # (B, F)
 
-        attn_out, _ = self.cross_attn(q, kv, kv)         # (B, 1, F)
-        fused = self.norm(attn_out.squeeze(1) + q.squeeze(1))  # residual
+        # --- GRN gating: residual from market-only ---
+        gate_input = torch.cat([market_h, modulated], dim=-1)  # (B, 2F)
+        gate = self.grn_gate(gate_input)  # (B, F) ∈ [0, 1]
+        fused = self.grn_norm(gate * modulated + (1 - gate) * market_h)
 
-        return self.head(fused).squeeze(-1)                # (B,)
+        # --- FFN + residual ---
+        fused = self.ffn_norm(fused + self.ffn(fused))
+
+        # --- Direct LP-like linear regression path ---
+        # Single linear layer on raw [market_emb, tabular] — no activation,
+        # no dropout, no bottleneck.  Equivalent to Ridge regression.
+        if self.tabular_proj is not None and tabular_emb is not None:
+            direct_in = torch.cat([market_emb, tabular_emb], dim=-1)
+        else:
+            direct_in = market_emb
+        reg_direct = self.direct_reg(direct_in).squeeze(-1)  # (B,)
+
+        # --- Additive combination: LP_linear + fusion_nonlinear ---
+        reg_fused = self.reg_head(fused).squeeze(-1)  # (B,)
+        reg_out = reg_direct + reg_fused  # fusion adds on top of LP
+
+        cls_logit = self.cls_head(fused).squeeze(-1)  # (B,)
+        return reg_out, cls_logit
 
 
 class ChronosCMTFPredictor:
@@ -95,36 +188,80 @@ class ChronosCMTFPredictor:
         chronos_predictor: ChronosMarketPredictor,
         news_dim: int = 768,
         tabular_dim: int = 0,
-        fusion_dim: int = 256,
+        fusion_dim: int = 128,
+        n_heads: int = 4,
+        dropout: float = 0.2,
+        seq_len: int = 30,
+        bce_weight: float = 0.5,
         device: str = "cpu",
     ) -> None:
         self.chronos = chronos_predictor
         self.device = device
+        self.bce_weight = bce_weight
+        self.seq_len = seq_len
+        # Target normalisation stats (set during fit)
+        self._y_mean: float = 0.0
+        self._y_std: float = 1.0
+        self._val_reg_median: float = 0.0
+        self._pred_scale: float = 1.0  # variance calibration (EMOS)
         self.fusion = CrossModalFusionHead(
             market_dim=chronos_predictor.d_model,
             news_dim=news_dim,
             tabular_dim=tabular_dim,
             fusion_dim=fusion_dim,
+            n_heads=n_heads,
+            dropout=dropout,
+            seq_len=seq_len,
         ).to(device)
 
     # ------------------------------------------------------------------
-    # Loss that combines MSE with a directional (sign) penalty
+    # Loss: CCC regression + BCE auxiliary for direction
     # ------------------------------------------------------------------
-    @staticmethod
     def _combined_loss(
-        pred: torch.Tensor,
+        self,
+        pred_reg: torch.Tensor,
+        pred_cls: torch.Tensor,
         target: torch.Tensor,
-        alpha: float = 0.3,
+        weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """MSE + sign-agreement penalty.
+        """CCC regression + BCE direction loss.
 
-        ``alpha`` controls the weight of the directional term.
+        Uses Concordance Correlation Coefficient (Lin, 1989) instead of
+        MSE to prevent prediction variance collapse.  CCC simultaneously
+        optimises correlation *and* variance matching, so the model
+        cannot minimise the loss by predicting near-constant values.
+
+        CCC = 2·cov(ŷ, y) / (var(ŷ) + var(y) + (mean(ŷ) - mean(y))²)
+
+        cls_head provides auxiliary directional gradient via BCE
+        (Pei et al., ECAI 2025).
         """
-        mse = nn.functional.mse_loss(pred, target)
-        # Soft sign agreement: penalise when pred and target disagree
-        sign_agree = (pred * target).clamp(min=-1.0)  # positive when same sign
-        dir_loss = -sign_agree.mean()  # lower is better
-        return mse + alpha * dir_loss
+        if weights is None:
+            weights = torch.ones_like(target)
+
+        # --- Regression: CCC loss (Lin, 1989) ---
+        if len(pred_reg) >= 8:
+            w = weights / weights.sum()  # normalise to sum=1
+            mean_p = (w * pred_reg).sum()
+            mean_t = (w * target).sum()
+            var_p = (w * (pred_reg - mean_p) ** 2).sum()
+            var_t = (w * (target - mean_t) ** 2).sum()
+            cov_pt = (w * (pred_reg - mean_p) * (target - mean_t)).sum()
+            ccc = 2.0 * cov_pt / (var_p + var_t + (mean_p - mean_t) ** 2 + 1e-8)
+            loss_reg = 1.0 - ccc
+        else:
+            # Fallback to MSE for tiny last batches
+            w = weights / weights.mean()
+            loss_reg = (w * (pred_reg - target) ** 2).mean()
+
+        # --- Direction: BCE auxiliary ---
+        w_bce = weights / weights.mean()
+        dir_label = (target > 0).float()
+        loss_bce = nn.functional.binary_cross_entropy_with_logits(
+            pred_cls, dir_label, weight=w_bce, reduction="mean",
+        )
+
+        return (1.0 - self.bce_weight) * loss_reg + self.bce_weight * loss_bce
 
     def fit(
         self,
@@ -137,9 +274,12 @@ class ChronosCMTFPredictor:
         tabular_train: np.ndarray | None = None,
         tabular_val: np.ndarray | None = None,
         epochs: int = 80,
-        lr: float = 1e-3,
-        patience: int = 15,
-        batch_size: int = 64,
+        lr: float = 5e-4,
+        patience: int = 25,
+        batch_size: int = 32,
+        seed: int = 42,
+        precomputed_emb_train: np.ndarray | None = None,
+        precomputed_emb_val: np.ndarray | None = None,
     ) -> dict[str, list[float]]:
         """Train the fusion head with mini-batch SGD.
 
@@ -153,42 +293,104 @@ class ChronosCMTFPredictor:
             lr: Learning rate.
             patience: Early-stopping patience.
             batch_size: Mini-batch size.
+            precomputed_emb_train: (N_train, d_model) pre-computed Chronos
+                embeddings. If provided, skip internal embedding computation.
+            precomputed_emb_val: (N_val, d_model) pre-computed Chronos
+                embeddings for validation set.
 
         Returns:
             Training history dict with 'train_loss' and 'val_loss'.
         """
-        logger.info("Computing Chronos embeddings (frozen) …")
-        emb_train = self.chronos.get_embeddings(close_train)
-        emb_val = self.chronos.get_embeddings(close_val)
+        # Pin RNG before weight init + training for reproducibility
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+        # Re-create fusion head from scratch for deterministic init
+        self.fusion = CrossModalFusionHead(
+            market_dim=self.chronos.d_model,
+            news_dim=self.fusion.news_compress[0].in_features,
+            tabular_dim=self.fusion.tabular_dim,
+            fusion_dim=self.fusion.market_proj.out_features,
+            n_heads=self.fusion.n_heads,
+            dropout=self.fusion.reg_head[2].p,  # Dropout is at index 2 in reg_head
+            seq_len=self.seq_len,
+        ).to(self.device)
+
+        if precomputed_emb_train is not None and precomputed_emb_val is not None:
+            logger.info("Using pre-computed Chronos embeddings")
+            emb_train = precomputed_emb_train
+            emb_val = precomputed_emb_val
+        else:
+            logger.info("Computing Chronos embeddings (frozen) …")
+            emb_train = self.chronos.get_embeddings(close_train)
+            emb_val = self.chronos.get_embeddings(close_val)
+
+        # ---- Target z-score normalisation ----
+        self._y_mean = float(np.mean(y_train))
+        self._y_std = float(np.std(y_train))
+        if self._y_std < 1e-8:
+            self._y_std = 1.0
+        y_train_norm = ((y_train - self._y_mean) / self._y_std).astype(np.float32)
+        y_val_norm = ((y_val - self._y_mean) / self._y_std).astype(np.float32)
+        logger.info(
+            "Target z-score: mean={:.6f}, std={:.6f}, up%={:.1f}%",
+            self._y_mean, self._y_std, 100.0 * (y_train > 0).mean(),
+        )
 
         train_m = torch.tensor(emb_train, dtype=torch.float32, device=self.device)
         train_n = torch.tensor(news_train, dtype=torch.float32, device=self.device)
-        train_y = torch.tensor(y_train, dtype=torch.float32, device=self.device)
+        train_y = torch.tensor(y_train_norm, dtype=torch.float32, device=self.device)
         train_t = (
             torch.tensor(tabular_train, dtype=torch.float32, device=self.device)
             if tabular_train is not None
             else None
         )
 
+        # Per-sample weight based on news *density* — the fraction of bars in
+        # the lookback window that carry a real (non-zero) news embedding.
+        # Weights range smoothly from 1× (no news bars) to 2× (all bars have news).
+        news_bar_present = (np.abs(news_train).sum(axis=-1) > 0)  # (N, seq_len) bool
+        news_density = news_bar_present.mean(axis=1).astype(np.float32)  # (N,)
+        sample_weights = (1.0 + news_density).astype(np.float32)
+        logger.info(
+            "News-density weighting: density min={:.3f} mean={:.3f} max={:.3f}",
+            float(news_density.min()), float(news_density.mean()), float(news_density.max()),
+        )
+        train_w = torch.tensor(sample_weights, dtype=torch.float32, device=self.device)
+
         val_m = torch.tensor(emb_val, dtype=torch.float32, device=self.device)
         val_n = torch.tensor(news_val, dtype=torch.float32, device=self.device)
-        val_y = torch.tensor(y_val, dtype=torch.float32, device=self.device)
+        val_y = torch.tensor(y_val_norm, dtype=torch.float32, device=self.device)
         val_t = (
             torch.tensor(tabular_val, dtype=torch.float32, device=self.device)
             if tabular_val is not None
             else None
         )
 
-        # Mini-batch DataLoader
-        if train_t is None:
-            train_ds = TensorDataset(train_m, train_n, train_y)
-        else:
-            train_ds = TensorDataset(train_m, train_n, train_t, train_y)
-        train_loader = DataLoader(
-            train_ds, batch_size=batch_size, shuffle=True, drop_last=False,
+        # Val-set news density weights (consistent with train weighting)
+        val_news_present = (np.abs(news_val).sum(axis=-1) > 0)  # (N_val, seq_len)
+        val_density = val_news_present.mean(axis=1).astype(np.float32)
+        val_w = torch.tensor(
+            (1.0 + val_density).astype(np.float32),
+            dtype=torch.float32, device=self.device,
         )
 
-        optimizer = torch.optim.AdamW(self.fusion.parameters(), lr=lr)
+        # Mini-batch DataLoader (weights always included as last element)
+        if train_t is None:
+            train_ds = TensorDataset(train_m, train_n, train_y, train_w)
+        else:
+            train_ds = TensorDataset(train_m, train_n, train_t, train_y, train_w)
+        loader_gen = torch.Generator()
+        loader_gen.manual_seed(seed)
+        train_loader = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True, drop_last=False,
+            generator=loader_gen,
+        )
+
+        optimizer = torch.optim.AdamW(self.fusion.parameters(), lr=lr, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
 
         best_val_loss = float("inf")
         best_state = None
@@ -202,13 +404,13 @@ class ChronosCMTFPredictor:
             n_batches = 0
             for batch in train_loader:
                 if train_t is None:
-                    mb_m, mb_n, mb_y = batch
+                    mb_m, mb_n, mb_y, mb_w = batch
                     mb_t = None
                 else:
-                    mb_m, mb_n, mb_t, mb_y = batch
+                    mb_m, mb_n, mb_t, mb_y, mb_w = batch
                 optimizer.zero_grad()
-                pred = self.fusion(mb_m, mb_n, mb_t)
-                loss = self._combined_loss(pred, mb_y)
+                pred_reg, pred_cls = self.fusion(mb_m, mb_n, mb_t)
+                loss = self._combined_loss(pred_reg, pred_cls, mb_y, weights=mb_w)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.fusion.parameters(), 1.0)
                 optimizer.step()
@@ -220,8 +422,8 @@ class ChronosCMTFPredictor:
             # --- Validate ---
             self.fusion.eval()
             with torch.no_grad():
-                val_pred = self.fusion(val_m, val_n, val_t)
-                val_loss = self._combined_loss(val_pred, val_y).item()
+                val_reg, val_cls = self.fusion(val_m, val_n, val_t)
+                val_loss = self._combined_loss(val_reg, val_cls, val_y, weights=val_w).item()
 
             history["train_loss"].append(avg_train)
             history["val_loss"].append(val_loss)
@@ -243,8 +445,34 @@ class ChronosCMTFPredictor:
                 logger.info("Early stopping at epoch {}", epoch + 1)
                 break
 
+            scheduler.step()
+
         if best_state is not None:
             self.fusion.load_state_dict(best_state)
+
+        # ---- Compute val-based centering offset ----
+        self.fusion.eval()
+        with torch.no_grad():
+            val_reg_out, _ = self.fusion(val_m, val_n, val_t)
+            val_preds = val_reg_out.cpu().numpy() * self._y_std + self._y_mean
+            self._val_reg_median = float(np.median(val_preds))
+            val_centred = val_preds - self._val_reg_median
+            val_y_np = y_val
+            nonzero = val_y_np != 0
+            val_da = 100.0 * np.mean(np.sign(val_y_np[nonzero]) == np.sign(val_centred[nonzero])) if nonzero.any() else 0.0
+
+        # ---- Variance calibration (EMOS-style, Gneiting et al. 2005) ----
+        # Scale predictions to match actual return variance on val set.
+        pred_std = float(np.std(val_centred))
+        actual_std = float(np.std(y_val))
+        self._pred_scale = float(np.clip(
+            actual_std / max(pred_std, 1e-8), 0.5, 15.0,
+        ))
+        logger.info(
+            "CMTF val DA%: {:.1f}% (centering={:.6f}, pred_std={:.6f}, actual_std={:.6f}, scale={:.2f})",
+            val_da, self._val_reg_median, pred_std, actual_std, self._pred_scale,
+        )
+
         logger.info("CMTF fusion training done | best val loss = {:.6f}", best_val_loss)
         return history
 
@@ -253,6 +481,7 @@ class ChronosCMTFPredictor:
         close_test: np.ndarray,
         news_test: np.ndarray,
         tabular_test: np.ndarray | None = None,
+        precomputed_emb_test: np.ndarray | None = None,
     ) -> np.ndarray:
         """Predict returns using frozen Chronos embeddings + trained fusion head.
 
@@ -260,11 +489,16 @@ class ChronosCMTFPredictor:
             close_test: (N_test, seq_len) raw close windows.
             news_test:  (N_test, seq_len, 768) per-bar news embeddings.
             tabular_test: (N_test, F_tab) optional engineered market features.
+            precomputed_emb_test: (N_test, d_model) pre-computed Chronos
+                embeddings. If provided, skip internal embedding computation.
 
         Returns:
             (N_test,) predicted returns.
         """
-        emb_test = self.chronos.get_embeddings(close_test)
+        if precomputed_emb_test is not None:
+            emb_test = precomputed_emb_test
+        else:
+            emb_test = self.chronos.get_embeddings(close_test)
 
         test_m = torch.tensor(emb_test, dtype=torch.float32, device=self.device)
         test_n = torch.tensor(news_test, dtype=torch.float32, device=self.device)
@@ -276,4 +510,55 @@ class ChronosCMTFPredictor:
 
         self.fusion.eval()
         with torch.no_grad():
-            return self.fusion(test_m, test_n, test_t).cpu().numpy()
+            reg_out, _ = self.fusion(test_m, test_n, test_t)
+            # Denormalise from z-score space
+            preds = reg_out.cpu().numpy() * self._y_std + self._y_mean
+            # Zero-centre using *validation* prediction median, which
+            # preserves any directional bias learned during training.
+            # (Previous approach used test median, which forced a 50/50
+            # up/down split and destroyed DA% when the test period had
+            # a bullish or bearish trend.)
+            centred = preds - self._val_reg_median
+            # Variance calibration (EMOS-style): scale to match actual
+            # return distribution observed on validation set.
+            scaled = centred * self._pred_scale
+            n_pos = int(np.sum(scaled > 0))
+            n_neg = int(np.sum(scaled < 0))
+            logger.info(
+                "CMTF predict: val_median={:.6f}, scale={:.2f} → {}+/{}− predictions",
+                self._val_reg_median, self._pred_scale, n_pos, n_neg,
+            )
+            return scaled
+
+    # ------------------------------------------------------------------
+    # Checkpoint save / load (includes normalisation scalars)
+    # ------------------------------------------------------------------
+    def get_checkpoint(self) -> dict:
+        """Return a dict containing model weights + normalisation params."""
+        return {
+            "state_dict": self.fusion.state_dict(),
+            "y_mean": self._y_mean,
+            "y_std": self._y_std,
+            "val_reg_median": self._val_reg_median,
+            "pred_scale": self._pred_scale,
+        }
+
+    def load_checkpoint(self, ckpt: dict | None) -> None:
+        """Load model weights + normalisation params from a checkpoint dict.
+
+        Also supports legacy checkpoints that are plain state_dicts.
+        """
+        if ckpt is None:
+            return
+        if "state_dict" in ckpt:
+            self.fusion.load_state_dict(ckpt["state_dict"])
+            self._y_mean = float(ckpt.get("y_mean", 0.0))
+            self._y_std = float(ckpt.get("y_std", 1.0))
+            self._val_reg_median = float(ckpt.get("val_reg_median", 0.0))
+            self._pred_scale = float(ckpt.get("pred_scale", 1.0))
+        else:
+            # Legacy: plain state_dict without normalisation params
+            self.fusion.load_state_dict(ckpt)
+            self._y_mean = 0.0
+            self._y_std = 1.0
+            self._val_reg_median = 0.0

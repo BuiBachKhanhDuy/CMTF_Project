@@ -7,12 +7,11 @@ for the Cross-Modal Temporal Fusion model.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 from loguru import logger
 
 
@@ -122,56 +121,3 @@ class CMTFDataset(Dataset):
             "mask": mask,
             "target": target,
         }
-
-    # ------------------------------------------------------------------
-    # Walk-forward splits
-    # ------------------------------------------------------------------
-    def create_splits(
-        self,
-        train_end: str,
-        val_end: str,
-    ) -> tuple[Subset, Subset, Subset]:
-        """Create train / val / test subsets by date (walk-forward).
-
-        Args:
-            train_end: Last date (inclusive) for training data.
-            val_end: Last date (inclusive) for validation data.
-
-        Returns:
-            ``(train_subset, val_subset, test_subset)`` — each a
-            :class:`torch.utils.data.Subset`.
-        """
-        train_end_ts = pd.Timestamp(train_end)
-        val_end_ts = pd.Timestamp(val_end)
-
-        # The dataset index maps to actual_idx = _valid_start + dataset_idx
-        # We need to check the *last* timestamp in each sequence window
-        times = pd.to_datetime(self.df["time"])
-
-        train_indices: list[int] = []
-        val_indices: list[int] = []
-        test_indices: list[int] = []
-
-        for dataset_idx in range(len(self)):
-            actual_idx = self._valid_start + dataset_idx
-            bar_time = times.iloc[actual_idx]
-
-            if bar_time <= train_end_ts:
-                train_indices.append(dataset_idx)
-            elif bar_time <= val_end_ts:
-                val_indices.append(dataset_idx)
-            else:
-                test_indices.append(dataset_idx)
-
-        logger.info(
-            "Splits | train={} | val={} | test={}",
-            len(train_indices),
-            len(val_indices),
-            len(test_indices),
-        )
-
-        return (
-            Subset(self, train_indices),
-            Subset(self, val_indices),
-            Subset(self, test_indices),
-        )

@@ -1,12 +1,20 @@
 """Run Chronos benchmark: Market-Only vs Cross-Modal Temporal Fusion.
 
 Usage:
-    python run_chronos_benchmark.py
+    python run_chronos_benchmark.py                  # full run (use caches)
+    python run_chronos_benchmark.py --stage data     # rebuild dataset only
+    python run_chronos_benchmark.py --stage predict  # rerun models, reuse data
+    python run_chronos_benchmark.py --stage cmtf     # retrain CMTF only
+    python run_chronos_benchmark.py --stage hpo      # run Optuna HPO + retrain CMTF
+    python run_chronos_benchmark.py --stage plot     # regenerate plots from CSVs
 """
 
 from __future__ import annotations
 
-import sys
+import argparse
+import hashlib
+import os
+import random
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +25,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from loguru import logger
 
+
+def set_global_seed(seed: int) -> None:
+    """Pin every RNG source for full reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    logger.info("Global seed set to {}", seed)
+
 # Project imports
 from src.pipeline import run_pipeline
 from src.pipeline.data_fetcher import VnstockDataFetcher
@@ -26,6 +46,120 @@ from src.benchmark.chronos_cmtf import ChronosCMTFPredictor
 
 RESULTS_DIR = Path("results")
 FIGURES_DIR = RESULTS_DIR / "figures"
+CACHE_EMB_DIR = Path("cache/chronos_emb")
+CACHE_PRED_DIR = Path("cache/predictions")
+CACHE_CMTF_DIR = Path("cache/cmtf_models")
+CACHE_HPO_DIR = Path("cache/optuna")
+
+
+def _split_hash(splits: dict, sym: str, horizon: int) -> str:
+    """Short hash of split sizes for cache key."""
+    h = hashlib.sha256()
+    h.update(f"{sym}_{horizon}".encode())
+    for name in ("train", "val", "test"):
+        n = len(splits[name]["targets"])
+        h.update(f"{name}={n}".encode())
+    return h.hexdigest()[:12]
+
+
+def _save_npy(path: Path, arr: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(path, arr)
+
+
+def _load_npy(path: Path) -> np.ndarray | None:
+    if path.exists():
+        return np.load(path)
+    return None
+
+
+def _run_optuna_hpo(
+    chronos: ChronosMarketPredictor,
+    all_symbol_splits: dict[str, dict[str, dict[str, np.ndarray]]],
+    all_symbol_embs: dict[str, dict[str, np.ndarray]],
+    target_h: int,
+    use_tabular: bool,
+    device: str,
+    n_trials: int = 30,
+    seq_len: int = 30,
+) -> dict:
+    """Run Optuna HPO across all symbols jointly.
+
+    Objective: average validation loss over all symbols (single seed=42).
+    Searched hyperparameters:
+        fusion_dim ∈ {32, 64, 128}
+        lr ∈ [1e-4, 1e-2] (log-uniform)
+        bce_weight ∈ [0.1, 0.3]
+        dropout ∈ [0.1, 0.5]
+    Fixed: n_heads = 1 (FiLM/GRN does not use attention heads)
+
+    Returns:
+        Best hyperparameter dict.
+    """
+    import optuna
+    import json
+
+    CACHE_HPO_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = CACHE_HPO_DIR / f"best_params_{target_h}d.json"
+
+    # Check for cached result
+    if cache_file.exists():
+        with open(cache_file) as f:
+            best = json.load(f)
+        logger.info("Optuna HPO loaded from cache: {}", best)
+        return best
+
+    def objective(trial: optuna.Trial) -> float:
+        fusion_dim = trial.suggest_categorical("fusion_dim", [32, 64, 128])
+        # n_heads is not used by FiLM/GRN architecture — fixed at 1
+        n_heads = 1
+        lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+        bce_weight = trial.suggest_float("bce_weight", 0.1, 0.3)
+        dropout = trial.suggest_float("dropout", 0.1, 0.5)
+
+        total_val_loss = 0.0
+        n_symbols = 0
+
+        for sym, splits in all_symbol_splits.items():
+            embs = all_symbol_embs[sym]
+            tab_dim = (
+                int(splits["train"].get("market_tabular", np.zeros((1, 0))).shape[1])
+                if use_tabular else 0
+            )
+            cmtf = ChronosCMTFPredictor(
+                chronos, tabular_dim=tab_dim, device=device,
+                fusion_dim=fusion_dim, n_heads=n_heads, dropout=dropout,
+                bce_weight=bce_weight, seq_len=seq_len,
+            )
+            history = cmtf.fit(
+                splits["train"]["close_windows"], splits["train"]["news_embs"],
+                splits["train"]["targets"],
+                splits["val"]["close_windows"], splits["val"]["news_embs"],
+                splits["val"]["targets"],
+                tabular_train=splits["train"].get("market_tabular") if use_tabular else None,
+                tabular_val=splits["val"].get("market_tabular") if use_tabular else None,
+                seed=42, lr=lr, epochs=50, patience=15, batch_size=32,
+                precomputed_emb_train=embs["train"],
+                precomputed_emb_val=embs["val"],
+            )
+            total_val_loss += min(history["val_loss"])
+            n_symbols += 1
+
+        return total_val_loss / max(n_symbols, 1)
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+    best = study.best_params
+    logger.info("Optuna best params ({}D): {}", target_h, best)
+    logger.info("Optuna best val loss: {:.6f}", study.best_value)
+
+    # Cache result
+    with open(cache_file, "w") as f:
+        json.dump(best, f, indent=2)
+
+    return best
 
 
 # ======================================================================
@@ -160,10 +294,18 @@ def split_by_date(
     train_end_ts = pd.Timestamp(train_end)
     val_end_ts = pd.Timestamp(val_end)
 
-    # Apply purge buffer: exclude last H bars before each boundary
-    purge_days = pd.Timedelta(days=target_horizon_days)
-    train_end_purged = train_end_ts - purge_days
-    val_end_purged = val_end_ts - purge_days
+    # Apply purge buffer using actual trading days (not calendar days)
+    # so that H trading days are excluded before each boundary.
+    sorted_times = np.sort(np.unique(times))
+
+    def _trading_day_offset(boundary: pd.Timestamp, n: int) -> pd.Timestamp:
+        """Return the timestamp n *trading* days before boundary."""
+        idx = np.searchsorted(sorted_times, boundary, side="right") - 1
+        idx = max(idx - n, 0)
+        return pd.Timestamp(sorted_times[idx])
+
+    train_end_purged = _trading_day_offset(train_end_ts, target_horizon_days)
+    val_end_purged = _trading_day_offset(val_end_ts, target_horizon_days)
 
     train_mask = times <= train_end_purged
     val_mask = (times > train_end_ts) & (times <= val_end_purged)
@@ -257,6 +399,10 @@ def plot_ablation(results_df: pd.DataFrame, save_path: Path) -> None:
         for i, exp in enumerate(experiments):
             row = results_df[results_df["Experiment"] == exp].iloc[0]
             v = row[metric]
+            if np.isnan(v):
+                vals.append(0.0)
+                ax.text(i, 0, "N/A", ha="center", va="bottom", fontsize=9, fontstyle="italic")
+                continue
             vals.append(v)
             bar = ax.bar(i, v, color=colors[i % len(colors)], width=0.6)
             # Value label on top of bar
@@ -373,31 +519,68 @@ def plot_per_symbol(results_df: pd.DataFrame, save_path: Path) -> None:
 # ======================================================================
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Chronos benchmark")
+    parser.add_argument(
+        "--stage", choices=["data", "predict", "cmtf", "hpo", "plot"],
+        default=None,
+        help="Run only a specific stage (default: full run using caches)",
+    )
+    args = parser.parse_args()
+    stage = args.stage  # None = full run
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
     # ----- Pipeline config -----
     config = {
-        "symbols": ["VCB", "MBB"],
-        "start": "2025-04-01",
+        "seed": 42,
+        "rebuild_data": False,        # Use cached dataset if available
+        "symbols": ["VCB", "BID"],
+        "start": "2022-01-01",
         "end": "2026-03-31",
         "interval": "1D",
         "ohlcv_source": "KBS",
         "news_source": "web",
-        "news_sources": ("cafef_banking", "vietstock"),
-        "news_use_cache": False,
+        "news_sources": ("vnexpress", "cafef_banking", "vietstock"),
+        "news_use_cache": True,       # Reuse cached news articles
         "news_export_trace": True,
         "news_similarity_threshold": 85.0,
         "log_news_coverage": True,
         "sequence_len": 30,
         "horizon": 1,
         "target_horizons_days": [1, 5, 20],
-        "train_end": "2025-10-31",
-        "val_end": "2025-12-31",
+        "train_end": "2024-06-30",
+        "val_end": "2024-12-31",
         "normalize_method": "zscore",
+        "use_tabular_market_features": True,
+        "allow_unfair_baselines": True,
     }
 
+    # Override for --stage data: force rebuild
+    if stage == "data":
+        config["rebuild_data"] = True
+
+    # ----- 1. Set global seed -----
+    set_global_seed(config["seed"])
+
     # ----- 2. Fetch raw OHLCV (cached) for Chronos -----
+    if stage == "plot":
+        # Plot-only mode: skip everything, just regenerate from CSVs
+        horizons = [int(h) for h in config.get("target_horizons_days", [1])]
+        for target_h in horizons:
+            suffix = f"{target_h}d"
+            csv_path = RESULTS_DIR / f"chronos_benchmark_{suffix}.csv"
+            if not csv_path.exists():
+                logger.warning("No results CSV for {}D — skipping plot", target_h)
+                continue
+            results_df = pd.read_csv(csv_path)
+            avg_df = results_df[results_df["Symbol"] == "AVG"]
+            plot_ablation(avg_df, FIGURES_DIR / f"ablation_chronos_{suffix}.png")
+            plot_per_symbol(results_df, FIGURES_DIR / f"per_symbol_heatmap_{suffix}.png")
+            logger.info("Plots regenerated for {}D", target_h)
+        logger.info("═══ Plot-only mode complete ═══")
+        return
+
     logger.info("═══ Fetching raw OHLCV for Chronos ═══")
     fetcher = VnstockDataFetcher()
     raw_ohlcv = fetcher.fetch_multi_symbol(
@@ -405,9 +588,34 @@ def main() -> None:
     )
 
     # ----- 3. Load Chronos (once, shared) -----
+    if stage == "data":
+        # Data-only mode: just build dataset, no model needed
+        horizons = [int(h) for h in config.get("target_horizons_days", [1])]
+        for target_h in horizons:
+            run_cfg = {**config, "target_horizon_days": target_h}
+            logger.info("Building dataset for target horizon {}D", target_h)
+            run_pipeline(run_cfg)
+        logger.info("═══ Data-only mode complete ═══")
+        return
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("═══ Loading Chronos (device={}) ═══", device)
     chronos = ChronosMarketPredictor(device=device)
+    use_tabular_market_features = bool(config.get("use_tabular_market_features", False))
+    allow_unfair_baselines = bool(config.get("allow_unfair_baselines", False))
+    if use_tabular_market_features and not allow_unfair_baselines:
+        raise ValueError(
+            "Tabular market features for trainable baselines are disabled by default for fairness. "
+            "Set allow_unfair_baselines=True only for explicit ablation runs."
+        )
+    if use_tabular_market_features:
+        logger.warning(
+            "Benchmark fairness mode OFF: trainable models receive extra tabular market features"
+        )
+    else:
+        logger.info(
+            "Benchmark fairness mode ON: all models share the same market input via Chronos close windows"
+        )
 
     # ----- 4. Run experiments for each target horizon -----
     horizons = [int(h) for h in config.get("target_horizons_days", [1])]
@@ -434,6 +642,12 @@ def main() -> None:
         }
         all_y_true: list[np.ndarray] = []
 
+        # ---- Phase 1: splits, ZS, LP, embeddings ----
+        _all_splits: dict[str, dict[str, dict[str, np.ndarray]]] = {}
+        _all_embs: dict[str, dict[str, np.ndarray]] = {}
+        _all_sh: dict[str, str] = {}
+        _sym_order: list[str] = []  # track order for indexing
+
         for sym, data in per_symbol.items():
             logger.info("━━━ Benchmark: {} ({}D) ━━━", sym, target_h)
 
@@ -446,20 +660,51 @@ def main() -> None:
             )
             splits = impute_tabular_splits(splits)
 
+            # News coverage summary — check the *last* bar in each window
+            # (the current bar), not the entire 30-bar lookback window.
+            if config.get("log_news_coverage", True) and "news_embs" in data:
+                total_bars = len(data["times"])
+                embs = data["news_embs"]  # (N, seq_len, 768)
+                if embs.ndim == 3:
+                    # Per-bar: check only the last position in each window
+                    last_bar_norm = np.linalg.norm(embs[:, -1, :], axis=-1)  # (N,)
+                else:
+                    last_bar_norm = np.linalg.norm(embs, axis=-1)
+                has_news = last_bar_norm > 0
+                bars_with_news = int(has_news.sum())
+                coverage_pct = bars_with_news / total_bars * 100 if total_bars > 0 else 0
+                logger.info(
+                    "[{}] News coverage: {}/{} bars ({:.1f}%)",
+                    sym, bars_with_news, total_bars, coverage_pct,
+                )
+
             if len(splits["test"]["targets"]) == 0:
                 logger.warning("{}: no test samples — skipping", sym)
                 continue
 
             y_test = splits["test"]["targets"]
             all_y_true.append(y_test)
+            _sym_order.append(sym)
+
+            sh = _split_hash(splits, sym, target_h)
+            _all_splits[sym] = splits
+            _all_sh[sym] = sh
 
             # --- Experiment 1: Zero-shot ---
-            logger.info("[{}] Running Chronos zero-shot …", sym)
-            preds_zs = chronos.zero_shot_predict(
-                splits["test"]["close_windows"],
-                splits["test"]["last_close"],
-            )
-            metrics_zs = compute_all(y_test, preds_zs)
+            zs_cache = CACHE_PRED_DIR / f"zs_{sym}_{target_h}d_{sh}.npy"
+            if stage not in ("data", "predict") and (cached_zs := _load_npy(zs_cache)) is not None:
+                logger.info("[{}] Zero-shot loaded from cache", sym)
+                preds_zs = cached_zs
+            else:
+                logger.info("[{}] Running Chronos zero-shot (horizon={}) …", sym, target_h)
+                preds_zs = chronos.zero_shot_predict(
+                    splits["test"]["close_windows"],
+                    splits["test"]["last_close"],
+                    seed=config["seed"],
+                    horizon=target_h,
+                )
+                _save_npy(zs_cache, preds_zs)
+            metrics_zs = compute_all(y_test, preds_zs, horizon=target_h)
             metrics_zs.update({
                 "Experiment": "Chronos Zero-Shot",
                 "Symbol": sym,
@@ -468,17 +713,24 @@ def main() -> None:
             all_results.append(metrics_zs)
             all_preds["Chronos Zero-Shot"].append(preds_zs)
 
-            # --- Experiment 2: Linear-probe (market + tabular) ---
-            logger.info("[{}] Running Chronos linear-probe (+tabular market) …", sym)
-            preds_lp = chronos.linear_probe_predict(
-                splits["train"]["close_windows"], splits["train"]["targets"],
-                splits["val"]["close_windows"], splits["val"]["targets"],
-                splits["test"]["close_windows"],
-                tabular_train=splits["train"].get("market_tabular"),
-                tabular_val=splits["val"].get("market_tabular"),
-                tabular_test=splits["test"].get("market_tabular"),
-            )
-            metrics_lp = compute_all(y_test, preds_lp)
+            # --- Experiment 2: Linear-probe ---
+            lp_cache = CACHE_PRED_DIR / f"lp_{sym}_{target_h}d_{sh}.npy"
+            if stage not in ("data", "predict") and (cached_lp := _load_npy(lp_cache)) is not None:
+                logger.info("[{}] Linear-probe loaded from cache", sym)
+                preds_lp = cached_lp
+            else:
+                logger.info("[{}] Running Chronos linear-probe …", sym)
+                preds_lp = chronos.linear_probe_predict(
+                    splits["train"]["close_windows"], splits["train"]["targets"],
+                    splits["val"]["close_windows"], splits["val"]["targets"],
+                    splits["test"]["close_windows"],
+                    tabular_train=splits["train"].get("market_tabular") if use_tabular_market_features else None,
+                    tabular_val=splits["val"].get("market_tabular") if use_tabular_market_features else None,
+                    tabular_test=splits["test"].get("market_tabular") if use_tabular_market_features else None,
+                    allow_tabular_features=use_tabular_market_features,
+                )
+                _save_npy(lp_cache, preds_lp)
+            metrics_lp = compute_all(y_test, preds_lp, horizon=target_h)
             metrics_lp.update({
                 "Experiment": "Chronos Linear-Probe",
                 "Symbol": sym,
@@ -487,24 +739,112 @@ def main() -> None:
             all_results.append(metrics_lp)
             all_preds["Chronos Linear-Probe"].append(preds_lp)
 
-            # --- Experiment 3: CMTF fusion (+tabular market) ---
-            logger.info("[{}] Running Chronos + CMTF fusion (+tabular market) …", sym)
-            tab_dim = int(splits["train"].get("market_tabular", np.zeros((1, 0))).shape[1])
-            cmtf = ChronosCMTFPredictor(chronos, tabular_dim=tab_dim, device=device)
-            cmtf.fit(
-                splits["train"]["close_windows"], splits["train"]["news_embs"],
-                splits["train"]["targets"],
-                splits["val"]["close_windows"], splits["val"]["news_embs"],
-                splits["val"]["targets"],
-                tabular_train=splits["train"].get("market_tabular"),
-                tabular_val=splits["val"].get("market_tabular"),
+            # --- Pre-compute Chronos embeddings (cached) ---
+            _emb_cache_base = CACHE_EMB_DIR / f"{sym}_{target_h}d_{sh}"
+            _emb_cache_base.parent.mkdir(parents=True, exist_ok=True)
+            _emb_train = _load_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_train.npy"))
+            _emb_val = _load_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_val.npy"))
+            _emb_test = _load_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_test.npy"))
+            if _emb_train is None or _emb_val is None or _emb_test is None:
+                logger.info("[{}] Computing Chronos embeddings …", sym)
+                _emb_train = chronos.get_embeddings(splits["train"]["close_windows"])
+                _emb_val = chronos.get_embeddings(splits["val"]["close_windows"])
+                _emb_test = chronos.get_embeddings(splits["test"]["close_windows"])
+                _save_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_train.npy"), _emb_train)
+                _save_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_val.npy"), _emb_val)
+                _save_npy(_emb_cache_base.with_name(f"{_emb_cache_base.name}_test.npy"), _emb_test)
+            else:
+                logger.info("[{}] Chronos embeddings loaded from cache", sym)
+            _all_embs[sym] = {"train": _emb_train, "val": _emb_val, "test": _emb_test}
+
+        # ---- Optuna HPO (once per horizon, across all symbols) ----
+        if stage == "hpo" or (stage in (None, "cmtf") and not (CACHE_HPO_DIR / f"best_params_{target_h}d.json").exists()):
+            logger.info("═══ Running Optuna HPO for {}D ═══", target_h)
+            hpo_params = _run_optuna_hpo(
+                chronos, _all_splits, _all_embs, target_h,
+                use_tabular=use_tabular_market_features,
+                device=device, n_trials=15, seq_len=run_cfg["sequence_len"],
             )
-            preds_cmtf = cmtf.predict(
-                splits["test"]["close_windows"],
-                splits["test"]["news_embs"],
-                tabular_test=splits["test"].get("market_tabular"),
+        elif (CACHE_HPO_DIR / f"best_params_{target_h}d.json").exists():
+            import json
+            with open(CACHE_HPO_DIR / f"best_params_{target_h}d.json") as f:
+                hpo_params = json.load(f)
+            logger.info("Using cached HPO params ({}D): {}", target_h, hpo_params)
+        else:
+            hpo_params = {}
+
+        if stage == "hpo":
+            logger.info("═══ HPO-only mode complete for {}D ═══", target_h)
+            continue
+
+        # ---- Phase 2: CMTF ensemble with HPO params ----
+        _ensemble_seeds = [42, 123, 456]
+        for sym in _sym_order:
+            splits = _all_splits[sym]
+            sh = _all_sh[sym]
+            sym_embs = _all_embs[sym]
+            y_test = splits["test"]["targets"]
+
+            logger.info("[{}] Running Chronos + CMTF fusion (ensemble × {} seeds) …", sym, len(_ensemble_seeds))
+            tab_dim = (
+                int(splits["train"].get("market_tabular", np.zeros((1, 0))).shape[1])
+                if use_tabular_market_features else 0
             )
-            metrics_cmtf = compute_all(y_test, preds_cmtf)
+
+            # CMTF hyperparameters (HPO or defaults)
+            cmtf_fusion_dim = hpo_params.get("fusion_dim", 128)
+            cmtf_n_heads = 1  # FiLM/GRN architecture does not use attention heads
+            cmtf_dropout = hpo_params.get("dropout", 0.2)
+            cmtf_bce_weight = hpo_params.get("bce_weight", 0.2)
+            cmtf_lr = hpo_params.get("lr", 5e-4)
+
+            # Hash HPO params into checkpoint path so architecture changes
+            # (e.g. different fusion_dim) invalidate stale caches.
+            import json as _json
+            _hpo_hash = hashlib.md5(
+                _json.dumps(hpo_params, sort_keys=True).encode()
+            ).hexdigest()[:8]
+
+            _ensemble_preds: list[np.ndarray] = []
+            for _seed in _ensemble_seeds:
+                _ckpt_path = CACHE_CMTF_DIR / f"{sym}_{target_h}d_seed{_seed}_{_hpo_hash}_{sh}.pt"
+                _ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+                _cmtf = ChronosCMTFPredictor(
+                    chronos, tabular_dim=tab_dim, device=device,
+                    fusion_dim=cmtf_fusion_dim, n_heads=cmtf_n_heads,
+                    dropout=cmtf_dropout, bce_weight=cmtf_bce_weight,
+                    seq_len=run_cfg["sequence_len"],
+                )
+
+                if _ckpt_path.exists() and stage not in ("cmtf", "hpo"):
+                    # Load cached checkpoint
+                    _cmtf.load_checkpoint(
+                        torch.load(_ckpt_path, map_location=device, weights_only=False)
+                    )
+                    logger.info("[{}] CMTF seed {} loaded from checkpoint", sym, _seed)
+                else:
+                    _cmtf.fit(
+                        splits["train"]["close_windows"], splits["train"]["news_embs"],
+                        splits["train"]["targets"],
+                        splits["val"]["close_windows"], splits["val"]["news_embs"],
+                        splits["val"]["targets"],
+                        tabular_train=splits["train"].get("market_tabular") if use_tabular_market_features else None,
+                        tabular_val=splits["val"].get("market_tabular") if use_tabular_market_features else None,
+                        seed=_seed, lr=cmtf_lr, patience=40,
+                        precomputed_emb_train=sym_embs["train"],
+                        precomputed_emb_val=sym_embs["val"],
+                    )
+                    torch.save(_cmtf.get_checkpoint(), _ckpt_path)
+                    logger.info("[{}] CMTF seed {} checkpoint saved", sym, _seed)
+
+                _ensemble_preds.append(_cmtf.predict(
+                    splits["test"]["close_windows"],
+                    splits["test"]["news_embs"],
+                    tabular_test=splits["test"].get("market_tabular") if use_tabular_market_features else None,
+                    precomputed_emb_test=sym_embs["test"],
+                ))
+            preds_cmtf = np.mean(_ensemble_preds, axis=0)
+            metrics_cmtf = compute_all(y_test, preds_cmtf, horizon=target_h)
             metrics_cmtf.update({
                 "Experiment": "Chronos + CMTF",
                 "Symbol": sym,
@@ -513,28 +853,45 @@ def main() -> None:
             all_results.append(metrics_cmtf)
             all_preds["Chronos + CMTF"].append(preds_cmtf)
 
-            # Per-symbol prediction plot
+            # Per-symbol prediction plot (use index from _sym_order)
+            _sym_idx = _sym_order.index(sym)
             plot_predictions(
                 y_test,
-                {"Zero-Shot": preds_zs, "Linear-Probe": preds_lp, "CMTF": preds_cmtf},
+                {
+                    "Zero-Shot": all_preds["Chronos Zero-Shot"][_sym_idx],
+                    "Linear-Probe": all_preds["Chronos Linear-Probe"][_sym_idx],
+                    "CMTF": preds_cmtf,
+                },
                 f"Chronos Predictions — {sym} ({target_h}D target)",
                 FIGURES_DIR / f"predictions_{sym}_{target_h}d.png",
             )
 
-        # Aggregate results
+        # Aggregate results — pooled metrics across all symbols
         results_df = pd.DataFrame(all_results)
         for exp_name in results_df["Experiment"].unique():
-            exp_rows = results_df[results_df["Experiment"] == exp_name]
-            avg = {
+            # Concatenate per-symbol predictions for pooled computation
+            exp_y_parts: list[np.ndarray] = []
+            exp_p_parts: list[np.ndarray] = []
+            for sym_name in per_symbol:
+                sym_rows = results_df[
+                    (results_df["Experiment"] == exp_name) & (results_df["Symbol"] == sym_name)
+                ]
+                if sym_rows.empty:
+                    continue
+                idx = list(per_symbol.keys()).index(sym_name)
+                exp_y_parts.append(all_y_true[idx])
+                exp_p_parts.append(all_preds[exp_name][idx])
+            if exp_y_parts:
+                pooled_y = np.concatenate(exp_y_parts)
+                pooled_p = np.concatenate(exp_p_parts)
+                avg = compute_all(pooled_y, pooled_p, horizon=target_h)
+            else:
+                avg = {"MAE": 0.0, "RMSE": 0.0, "DA%": 0.0, "Sharpe": 0.0, "IC": 0.0, "Prec": 0.0, "Rec": 0.0, "F1": 0.0}
+            avg.update({
                 "Experiment": exp_name,
                 "Symbol": "AVG",
                 "TargetHorizonD": target_h,
-                "MAE": exp_rows["MAE"].mean(),
-                "RMSE": exp_rows["RMSE"].mean(),
-                "DA%": exp_rows["DA%"].mean(),
-                "Sharpe": exp_rows["Sharpe"].mean(),
-                "IC": exp_rows["IC"].mean(),
-            }
+            })
             all_results.append(avg)
 
         results_df = pd.DataFrame(all_results)
@@ -542,9 +899,17 @@ def main() -> None:
         print("\n" + "=" * 76)
         print(f"  CHRONOS BENCHMARK RESULTS — TARGET HORIZON {target_h}D")
         print("=" * 76)
-        col_order = ["Experiment", "Symbol", "TargetHorizonD", "MAE", "RMSE", "DA%", "Sharpe", "IC"]
+        col_order = ["Experiment", "Symbol", "TargetHorizonD", "MAE", "RMSE", "DA%", "Sharpe", "IC", "Prec", "Rec", "F1"]
         results_df = results_df[col_order]
-        print(results_df.to_string(index=False, float_format="{:.4f}".format))
+
+        def _fmt(v):
+            if isinstance(v, float) and np.isnan(v):
+                return "N/A"
+            if isinstance(v, float):
+                return f"{v:.4f}"
+            return str(v)
+
+        print(results_df.to_string(index=False, formatters={c: _fmt for c in col_order}))
         print("=" * 76 + "\n")
 
         suffix = f"{target_h}d"

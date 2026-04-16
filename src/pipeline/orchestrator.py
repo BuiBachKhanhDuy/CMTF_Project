@@ -6,9 +6,12 @@ news encoding, and dataset construction.
 
 from __future__ import annotations
 
+import hashlib
 import re
+from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -17,6 +20,68 @@ from .temporal_aligner import TemporalAligner
 from .feature_engineer import FeatureEngineer
 from .news_encoder import NewsEncoder
 from .dataset_builder import CMTFDataset
+
+_DATASET_CACHE_DIR = Path("./cache/dataset")
+
+
+def _config_hash(config: dict[str, Any]) -> str:
+    """Compute a short hash of config keys that affect the dataset."""
+    keys = [
+        "symbols", "start", "end", "interval", "ohlcv_source",
+        "news_source", "news_sources", "news_similarity_threshold",
+        "sequence_len", "horizon", "target_horizon_days",
+        "train_end", "val_end", "normalize_method",
+    ]
+    h = hashlib.sha256()
+    for k in keys:
+        h.update(f"{k}={config.get(k)}".encode())
+    return h.hexdigest()[:16]
+
+
+def _save_dataset_cache(df: pd.DataFrame, cache_path: Path) -> None:
+    """Save the processed DataFrame to parquet (news_emb as bytes)."""
+    df_out = df.copy()
+    # Convert numpy arrays in news_emb to bytes for parquet compatibility
+    if "news_emb" in df_out.columns:
+        df_out["news_emb"] = df_out["news_emb"].apply(
+            lambda x: x.tobytes() if isinstance(x, np.ndarray) else x
+        )
+    # Drop list/object columns that parquet can't handle natively
+    drop_cols = [c for c in ("news_titles", "news_content") if c in df_out.columns]
+    # Also drop any remaining columns with dtype 'object' that aren't
+    # already handled (except news_emb which is now bytes, and symbol)
+    for c in df_out.columns:
+        if df_out[c].dtype == object and c not in ("news_emb", "symbol"):
+            drop_cols.append(c)
+    if drop_cols:
+        df_out = df_out.drop(columns=list(set(drop_cols)))
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    df_out.to_parquet(cache_path, index=True)
+    logger.info("Dataset cached → {} ({} rows)", cache_path.name, len(df_out))
+
+
+def _load_dataset_cache(cache_path: Path) -> pd.DataFrame | None:
+    """Load a cached DataFrame and restore news_emb from bytes."""
+    if not cache_path.exists():
+        return None
+    try:
+        df = pd.read_parquet(cache_path)
+        # Restore news_emb from bytes → np.ndarray
+        if "news_emb" in df.columns:
+            df["news_emb"] = df["news_emb"].apply(
+                lambda b: np.frombuffer(b, dtype=np.float32).copy()
+                if isinstance(b, (bytes, bytearray)) else b
+            )
+        # Recreate empty list columns so downstream code doesn't break
+        if "news_titles" not in df.columns:
+            df["news_titles"] = [[] for _ in range(len(df))]
+        if "news_content" not in df.columns:
+            df["news_content"] = [[] for _ in range(len(df))]
+        logger.info("Dataset loaded from cache: {} ({} rows)", cache_path.name, len(df))
+        return df
+    except Exception:
+        logger.warning("Corrupt dataset cache {} — rebuilding", cache_path.name)
+        return None
 
 
 def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
@@ -61,6 +126,28 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     train_end: str = config["train_end"]
     val_end: str = config["val_end"]
     norm_method: str = config.get("normalize_method", "zscore")
+    rebuild_data: bool = bool(config.get("rebuild_data", False))
+
+    # When rebuild_data is True, bypass ALL caches (news, embeddings, dataset)
+    if rebuild_data:
+        news_use_cache = False
+        logger.info("rebuild_data=True → all caches bypassed")
+
+    # --- Try loading from dataset cache ---
+    cfg_hash = _config_hash(config)
+    cache_path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}.parquet"
+    if not rebuild_data:
+        cached_df = _load_dataset_cache(cache_path)
+        if cached_df is not None:
+            cached_df = cached_df.dropna(subset=[target_col])
+            dataset = CMTFDataset(
+                df_featured=cached_df,
+                sequence_len=seq_len,
+                horizon=horizon,
+                target_horizon_days=target_horizon_days,
+            )
+            logger.info("Pipeline complete (from cache) | dataset length = {}", len(dataset))
+            return dataset
 
     fetcher = VnstockDataFetcher()
     aligner = TemporalAligner()
@@ -136,8 +223,34 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     df_all = df_all.sort_index()
     logger.info("Combined DataFrame: {} rows × {} cols", *df_all.shape)
 
+    # 5b. VN-Index macro features (RCSAN / TFT exogenous covariate approach)
+    # Fetch VN-Index OHLCV and compute market-wide features that capture
+    # macro events (war, policy, FX shocks) already priced into the index.
+    try:
+        df_vnindex = fetcher.fetch_ohlcv("VNINDEX", start, end, interval, ohlcv_source)
+        vnidx_close = df_vnindex["close"]
+        vnidx_features = pd.DataFrame(index=df_vnindex.index)
+        vnidx_features["vnindex_ret"] = np.log(vnidx_close / vnidx_close.shift(1))
+        vnidx_vol_ma = df_vnindex["volume"].rolling(window=20, min_periods=1).mean()
+        vnidx_features["vnindex_vol_ratio"] = df_vnindex["volume"] / vnidx_vol_ma
+        # Merge into each bar by date (left join preserves all stock rows)
+        df_all = df_all.merge(
+            vnidx_features, left_index=True, right_index=True, how="left",
+        )
+        # Forward-fill then back-fill small gaps (holidays differ between
+        # individual stocks and the index)
+        for col in ("vnindex_ret", "vnindex_vol_ratio"):
+            df_all[col] = df_all[col].ffill().bfill().fillna(0.0)
+        logger.info("VN-Index macro features added (vnindex_ret, vnindex_vol_ratio)")
+    except Exception:
+        logger.warning("VN-Index fetch failed — proceeding without macro features")
+        df_all["vnindex_ret"] = 0.0
+        df_all["vnindex_vol_ratio"] = 1.0
+
     # 6. Encode news
-    df_all = encoder.encode_dataframe(df_all, text_col="news_content")
+    df_all = encoder.encode_dataframe(
+        df_all, text_col="news_content", use_cache=(not rebuild_data),
+    )
     if log_news_coverage and "has_news" in df_all.columns:
         has_news_count = int(df_all["has_news"].sum())
         total_rows = len(df_all)
@@ -149,7 +262,7 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
             pct,
         )
 
-    # 7. Normalise market features (fit on train split only)
+    # 7. Normalise market features (fit on train split only, per symbol)
     market_feature_cols = [
         c
         for c in df_all.columns
@@ -161,13 +274,23 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         and df_all[c].dtype in ("float64", "float32", "int64", "int32")
     ]
 
-    df_all = engineer.normalize(
-        df_all,
-        feature_cols=market_feature_cols,
-        method=norm_method,  # type: ignore[arg-type]
-        split_date=train_end,
-        symbol="combined",
-    )
+    # Ensure all market feature columns are float before normalization
+    # (e.g. volume is int64 but becomes float after z-score)
+    for col in market_feature_cols:
+        if df_all[col].dtype in ("int64", "int32"):
+            df_all[col] = df_all[col].astype("float64")
+
+    for sym in df_all["symbol"].unique():
+        sym_mask = df_all["symbol"] == sym
+        sym_df = df_all.loc[sym_mask].copy()
+        sym_df = engineer.normalize(
+            sym_df,
+            feature_cols=market_feature_cols,
+            method=norm_method,  # type: ignore[arg-type]
+            split_date=train_end,
+            symbol=sym,
+        )
+        df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols]
 
     # Drop rows with NaN target (first / last rows from indicator warm-up)
     df_all = df_all.dropna(subset=[target_col])
@@ -179,6 +302,9 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         horizon=horizon,
         target_horizon_days=target_horizon_days,
     )
+
+    # 9. Save processed dataset to cache for reuse
+    _save_dataset_cache(df_all, cache_path)
 
     logger.info("Pipeline complete | dataset length = {}", len(dataset))
     return dataset

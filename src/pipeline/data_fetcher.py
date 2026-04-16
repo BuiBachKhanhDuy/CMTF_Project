@@ -6,12 +6,9 @@ using the vnstock library (v3.x).
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
-from joblib import Memory
 from loguru import logger
 from tenacity import (
     retry,
@@ -26,18 +23,13 @@ from tenacity import (
 # ---------------------------------------------------------------------------
 CACHE_DIR = Path("./cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_memory = Memory(location=str(CACHE_DIR), verbose=0)
 
 
 class VnstockDataFetcher:
-    """Fetches OHLCV and news data from Vietnamese exchanges via vnstock v3.x.
-
-    Attributes:
-        cache: joblib.Memory instance for disk caching.
-    """
+    """Fetches OHLCV and news data from Vietnamese exchanges via vnstock v3.x."""
 
     def __init__(self, cache_dir: Path = CACHE_DIR) -> None:
-        self._memory = Memory(location=str(cache_dir), verbose=0)
+        pass
 
     # ------------------------------------------------------------------
     # OHLCV
@@ -169,19 +161,24 @@ class VnstockDataFetcher:
             logger.warning("No date column found in news for {}. Columns: {}", symbol, list(df.columns))
             return pd.DataFrame(columns=["published_date", "title", "content"])
 
-        df["published_date"] = pd.to_datetime(df[date_col], errors="coerce")
+        raw_date = df[date_col]
+        if pd.api.types.is_numeric_dtype(raw_date):
+            # Unix millisecond timestamps (e.g. VCI returns ms since epoch)
+            df["published_date"] = pd.to_datetime(raw_date, unit="ms", errors="coerce")
+        else:
+            df["published_date"] = pd.to_datetime(raw_date, errors="coerce")
         # Strip timezone if present
         if df["published_date"].dt.tz is not None:
             df["published_date"] = df["published_date"].dt.tz_localize(None)
 
         # --- Normalise title ------------------------------------------
-        title_candidates = ["title", "Title", "headline"]
+        title_candidates = ["title", "Title", "headline", "news_title"]
         title_col = next((c for c in title_candidates if c in df.columns), None)
         if title_col and title_col != "title":
             df = df.rename(columns={title_col: "title"})
 
         # --- Normalise content ----------------------------------------
-        content_candidates = ["content", "Content", "body", "description"]
+        content_candidates = ["content", "Content", "body", "description", "news_full_content", "news_short_content"]
         content_col = next((c for c in content_candidates if c in df.columns), None)
         if content_col is not None and content_col != "content":
             df = df.rename(columns={content_col: "content"})
@@ -208,7 +205,7 @@ class VnstockDataFetcher:
         symbol: str,
         start: str,
         end: str,
-        sources: tuple[str, ...] = ("cafef_banking", "vietstock"),
+        sources: tuple[str, ...] = ("vnexpress", "cafef_banking", "vietstock"),
         use_cache: bool = True,
         export_trace: bool = True,
         similarity_threshold: float = 85.0,

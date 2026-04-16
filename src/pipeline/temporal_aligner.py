@@ -1,19 +1,15 @@
 """CMTF Data Pipeline — Temporal Aligner module.
 
-Assigns news articles to OHLCV bars with STRICT leakage prevention.
-News published on day T is only visible to bar T+1 or later.
+Assigns news articles to OHLCV bars with conservative leakage prevention.
+News at/after market close on day T is only visible to bar T+1 or later.
 """
 
 from __future__ import annotations
 
-from typing import Optional
-
-import numpy as np
 import pandas as pd
 from loguru import logger
 
 # Vietnam trading session (ICT / UTC+7)
-_MARKET_OPEN_HOUR = 9   # 09:00
 _MARKET_CLOSE_HOUR = 15  # 15:00
 
 
@@ -21,9 +17,11 @@ class TemporalAligner:
     """Aligns news articles to OHLCV bars without look-ahead leakage.
 
     Rules:
-        * Daily bars: news on day T-1 or earlier → bar T.
-          News on day T (same day, during/after market) → bar T+1.
-          Pre-market news (before 09:00 on day T) → bar T.
+                * Daily bars: market-close cutoff.
+                    News before 15:00 on day T → bar T.
+                    News at/after 15:00 on day T → bar T+1.
+                    Date-only timestamps (00:00:00) are treated as unknown-time and
+                    shifted to T+1 conservatively.
         * Intraday bars: strict ``news_ts < bar_open_ts``.
         * Weekend / holiday news → next available trading bar.
     """
@@ -88,24 +86,27 @@ class TemporalAligner:
     ) -> pd.DataFrame:
         """Assign news to daily bars respecting Vietnam trading hours.
 
-        Pre-market news (before 09:00 on day T) → bar T.
-        Same-day news at or after 09:00 on day T → bar T+1.
+        Market-close cutoff:
+        - before 15:00 on day T -> bar T
+        - at/after 15:00 on day T -> bar T+1
+        - date-only timestamps at 00:00 are shifted to T+1 conservatively
         Weekend / holiday news → next trading bar.
         """
         # Build a mapping: for each news article determine the eligible bar
         bar_dates = bar_times.normalize().unique().sort_values()
 
         for _, article in news.iterrows():
-            pub = article["published_date"]
-            pub_date = pd.Timestamp(pub).normalize()
-            pub_hour = pd.Timestamp(pub).hour
+            pub = pd.Timestamp(article["published_date"])
+            pub_date = pub.normalize()
 
-            if pub_hour < _MARKET_OPEN_HOUR:
-                # Pre-market → same-day bar
-                eligible_date = pub_date
-            else:
-                # During or after market → next bar
+            has_midnight_time = (
+                pub.hour == 0 and pub.minute == 0 and pub.second == 0 and pub.microsecond == 0
+            )
+            if has_midnight_time or pub.hour >= _MARKET_CLOSE_HOUR:
+                # Unknown exact time or after close -> next bar conservatively
                 eligible_date = pub_date + pd.Timedelta(days=1)
+            else:
+                eligible_date = pub_date
 
             # Find the next available trading bar on or after eligible_date
             future_bars = bar_dates[bar_dates >= eligible_date]
