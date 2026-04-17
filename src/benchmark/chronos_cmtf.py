@@ -3,10 +3,18 @@
 Freezes the Chronos encoder and trains a lightweight fusion head that
 merges market embeddings with aggregated news embeddings.
 
-Uses FiLM modulation (Perez et al., AAAI 2018) and Gated Residual
-Networks (Lim et al., IJoF 2021) instead of cross-attention to avoid
-the rank-collapse problem with sparse news sequences (Dong et al.,
-ICML 2021).
+Architecture:
+    1. **Gated cross-attention** (Chapter 4, Eq. 4.x):
+       A  = CrossAttn(Q_num, K_text, V_text)
+       g  = σ(W_g [Q_num ⊕ A])          ← learned gate
+       H  = Q_num + g ⊙ A               ← numerical dominance (residual)
+    2. **FiLM modulation** (Perez et al., AAAI 2018): news generates
+       γ, β to scale/shift the gated representation.
+    3. **GRN gating** (Lim et al., IJoF 2021): second gate that learns
+       when to ignore news modulation entirely.
+
+Numerical features are the residual backbone throughout — text only
+modifies, never replaces.
 """
 
 from __future__ import annotations
@@ -22,21 +30,28 @@ from .chronos_market import ChronosMarketPredictor
 
 
 class CrossModalFusionHead(nn.Module):
-    """Pooled fusion with FiLM modulation and Gated Residual Network.
+    """Gated Cross-Attention + FiLM + GRN fusion head.
 
-    Replaces cross-attention with a more robust approach for sparse news:
+    Three-stage fusion with **numerical dominance** — market features form
+    the residual backbone and text only modifies via learned gates:
 
-    1. **Masked mean-pooling** aggregates non-zero news positions into a
-       single vector, avoiding the rank-collapse that cross-attention
-       exhibits when most positions are zero-padded (Dong et al., ICML 2021).
-    2. **FiLM modulation** (Perez et al., AAAI 2018): news generates
-       scale (γ) and shift (β) that modulate market features.  Unlike
-       attention, this preserves per-sample diversity in market embeddings.
-    3. **GRN gating** (Lim et al., IJoF 2021, from Temporal Fusion
-       Transformers): learns when to ignore news entirely, providing a
-       safe market-only fallback.
+    1. **Gated Cross-Attention** (Chapter 4):
+       - A  = MultiHeadAttn(Q=market, K=news, V=news)  with causal mask
+       - g  = σ(W_g [market ⊕ A])                      learned gate
+       - H  = market + g ⊙ A                            residual add
+       Gate is initialised near zero so training starts at market-only.
+
+    2. **FiLM modulation** (Perez et al., AAAI 2018): pooled news
+       generates scale (γ) and shift (β) on the gated representation.
+
+    3. **GRN gating** (Lim et al., IJoF 2021): final gate that blends
+       FiLM-modulated and unmodulated representations.
 
     Dual-head output: regression + direction classification (BCE auxiliary).
+
+    Attributes:
+        last_gate_values: dict populated during forward() with gate
+            statistics for interpretability logging.
     """
 
     def __init__(
@@ -52,7 +67,7 @@ class CrossModalFusionHead(nn.Module):
         super().__init__()
         self.tabular_dim = tabular_dim
         self.seq_len = seq_len
-        self.n_heads = n_heads  # stored for model recreation (not used)
+        self.n_heads = n_heads
         self.market_dim = market_dim
         self.market_proj = nn.Linear(market_dim, fusion_dim)
         self.tabular_proj = nn.Linear(tabular_dim, fusion_dim) if tabular_dim > 0 else None
@@ -70,6 +85,20 @@ class CrossModalFusionHead(nn.Module):
             nn.Linear(news_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
         )
+
+        # ============================================================
+        # A1. Gated Cross-Attention
+        # ============================================================
+        # Q = market_proj(market_emb)  (B, 1, F)  ← single query
+        # K, V = news_compress(news)   (B, S, F)  ← sequence of keys/values
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=fusion_dim,
+            num_heads=n_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        # Learned gate:  g = σ(W_g [Q_num ⊕ A])
+        self.cross_gate = nn.Linear(fusion_dim * 2, fusion_dim)
 
         # FiLM conditioning network: news_pool + density → γ, β
         # (Perez et al., AAAI 2018 "FiLM: Visual Reasoning with a
@@ -116,17 +145,23 @@ class CrossModalFusionHead(nn.Module):
             nn.Linear(fusion_dim // 2, 1),
         )
 
-        # Init FiLM to identity modulation: γ=1, β=0 at start
-        # → model begins at market-only baseline (like LP)
+        # ---- Initialisation: start at market-only baseline ----
+        # Cross-attention gate: init near zero so g≈0 → H ≈ Q_num
+        nn.init.zeros_(self.cross_gate.weight)
+        nn.init.constant_(self.cross_gate.bias, -2.0)  # σ(-2)≈0.12
+
+        # FiLM: identity modulation γ=1, β=0 at start
         nn.init.zeros_(self.film_gamma.weight)
         nn.init.zeros_(self.film_gamma.bias)
         nn.init.zeros_(self.film_beta.weight)
         nn.init.zeros_(self.film_beta.bias)
 
-        # Init fusion reg_head output layer to zero so the model starts
-        # at the direct (LP-like) path with zero fusion contribution.
+        # Fusion reg_head output layer → zero so model starts at direct path
         nn.init.zeros_(self.reg_head[-1].weight)
         nn.init.zeros_(self.reg_head[-1].bias)
+
+        # Gate value logging for interpretability
+        self.last_gate_values: dict[str, float] = {}
 
     def forward(
         self,
@@ -134,7 +169,9 @@ class CrossModalFusionHead(nn.Module):
         news_emb: torch.Tensor,
         tabular_emb: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # --- News aggregation: masked mean-pooling ---
+        B = market_emb.shape[0]
+
+        # --- News aggregation: masked mean-pooling (for FiLM path) ---
         news_mask = (news_emb.abs().sum(-1) > 0)  # (B, S) bool
         news_count = news_mask.sum(-1, keepdim=True).clamp(min=1).float()
         density = news_count / news_emb.shape[1]  # (B, 1) ∈ [0, 1]
@@ -148,7 +185,40 @@ class CrossModalFusionHead(nn.Module):
         if self.tabular_proj is not None and tabular_emb is not None:
             market_h = market_h + self.tabular_proj(tabular_emb)
 
-        # --- FiLM modulation: news scales/shifts market features ---
+        # ============================================================
+        # A1. Gated Cross-Attention
+        # Q = market_h  (B, 1, F) — single numerical query
+        # K, V = news_compressed (B, S, F) — text sequence
+        # key_padding_mask: True = ignore (zero-padded news positions)
+        # ============================================================
+        query = market_h.unsqueeze(1)            # (B, 1, F)
+        # Invert mask: True positions are IGNORED in nn.MultiheadAttention
+        attn_key_mask = ~news_mask               # (B, S) True = pad
+        # If all positions are padded, unmask everything to avoid NaN
+        all_pad = attn_key_mask.all(dim=1)       # (B,)
+        if all_pad.any():
+            attn_key_mask = attn_key_mask.clone()
+            attn_key_mask[all_pad] = False
+
+        attn_out, _ = self.cross_attn(
+            query, news_compressed, news_compressed,
+            key_padding_mask=attn_key_mask,
+        )                                         # (B, 1, F)
+        attn_out = attn_out.squeeze(1)            # (B, F)
+
+        # Learned gate: g = σ(W_g [Q_num ⊕ A])
+        gate_input = torch.cat([market_h, attn_out], dim=-1)  # (B, 2F)
+        cross_g = torch.sigmoid(self.cross_gate(gate_input))  # (B, F)
+
+        # Numerical dominance: H = Q_num + g ⊙ A  (A2)
+        market_h = market_h + cross_g * attn_out  # (B, F)
+
+        # Log gate statistics for interpretability
+        with torch.no_grad():
+            self.last_gate_values["cross_gate_mean"] = float(cross_g.mean())
+            self.last_gate_values["cross_gate_std"] = float(cross_g.std())
+
+        # --- FiLM modulation: news scales/shifts the gated representation ---
         film_input = torch.cat([news_pool, density], dim=-1)  # (B, F+1)
         film_h = self.film(film_input)
         gamma = 1.0 + self.film_gamma(film_h)  # centred at 1
@@ -156,9 +226,13 @@ class CrossModalFusionHead(nn.Module):
         modulated = gamma * market_h + beta  # (B, F)
 
         # --- GRN gating: residual from market-only ---
-        gate_input = torch.cat([market_h, modulated], dim=-1)  # (B, 2F)
-        gate = self.grn_gate(gate_input)  # (B, F) ∈ [0, 1]
-        fused = self.grn_norm(gate * modulated + (1 - gate) * market_h)
+        grn_input = torch.cat([market_h, modulated], dim=-1)  # (B, 2F)
+        grn_g = self.grn_gate(grn_input)  # (B, F) ∈ [0, 1]
+        fused = self.grn_norm(grn_g * modulated + (1 - grn_g) * market_h)
+
+        # Log GRN gate
+        with torch.no_grad():
+            self.last_gate_values["grn_gate_mean"] = float(grn_g.mean())
 
         # --- FFN + residual ---
         fused = self.ffn_norm(fused + self.ffn(fused))

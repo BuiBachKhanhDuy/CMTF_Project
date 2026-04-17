@@ -793,7 +793,7 @@ def main() -> None:
 
             # CMTF hyperparameters (HPO or defaults)
             cmtf_fusion_dim = hpo_params.get("fusion_dim", 128)
-            cmtf_n_heads = 1  # FiLM/GRN architecture does not use attention heads
+            cmtf_n_heads = hpo_params.get("n_heads", 4)  # cross-attention heads
             cmtf_dropout = hpo_params.get("dropout", 0.2)
             cmtf_bce_weight = hpo_params.get("bce_weight", 0.2)
             cmtf_lr = hpo_params.get("lr", 5e-4)
