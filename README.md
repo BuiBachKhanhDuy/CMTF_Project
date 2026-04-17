@@ -49,8 +49,10 @@ python run_chronos_benchmark.py --stage plot   # Regenerate plots
 │   │   ├── news_encoder.py      # PhoBERT → 768-dim embeddings
 │   │   └── dataset_builder.py   # PyTorch Dataset with walk-forward splits
 │   └── benchmark/               # Chronos experiments & evaluation
-│       ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1
-│       ├── chronos_market.py    # Zero-shot + linear probe
+│       ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1 + composite
+│       ├── baseline_models.py   # LSTM, RF, Fine-tuned Chronos baselines
+│       ├── baseline_hpo.py      # Optuna HPO for baseline models
+│       ├── chronos_market.py    # Zero-shot + Chronos embeddings
 │       └── chronos_cmtf.py      # FiLM + GRN fusion head
 ├── tests/                       # 85 unit tests (4 skipped smoke tests)
 ├── results/                     # Benchmark outputs (CSV + figures)
@@ -69,18 +71,24 @@ python run_chronos_benchmark.py --stage plot   # Regenerate plots
 | # | Experiment | Description |
 |---|-----------|-------------|
 | 1 | Chronos Zero-Shot | Foundation model predicts directly (no training) |
-| 2 | Chronos Linear-Probe | Ridge regression on Chronos embeddings + tabular features |
-| 3 | Chronos + CMTF | FiLM + GRN fusion of market + news embeddings |
+| 2 | Chronos + CMTF | FiLM + GRN fusion of market + news embeddings |
+| 3 | LSTM Baseline | Sequence model baseline on close windows |
+| 4 | LSTM + CMTF | LSTM embeddings fused with CMTF (residual-gated) |
+| 5 | Random Forest Baseline | Tabular baseline over engineered market features |
+| 6 | Chronos Fine-Tuned | Trainable Chronos-based baseline |
 
 ## Key Results (20-Day Horizon, VCB + BID)
 
 | Model | DA% | Sharpe | F1 | IC |
 |-------|-----|--------|----|----|
-| Chronos Zero-Shot | 46.8 | −0.32 | 0.48 | −0.13 |
-| Chronos Linear-Probe | 56.6 | 1.10 | 0.55 | 0.25 |
-| **Chronos + CMTF** | **62.9** | **0.82** | **0.52** | **0.48** |
+| Chronos Zero-Shot | 46.8 | -0.32 | 0.48 | -0.13 |
+| **Chronos + CMTF** | **68.7** | **1.19** | **0.61** | **0.46** |
+| LSTM Baseline | 55.7 | 0.32 | 0.63 | 0.28 |
+| LSTM + CMTF | 57.8 | 0.81 | 0.65 | 0.28 |
+| Random Forest Baseline | 52.9 | 0.02 | 0.46 | 0.01 |
+| Chronos Fine-Tuned | 47.5 | 0.03 | 0.64 | -0.15 |
 
-CMTF achieves the target ordering: ZeroShot < LinearProbe < CMTF across DA% and IC at the 20-day horizon.
+CMTF is the strongest model on the 20-day horizon by RMSE, DA%, Sharpe, IC, and composite score.
 
 See [report.md](report.md) for full methodology, results, and references.
 

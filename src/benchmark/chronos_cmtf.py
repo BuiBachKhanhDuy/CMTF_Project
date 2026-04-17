@@ -237,16 +237,16 @@ class CrossModalFusionHead(nn.Module):
         # --- FFN + residual ---
         fused = self.ffn_norm(fused + self.ffn(fused))
 
-        # --- Direct LP-like linear regression path ---
+        # --- Direct linear regression path ---
         # Single linear layer on raw [market_emb, tabular] — no activation,
-        # no dropout, no bottleneck.  Equivalent to Ridge regression.
+        # no dropout, no bottleneck.
         if self.tabular_proj is not None and tabular_emb is not None:
             direct_in = torch.cat([market_emb, tabular_emb], dim=-1)
         else:
             direct_in = market_emb
         reg_direct = self.direct_reg(direct_in).squeeze(-1)  # (B,)
 
-        # --- Additive combination: LP_linear + fusion_nonlinear ---
+        # --- Additive combination: direct_linear + fusion_nonlinear ---
         reg_fused = self.reg_head(fused).squeeze(-1)  # (B,)
         reg_out = reg_direct + reg_fused  # fusion adds on top of LP
 
@@ -267,11 +267,21 @@ class ChronosCMTFPredictor:
         dropout: float = 0.2,
         seq_len: int = 30,
         bce_weight: float = 0.5,
+        dir_penalty_weight: float = 0.05,
+        news_weight_max: float = 2.0,
+        scale_clip_min: float = 0.5,
+        scale_clip_max: float = 15.0,
+        scale_blend_alpha: float = 1.0,
         device: str = "cpu",
     ) -> None:
         self.chronos = chronos_predictor
         self.device = device
         self.bce_weight = bce_weight
+        self.dir_penalty_weight = dir_penalty_weight
+        self.news_weight_max = news_weight_max
+        self.scale_clip_min = scale_clip_min
+        self.scale_clip_max = scale_clip_max
+        self.scale_blend_alpha = scale_blend_alpha
         self.seq_len = seq_len
         # Target normalisation stats (set during fit)
         self._y_mean: float = 0.0
@@ -289,7 +299,7 @@ class ChronosCMTFPredictor:
         ).to(device)
 
     # ------------------------------------------------------------------
-    # Loss: CCC regression + BCE auxiliary for direction
+    # Loss: regression-first with directional penalty
     # ------------------------------------------------------------------
     def _combined_loss(
         self,
@@ -298,44 +308,35 @@ class ChronosCMTFPredictor:
         target: torch.Tensor,
         weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """CCC regression + BCE direction loss.
+        """Regression-first loss with a small wrong-direction penalty.
 
-        Uses Concordance Correlation Coefficient (Lin, 1989) instead of
-        MSE to prevent prediction variance collapse.  CCC simultaneously
-        optimises correlation *and* variance matching, so the model
-        cannot minimise the loss by predicting near-constant values.
-
-        CCC = 2·cov(ŷ, y) / (var(ŷ) + var(y) + (mean(ŷ) - mean(y))²)
-
-        cls_head provides auxiliary directional gradient via BCE
-        (Pei et al., ECAI 2025).
+        Primary objective is weighted MSE (aligned with RMSE evaluation).
+        A directional penalty on reg head output discourages wrong-sign
+        predictions while keeping regression quality dominant.
         """
         if weights is None:
             weights = torch.ones_like(target)
 
-        # --- Regression: CCC loss (Lin, 1989) ---
-        if len(pred_reg) >= 8:
-            w = weights / weights.sum()  # normalise to sum=1
-            mean_p = (w * pred_reg).sum()
-            mean_t = (w * target).sum()
-            var_p = (w * (pred_reg - mean_p) ** 2).sum()
-            var_t = (w * (target - mean_t) ** 2).sum()
-            cov_pt = (w * (pred_reg - mean_p) * (target - mean_t)).sum()
-            ccc = 2.0 * cov_pt / (var_p + var_t + (mean_p - mean_t) ** 2 + 1e-8)
-            loss_reg = 1.0 - ccc
+        w = weights / weights.mean()
+
+        # Primary regression objective (RMSE-aligned)
+        loss_reg = (w * (pred_reg - target) ** 2).mean()
+
+        # Penalize wrong direction using regression head directly.
+        # If pred and target signs disagree, pred_reg * target is negative.
+        dir_margin = pred_reg * target
+        loss_wrong_dir = (w * torch.relu(-dir_margin)).mean()
+
+        # Optional auxiliary BCE head (kept lightweight).
+        if self.bce_weight > 0:
+            dir_label = (target > 0).float()
+            loss_bce = nn.functional.binary_cross_entropy_with_logits(
+                pred_cls, dir_label, weight=w, reduction="mean",
+            )
         else:
-            # Fallback to MSE for tiny last batches
-            w = weights / weights.mean()
-            loss_reg = (w * (pred_reg - target) ** 2).mean()
+            loss_bce = torch.tensor(0.0, device=pred_reg.device)
 
-        # --- Direction: BCE auxiliary ---
-        w_bce = weights / weights.mean()
-        dir_label = (target > 0).float()
-        loss_bce = nn.functional.binary_cross_entropy_with_logits(
-            pred_cls, dir_label, weight=w_bce, reduction="mean",
-        )
-
-        return (1.0 - self.bce_weight) * loss_reg + self.bce_weight * loss_bce
+        return loss_reg + self.dir_penalty_weight * loss_wrong_dir + self.bce_weight * loss_bce
 
     def fit(
         self,
@@ -427,10 +428,10 @@ class ChronosCMTFPredictor:
         # Weights range smoothly from 1× (no news bars) to 2× (all bars have news).
         news_bar_present = (np.abs(news_train).sum(axis=-1) > 0)  # (N, seq_len) bool
         news_density = news_bar_present.mean(axis=1).astype(np.float32)  # (N,)
-        sample_weights = (1.0 + news_density).astype(np.float32)
+        sample_weights = (1.0 + (self.news_weight_max - 1.0) * news_density).astype(np.float32)
         logger.info(
-            "News-density weighting: density min={:.3f} mean={:.3f} max={:.3f}",
-            float(news_density.min()), float(news_density.mean()), float(news_density.max()),
+            "News-density weighting: density min={:.3f} mean={:.3f} max={:.3f} | sample weight max={:.2f}",
+            float(news_density.min()), float(news_density.mean()), float(news_density.max()), self.news_weight_max,
         )
         train_w = torch.tensor(sample_weights, dtype=torch.float32, device=self.device)
 
@@ -447,7 +448,7 @@ class ChronosCMTFPredictor:
         val_news_present = (np.abs(news_val).sum(axis=-1) > 0)  # (N_val, seq_len)
         val_density = val_news_present.mean(axis=1).astype(np.float32)
         val_w = torch.tensor(
-            (1.0 + val_density).astype(np.float32),
+            (1.0 + (self.news_weight_max - 1.0) * val_density).astype(np.float32),
             dtype=torch.float32, device=self.device,
         )
 
@@ -540,11 +541,11 @@ class ChronosCMTFPredictor:
         pred_std = float(np.std(val_centred))
         actual_std = float(np.std(y_val))
         self._pred_scale = float(np.clip(
-            actual_std / max(pred_std, 1e-8), 0.5, 15.0,
+            actual_std / max(pred_std, 1e-8), self.scale_clip_min, self.scale_clip_max,
         ))
         logger.info(
-            "CMTF val DA%: {:.1f}% (centering={:.6f}, pred_std={:.6f}, actual_std={:.6f}, scale={:.2f})",
-            val_da, self._val_reg_median, pred_std, actual_std, self._pred_scale,
+            "CMTF val DA%: {:.1f}% (centering={:.6f}, pred_std={:.6f}, actual_std={:.6f}, scale={:.2f}, alpha={:.2f})",
+            val_da, self._val_reg_median, pred_std, actual_std, self._pred_scale, self.scale_blend_alpha,
         )
 
         logger.info("CMTF fusion training done | best val loss = {:.6f}", best_val_loss)
@@ -596,13 +597,14 @@ class ChronosCMTFPredictor:
             # Variance calibration (EMOS-style): scale to match actual
             # return distribution observed on validation set.
             scaled = centred * self._pred_scale
-            n_pos = int(np.sum(scaled > 0))
-            n_neg = int(np.sum(scaled < 0))
+            blended = self.scale_blend_alpha * scaled + (1.0 - self.scale_blend_alpha) * centred
+            n_pos = int(np.sum(blended > 0))
+            n_neg = int(np.sum(blended < 0))
             logger.info(
-                "CMTF predict: val_median={:.6f}, scale={:.2f} → {}+/{}− predictions",
-                self._val_reg_median, self._pred_scale, n_pos, n_neg,
+                "CMTF predict: val_median={:.6f}, scale={:.2f}, alpha={:.2f} → {}+/{}− predictions",
+                self._val_reg_median, self._pred_scale, self.scale_blend_alpha, n_pos, n_neg,
             )
-            return scaled
+            return blended
 
     # ------------------------------------------------------------------
     # Checkpoint save / load (includes normalisation scalars)
