@@ -71,22 +71,22 @@ python run_chronos_benchmark.py --stage plot   # Regenerate plots
 | # | Experiment | Description |
 |---|-----------|-------------|
 | 1 | Chronos Zero-Shot | Foundation model predicts directly (no training) |
-| 2 | Chronos + CMTF | FiLM + GRN fusion of market + news embeddings |
+| 2 | CMTF | LoRA-tuned Chronos backbone with FiLM + GRN fusion of market + news embeddings |
 | 3 | LSTM Baseline | Sequence model baseline on close windows |
 | 4 | LSTM + CMTF | LSTM embeddings fused with CMTF (residual-gated) |
 | 5 | Random Forest Baseline | Tabular baseline over engineered market features |
-| 6 | Chronos Fine-Tuned | Trainable Chronos-based baseline |
+| 6 | Chronos Fine-Tuned (LoRA) | Market-only Chronos baseline fine-tuned with LoRA |
 
 ## Key Results (20-Day Horizon, VCB + BID)
 
 | Model | DA% | Sharpe | F1 | IC |
 |-------|-----|--------|----|----|
 | Chronos Zero-Shot | 46.8 | -0.32 | 0.48 | -0.13 |
-| **Chronos + CMTF** | **68.7** | **1.19** | **0.61** | **0.46** |
+| **CMTF** | **68.7** | **1.19** | **0.61** | **0.46** |
 | LSTM Baseline | 55.7 | 0.32 | 0.63 | 0.28 |
 | LSTM + CMTF | 57.8 | 0.81 | 0.65 | 0.28 |
 | Random Forest Baseline | 52.9 | 0.02 | 0.46 | 0.01 |
-| Chronos Fine-Tuned | 47.5 | 0.03 | 0.64 | -0.15 |
+| Chronos Fine-Tuned (LoRA) | 47.5 | 0.03 | 0.64 | -0.15 |
 
 CMTF is the strongest model on the 20-day horizon by RMSE, DA%, Sharpe, IC, and composite score.
 

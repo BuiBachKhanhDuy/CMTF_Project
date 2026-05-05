@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from src.pipeline.temporal_aligner import TemporalAligner
-from src.pipeline.news_encoder import NewsEncoder
+from src.pipeline.news_encoder import NEWS_HYBRID_COLUMN, SENTIMENT_TRACE_COLUMNS, NewsEncoder
 from src.pipeline.dataset_builder import CMTFDataset
 
 
@@ -167,6 +167,86 @@ class TestEncoderNullMask:
         result = encoder.encode_window(texts=["   ", "  \n  "], null_mask=False)
         assert result["has_news"] is False
         assert np.allclose(result["embedding"], 0.0)
+
+
+class TestEncoderHybridSentiment:
+    def test_encode_dataframe_adds_hybrid_sentiment_features(self, monkeypatch):
+        class FakeInferencer:
+            def predict_titles(self, titles, batch_size=32):
+                return pd.DataFrame(
+                    {
+                        "title_raw": list(titles),
+                        "title_clean": list(titles),
+                        "sentiment_score": np.array([0.4, -0.2], dtype=np.float32)[: len(titles)],
+                        "prob_negative": np.array([0.2, 0.6], dtype=np.float32)[: len(titles)],
+                        "prob_neutral": np.array([0.3, 0.3], dtype=np.float32)[: len(titles)],
+                        "prob_positive": np.array([0.5, 0.1], dtype=np.float32)[: len(titles)],
+                    }
+                )
+
+        monkeypatch.setattr(
+            NewsEncoder,
+            "encode_window",
+            lambda self, texts, null_mask=False: {
+                "embedding": np.ones(768, dtype=np.float32) if texts and not null_mask else np.zeros(768, dtype=np.float32),
+                "has_news": bool(texts) and not bool(null_mask),
+            },
+        )
+
+        frame = pd.DataFrame(
+            {
+                "symbol": ["VCB", "VCB"],
+                "time": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+                "news_titles": [["A", "B"], []],
+                "news_content": [["content a", "content b"], []],
+                "news_missing_flag": [False, True],
+            }
+        )
+
+        encoder = NewsEncoder(sentiment_inferencer=FakeInferencer())
+        encoded = encoder.encode_dataframe(frame, use_cache=False)
+
+        assert NEWS_HYBRID_COLUMN in encoded.columns
+        assert encoded.loc[0, NEWS_HYBRID_COLUMN].shape == (773,)
+        assert np.allclose(encoded.loc[1, NEWS_HYBRID_COLUMN], 0.0)
+        assert encoded.loc[0, "sentiment_mean"] == pytest.approx(0.1)
+        assert encoded.loc[0, "sentiment_positive_ratio"] == pytest.approx(0.5)
+        assert encoded.loc[1, "sentiment_missing_flag"] == pytest.approx(1.0)
+        assert encoder.last_sentiment_trace is not None
+        assert len(encoder.last_sentiment_trace) == 2
+
+
+class TestDatasetCacheHybridRestore:
+    def test_save_and_load_restores_hybrid_news_embeddings(self, tmp_path):
+        from src.pipeline.orchestrator import _load_dataset_cache, _save_dataset_cache
+
+        cache_path = tmp_path / "dataset_test.parquet"
+        frame = pd.DataFrame(
+            {
+                "symbol": ["VCB"],
+                "news_count": [1],
+                "has_news": [True],
+                "news_emb": [np.ones(768, dtype=np.float32)],
+                NEWS_HYBRID_COLUMN: [np.ones(773, dtype=np.float32)],
+                "sentiment_mean": [0.2],
+                "sentiment_max_abs": [0.2],
+                "sentiment_positive_ratio": [1.0],
+                "sentiment_negative_ratio": [0.0],
+                "sentiment_score_count": [1.0],
+                "sentiment_missing_flag": [0.0],
+                "fwd_ret_1d": [0.01],
+            },
+            index=pd.DatetimeIndex([pd.Timestamp("2024-01-02")], name="time"),
+        )
+
+        _save_dataset_cache(frame, cache_path)
+        restored = _load_dataset_cache(cache_path)
+
+        assert restored is not None
+        assert restored.loc[restored.index[0], NEWS_HYBRID_COLUMN].shape == (773,)
+        assert np.allclose(restored.loc[restored.index[0], NEWS_HYBRID_COLUMN], 1.0)
+        for col in SENTIMENT_TRACE_COLUMNS:
+            assert col in restored.columns
 
 
 # ======================================================================

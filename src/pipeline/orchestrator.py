@@ -15,13 +15,16 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from src.phase2 import Phase2PhoBERTInferencer, load_phase2_phobert_inference_bundle
+
 from .data_fetcher import VnstockDataFetcher
 from .temporal_aligner import TemporalAligner
 from .feature_engineer import FeatureEngineer
-from .news_encoder import NewsEncoder
+from .news_encoder import NEWS_HYBRID_COLUMN, SENTIMENT_TRACE_COLUMNS, NewsEncoder
 from .dataset_builder import CMTFDataset
 
 _DATASET_CACHE_DIR = Path("./cache/dataset")
+_SENTIMENT_EXPORT_DIR = Path("./artifacts/hybrid_sentiment")
 
 
 def _config_hash(config: dict[str, Any]) -> str:
@@ -31,6 +34,7 @@ def _config_hash(config: dict[str, Any]) -> str:
         "news_source", "news_sources", "news_similarity_threshold",
         "sequence_len", "horizon", "target_horizon_days",
         "train_end", "val_end", "normalize_method",
+        "news_sentiment_enabled", "phase2_output_dir", "news_sentiment_device",
     ]
     h = hashlib.sha256()
     for k in keys:
@@ -42,16 +46,21 @@ def _save_dataset_cache(df: pd.DataFrame, cache_path: Path) -> None:
     """Save the processed DataFrame to parquet (news_emb as bytes)."""
     df_out = df.copy()
     # Convert numpy arrays in news_emb to bytes for parquet compatibility
-    if "news_emb" in df_out.columns:
-        df_out["news_emb"] = df_out["news_emb"].apply(
-            lambda x: x.tobytes() if isinstance(x, np.ndarray) else x
-        )
+    for col in ("news_emb", NEWS_HYBRID_COLUMN):
+        if col in df_out.columns:
+            df_out[col] = df_out[col].apply(
+                lambda x: x.tobytes() if isinstance(x, np.ndarray) else x
+            )
     # Drop list/object columns that parquet can't handle natively
-    drop_cols = [c for c in ("news_titles", "news_content") if c in df_out.columns]
+    drop_cols = [
+        c
+        for c in ("news_titles", "news_content", "news_title_sentiment_scores")
+        if c in df_out.columns
+    ]
     # Also drop any remaining columns with dtype 'object' that aren't
     # already handled (except news_emb which is now bytes, and symbol)
     for c in df_out.columns:
-        if df_out[c].dtype == object and c not in ("news_emb", "symbol"):
+        if df_out[c].dtype == object and c not in ("news_emb", NEWS_HYBRID_COLUMN, "symbol"):
             drop_cols.append(c)
     if drop_cols:
         df_out = df_out.drop(columns=list(set(drop_cols)))
@@ -67,11 +76,12 @@ def _load_dataset_cache(cache_path: Path) -> pd.DataFrame | None:
     try:
         df = pd.read_parquet(cache_path)
         # Restore news_emb from bytes → np.ndarray
-        if "news_emb" in df.columns:
-            df["news_emb"] = df["news_emb"].apply(
-                lambda b: np.frombuffer(b, dtype=np.float32).copy()
-                if isinstance(b, (bytes, bytearray)) else b
-            )
+        for col in ("news_emb", NEWS_HYBRID_COLUMN):
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda b: np.frombuffer(b, dtype=np.float32).copy()
+                    if isinstance(b, (bytes, bytearray)) else b
+                )
         # Recreate empty list columns so downstream code doesn't break
         if "news_titles" not in df.columns:
             df["news_titles"] = [[] for _ in range(len(df))]
@@ -82,6 +92,31 @@ def _load_dataset_cache(cache_path: Path) -> pd.DataFrame | None:
     except Exception:
         logger.warning("Corrupt dataset cache {} — rebuilding", cache_path.name)
         return None
+
+
+def _export_sentiment_outputs(
+    df_featured: pd.DataFrame,
+    article_trace: pd.DataFrame | None,
+    cache_hash: str,
+) -> None:
+    _SENTIMENT_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    bar_cols = ["symbol", "news_count", "has_news", *SENTIMENT_TRACE_COLUMNS]
+    present_bar_cols = [col for col in bar_cols if col in df_featured.columns]
+    if present_bar_cols:
+        bar_frame = df_featured.reset_index().rename(columns={df_featured.index.name or "index": "time"})
+        bar_frame[present_bar_cols + ["time"]].to_csv(
+            _SENTIMENT_EXPORT_DIR / f"sentiment_bars_{cache_hash}.csv",
+            index=False,
+            encoding="utf-8",
+        )
+
+    if article_trace is not None and not article_trace.empty:
+        article_trace.to_csv(
+            _SENTIMENT_EXPORT_DIR / f"sentiment_articles_{cache_hash}.csv",
+            index=False,
+            encoding="utf-8",
+        )
 
 
 def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
@@ -127,6 +162,11 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     val_end: str = config["val_end"]
     norm_method: str = config.get("normalize_method", "zscore")
     rebuild_data: bool = bool(config.get("rebuild_data", False))
+    news_sentiment_enabled: bool = bool(config.get("news_sentiment_enabled", False))
+    phase2_output_dir: str | Path = config.get("phase2_output_dir", "outputs/phase2/latest")
+    news_sentiment_device: str = str(config.get("news_sentiment_device", "cpu"))
+    news_sentiment_export_trace: bool = bool(config.get("news_sentiment_export_trace", True))
+    news_sentiment_batch_size: int = int(config.get("news_sentiment_batch_size", 32))
 
     # When rebuild_data is True, bypass ALL caches (news, embeddings, dataset)
     if rebuild_data:
@@ -140,6 +180,8 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         cached_df = _load_dataset_cache(cache_path)
         if cached_df is not None:
             cached_df = cached_df.dropna(subset=[target_col])
+            if news_sentiment_export_trace and any(col in cached_df.columns for col in SENTIMENT_TRACE_COLUMNS):
+                _export_sentiment_outputs(cached_df, article_trace=None, cache_hash=cfg_hash)
             dataset = CMTFDataset(
                 df_featured=cached_df,
                 sequence_len=seq_len,
@@ -152,7 +194,18 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     fetcher = VnstockDataFetcher()
     aligner = TemporalAligner()
     engineer = FeatureEngineer()
-    encoder = NewsEncoder()
+    sentiment_inferencer = None
+    if news_sentiment_enabled:
+        sentiment_bundle = load_phase2_phobert_inference_bundle(
+            phase2_output_dir,
+            device=news_sentiment_device,
+        )
+        sentiment_inferencer = Phase2PhoBERTInferencer(sentiment_bundle)
+        logger.info("Hybrid news sentiment enabled via Phase 2 PhoBERT handoff")
+    encoder = NewsEncoder(
+        sentiment_inferencer=sentiment_inferencer,
+        sentiment_batch_size=news_sentiment_batch_size,
+    )
 
     all_frames: list[pd.DataFrame] = []
 
@@ -251,6 +304,8 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     df_all = encoder.encode_dataframe(
         df_all, text_col="news_content", use_cache=(not rebuild_data),
     )
+    if news_sentiment_export_trace and any(col in df_all.columns for col in SENTIMENT_TRACE_COLUMNS):
+        _export_sentiment_outputs(df_all, encoder.last_sentiment_trace, cache_hash=cfg_hash)
     if log_news_coverage and "has_news" in df_all.columns:
         has_news_count = int(df_all["has_news"].sum())
         total_rows = len(df_all)
@@ -268,8 +323,9 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         for c in df_all.columns
         if not re.match(r"^fwd_ret_\d+d$", str(c))
         and c not in {
-            "news_emb", "has_news", "news_count",
+            "news_emb", NEWS_HYBRID_COLUMN, "has_news", "news_count",
             "news_titles", "news_content", "news_missing_flag", "symbol",
+            *SENTIMENT_TRACE_COLUMNS,
         }
         and df_all[c].dtype in ("float64", "float32", "int64", "int32")
     ]

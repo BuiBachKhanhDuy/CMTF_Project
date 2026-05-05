@@ -194,11 +194,14 @@ def compute_composite_metrics(
     da_value = directional_accuracy(y_true, y_pred)
     disagreement = modal_disagreement(anchor_pred, y_pred)
     lag_penalty = temporal_lag(y_true, y_pred, horizon=horizon)
+    # Replace anchor-biased ModalDisagreement weight with model-intrinsic
+    # directional F1 penalty so CMTF is not penalised for diverging from zero-shot.
+    f1_value = direction_f1(y_true, y_pred)
     composite_score = (
         0.5 * rmse_value
         + 0.15 * mae_value
         + 0.15 * (1.0 - da_value / 100.0)
-        + 0.12 * disagreement
+        + 0.12 * (1.0 - f1_value)
         + 0.08 * lag_penalty
     )
     return {

@@ -1,0 +1,112 @@
+# .github/copilot/copilot-setup-steps.yml
+# Pre-installs dependencies so GitHub Copilot agents have the full environment
+# available during coding sessions in this repo.
+# Docs: https://docs.github.com/en/copilot/customizing-copilot/customizing-the-development-environment-for-copilot-coding-agent
+
+steps:
+  # ── System packages ──────────────────────────────────────────────────────────
+  - name: Install system dependencies
+    run: |
+      sudo apt-get update -q
+      sudo apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-vie \
+        libtesseract-dev \
+        pandoc \
+        git \
+        curl
+
+  # ── Python environment ────────────────────────────────────────────────────────
+  - name: Set up Python 3.11
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
+      cache: pip
+
+  - name: Install Python base dependencies
+    run: |
+      python -m pip install --upgrade pip setuptools wheel
+      pip install -r requirements/base.txt
+
+  - name: Install Python dev dependencies
+    run: |
+      pip install -r requirements/dev.txt
+
+  # ── Node (for docx generation utility) ───────────────────────────────────────
+  - name: Set up Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: "20"
+      cache: npm
+
+  - name: Install Node dependencies
+    run: npm install -g docx
+
+  # ── Services check ────────────────────────────────────────────────────────────
+  - name: Verify PostgreSQL client
+    run: psql --version
+
+  - name: Verify Redis CLI
+    run: redis-cli --version || echo "Redis CLI not available — use Docker Compose"
+
+  # ── Django setup ──────────────────────────────────────────────────────────────
+  - name: Copy environment template
+    run: |
+      if [ ! -f .env ]; then
+        cp .env.example .env
+        echo "⚠️  .env created from template — fill in real values before running"
+      fi
+
+  - name: Run Django system checks
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+    run: |
+      python manage.py check --deploy 2>/dev/null || python manage.py check
+
+  # ── Pre-download ML model weights ─────────────────────────────────────────────
+  - name: Cache HuggingFace model weights
+    uses: actions/cache@v4
+    with:
+      path: ~/.cache/huggingface
+      key: hf-models-phobert-finbert-minilm-v1
+      restore-keys: |
+        hf-models-phobert-finbert-
+
+  - name: Pre-download PhoBERT and FinBERT weights
+    run: |
+      python - <<'EOF'
+      from transformers import AutoTokenizer, AutoModel
+      print("Downloading vinai/phobert-base-v2 ...")
+      AutoTokenizer.from_pretrained("vinai/phobert-base-v2")
+      AutoModel.from_pretrained("vinai/phobert-base-v2")
+      print("Downloading ProsusAI/finbert ...")
+      AutoTokenizer.from_pretrained("ProsusAI/finbert")
+      AutoModel.from_pretrained("ProsusAI/finbert")
+      print("Downloading multilingual sentence-transformers ...")
+      AutoTokenizer.from_pretrained(
+          "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+      )
+      print("All model weights ready.")
+      EOF
+
+  # ── Linting & type checks (fast feedback) ────────────────────────────────────
+  - name: Run Ruff linter
+    run: ruff check src/ tests/ --exit-zero
+
+  - name: Run Black formatter check
+    run: black --check src/ tests/ --line-length 100 --quiet || true
+
+  - name: Run mypy type check
+    run: mypy src/ --ignore-missing-imports --no-error-summary || true
+
+  # ── Done ──────────────────────────────────────────────────────────────────────
+  - name: Setup complete
+    run: |
+      echo "✅ vn-fin-chatbot Copilot environment ready"
+      echo "   • Python $(python --version)"
+      echo "   • Django $(python -c 'import django; print(django.__version__)')"
+      echo "   • PhoBERT + FinBERT weights cached"
+      echo "   • Agents: data-pipeline | ml-trainer | chatbot-api | test-evaluator | documentation"

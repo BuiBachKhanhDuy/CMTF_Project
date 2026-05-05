@@ -15,16 +15,48 @@ from pathlib import Path
 from loguru import logger
 
 from src.benchmark.baseline_models import (
+    ChronosLoRAPredictor,
     LSTMPredictor,
     RandomForestRegressor_Wrapper,
     FineTunedChronosPredictor,
 )
+from src.benchmark.metrics import compute_composite_metrics
+
+
+DEFAULT_BASELINE_PARAMS = {
+    "lstm": {
+        "hidden_dim": 64,
+        "num_layers": 2,
+        "dropout": 0.2,
+        "lr": 1e-3,
+        "batch_size": 32,
+    },
+    "rf": {
+        "n_estimators": 200,
+        "max_depth": 9,
+        "min_samples_split": 3,
+        "max_features": "log2",
+    },
+    "finetuned_chronos": {
+        "hidden_dim": 128,
+        "dropout": 0.2,
+        "market_hidden_dim": 64,
+        "lr": 1e-4,
+        "sign_penalty_weight": 0.2,
+        "sign_aux_weight": 0.3,
+    },
+}
+
+
+def get_default_baseline_hpo_params() -> dict:
+    """Return stable baseline parameters for fast, non-HPO benchmark runs."""
+    return json.loads(json.dumps(DEFAULT_BASELINE_PARAMS))
 
 
 def run_lstm_hpo(
-    close_windows_train: np.ndarray,
+    market_windows_train: np.ndarray,
     targets_train: np.ndarray,
-    close_windows_val: np.ndarray,
+    market_windows_val: np.ndarray,
     targets_val: np.ndarray,
     target_h: int,
     n_trials: int = 30,
@@ -40,9 +72,9 @@ def run_lstm_hpo(
         batch_size ∈ [16, 64]
     
     Args:
-        close_windows_train: (N_train, seq_len) training price windows
+        market_windows_train: (N_train, seq_len[, n_features]) training market windows
         targets_train: (N_train,) training targets
-        close_windows_val: (N_val, seq_len) validation price windows
+        market_windows_val: (N_val, seq_len[, n_features]) validation market windows
         targets_val: (N_val,) validation targets
         target_h: Prediction horizon (1, 5, or 20)
         n_trials: Number of Optuna trials
@@ -64,6 +96,7 @@ def run_lstm_hpo(
         try:
             # Create model
             model = LSTMPredictor(
+                input_dim=market_windows_train.shape[-1] if market_windows_train.ndim == 3 else 1,
                 hidden_dim=hidden_dim,
                 num_layers=num_layers,
                 dropout=dropout,
@@ -72,8 +105,8 @@ def run_lstm_hpo(
             
             # Train with early stopping
             history = model.fit(
-                close_windows_train, targets_train,
-                close_windows_val, targets_val,
+                market_windows_train, targets_train,
+                market_windows_val, targets_val,
                 epochs=100,
                 batch_size=batch_size,
                 learning_rate=lr,
@@ -104,9 +137,9 @@ def run_lstm_hpo(
 
 
 def run_rf_hpo(
-    close_windows_train: np.ndarray,
+    market_windows_train: np.ndarray,
     targets_train: np.ndarray,
-    close_windows_val: np.ndarray,
+    market_windows_val: np.ndarray,
     targets_val: np.ndarray,
     target_h: int,
     n_trials: int = 20,
@@ -120,9 +153,9 @@ def run_rf_hpo(
         max_features ∈ ["sqrt", "log2"]
     
     Args:
-        close_windows_train: (N_train, seq_len) training price windows
+        market_windows_train: (N_train, seq_len[, n_features]) training market windows
         targets_train: (N_train,) training targets
-        close_windows_val: (N_val, seq_len) validation price windows
+        market_windows_val: (N_val, seq_len[, n_features]) validation market windows
         targets_val: (N_val,) validation targets
         target_h: Prediction horizon (1, 5, or 20)
         n_trials: Number of Optuna trials
@@ -145,20 +178,25 @@ def run_rf_hpo(
                 n_estimators=n_estimators,
                 max_depth=max_depth,
                 min_samples_split=min_samples_split,
+                max_features=max_features,
                 random_state=42,
             )
-            model.fit(close_windows_train, targets_train)
+            model.fit(market_windows_train, targets_train)
             
             # Evaluate on validation
-            preds_val = model.predict(close_windows_val)
-            mse = np.mean((preds_val - targets_val) ** 2)
+            preds_val = model.predict(market_windows_val)
+            score = compute_composite_metrics(
+                targets_val,
+                preds_val,
+                horizon=target_h,
+            )["CompositeScore"]
             
             logger.debug(
-                "RF trial {}: n_trees={}, depth={}, min_split={}, max_feat={} → MSE={:.6f}",
-                trial.number, n_estimators, max_depth, min_samples_split, max_features, mse
+                "RF trial {}: n_trees={}, depth={}, min_split={}, max_feat={} → score={:.6f}",
+                trial.number, n_estimators, max_depth, min_samples_split, max_features, score
             )
             
-            return mse
+            return score
         
         except Exception as e:
             logger.warning("RF trial {} failed: {}", trial.number, str(e))
@@ -182,10 +220,14 @@ def run_finetuned_chronos_hpo(
     close_windows_val: np.ndarray,
     targets_val: np.ndarray,
     target_h: int,
+    market_windows_train: np.ndarray | None = None,
+    market_windows_val: np.ndarray | None = None,
+    market_tabular_train: np.ndarray | None = None,
+    market_tabular_val: np.ndarray | None = None,
     n_trials: int = 15,
     device: str = "cpu",
 ) -> dict:
-    """Optimize Fine-tuned Chronos hyperparameters using Optuna.
+    """Optimize LoRA fine-tuned Chronos hyperparameters using Optuna.
     
     Searched hyperparameters:
         hidden_dim ∈ [64, 256]
@@ -198,6 +240,8 @@ def run_finetuned_chronos_hpo(
         targets_train: (N_train,) training targets
         close_windows_val: (N_val, seq_len) validation price windows
         targets_val: (N_val,) validation targets
+        market_tabular_train: optional OHLCV + indicator features for train split
+        market_tabular_val: optional OHLCV + indicator features for val split
         target_h: Prediction horizon (1, 5, or 20)
         n_trials: Number of Optuna trials
         device: Device to use
@@ -205,20 +249,29 @@ def run_finetuned_chronos_hpo(
     Returns:
         dict: Best hyperparameters
     """
-    logger.info("═══ Fine-tuned Chronos HPO ({}D, {} trials) ═══", target_h, n_trials)
+    logger.info("═══ Chronos LoRA HPO ({}D, {} trials) ═══", target_h, n_trials)
     
     def objective(trial: optuna.Trial) -> float:
         # Suggest hyperparameters
         hidden_dim = trial.suggest_int("hidden_dim", 64, 256, step=32)
         dropout = trial.suggest_float("dropout", 0.1, 0.5)
+        market_hidden_dim = trial.suggest_int("market_hidden_dim", 32, 96, step=32)
         lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
         
         try:
             # Create model
-            model = FineTunedChronosPredictor(
+            model = ChronosLoRAPredictor(
                 chronos_predictor,
                 hidden_dim=hidden_dim,
                 dropout=dropout,
+                market_input_dim=(market_windows_train.shape[-1] if market_windows_train is not None else 0),
+                market_hidden_dim=market_hidden_dim,
+                tabular_dim=0,
+                sign_penalty_weight=DEFAULT_BASELINE_PARAMS["finetuned_chronos"]["sign_penalty_weight"],
+                sign_aux_weight=DEFAULT_BASELINE_PARAMS["finetuned_chronos"]["sign_aux_weight"],
+                lora_rank=4,
+                lora_alpha=8,
+                lora_dropout=0.0,
                 device=device,
             )
             
@@ -226,6 +279,8 @@ def run_finetuned_chronos_hpo(
             history = model.fit(
                 close_windows_train, targets_train,
                 close_windows_val, targets_val,
+                market_windows_train=market_windows_train,
+                market_windows_val=market_windows_val,
                 epochs=25,
                 batch_size=32,
                 learning_rate=lr,
@@ -234,14 +289,14 @@ def run_finetuned_chronos_hpo(
             
             best_val_loss = history["best_val_loss"]
             logger.debug(
-                "Fine-tuned Chronos trial {}: hidden={}, dropout={:.2f}, lr={:.1e} → loss={:.6f}",
-                trial.number, hidden_dim, dropout, lr, best_val_loss
+                "Chronos LoRA trial {}: hidden={}, market_hidden={}, dropout={:.2f}, lr={:.1e} → loss={:.6f}",
+                trial.number, hidden_dim, market_hidden_dim, dropout, lr, best_val_loss
             )
             
             return best_val_loss
         
         except Exception as e:
-            logger.warning("Fine-tuned Chronos trial {} failed: {}", trial.number, str(e))
+            logger.warning("Chronos LoRA trial {} failed: {}", trial.number, str(e))
             return float("inf")
     
     # Run optimization
@@ -250,34 +305,44 @@ def run_finetuned_chronos_hpo(
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
     
     best_params = study.best_params
-    logger.info("Best Fine-tuned Chronos params: {}", best_params)
+    logger.info("Best Chronos LoRA params: {}", best_params)
     
     return best_params
 
 
 def load_or_run_baseline_hpo(
     hpo_dir: Path,
-    close_windows_train: np.ndarray,
+    market_windows_train: np.ndarray,
     targets_train: np.ndarray,
-    close_windows_val: np.ndarray,
+    market_windows_val: np.ndarray,
     targets_val: np.ndarray,
     chronos_predictor,
+    close_windows_train: np.ndarray,
+    close_windows_val: np.ndarray,
     target_h: int,
+    market_tabular_train: np.ndarray | None = None,
+    market_tabular_val: np.ndarray | None = None,
     device: str = "cpu",
     force_rerun: bool = False,
+    fallback_to_defaults: bool = False,
 ) -> dict:
     """Load cached HPO params or run HPO if not cached.
     
     Args:
         hpo_dir: Directory to cache HPO results
-        close_windows_train: Training data
+        market_windows_train: Training market windows for trainable baselines
         targets_train: Training targets
-        close_windows_val: Validation data
+        market_windows_val: Validation market windows for trainable baselines
         targets_val: Validation targets
         chronos_predictor: ChronosMarketPredictor for fine-tuned version
+        close_windows_train: Close-only windows for Chronos embedding extraction
+        close_windows_val: Close-only validation windows for Chronos embedding extraction
+        market_tabular_train: Optional OHLCV + indicator features for fine-tuned Chronos
+        market_tabular_val: Optional OHLCV + indicator features for fine-tuned Chronos
         target_h: Prediction horizon
         device: Device for training
         force_rerun: Force re-running HPO even if cached
+        fallback_to_defaults: Use stable defaults instead of launching new HPO when cache is absent
     
     Returns:
         dict: {
@@ -294,13 +359,20 @@ def load_or_run_baseline_hpo(
         logger.info("Loading cached baseline HPO params ({}D) from {}", target_h, cache_file)
         with open(cache_file) as f:
             return json.load(f)
+
+    if fallback_to_defaults and not force_rerun:
+        logger.info(
+            "No cached baseline HPO params for {}D; using stable default baseline params",
+            target_h,
+        )
+        return get_default_baseline_hpo_params()
     
     logger.info("Running baseline HPO for {}D", target_h)
     
     # Run LSTM HPO
     lstm_params = run_lstm_hpo(
-        close_windows_train, targets_train,
-        close_windows_val, targets_val,
+        market_windows_train, targets_train,
+        market_windows_val, targets_val,
         target_h=target_h,
         n_trials=30,
         device=device,
@@ -308,8 +380,8 @@ def load_or_run_baseline_hpo(
     
     # Run Random Forest HPO
     rf_params = run_rf_hpo(
-        close_windows_train, targets_train,
-        close_windows_val, targets_val,
+        market_windows_train, targets_train,
+        market_windows_val, targets_val,
         target_h=target_h,
         n_trials=20,
     )
@@ -319,6 +391,10 @@ def load_or_run_baseline_hpo(
         chronos_predictor,
         close_windows_train, targets_train,
         close_windows_val, targets_val,
+        market_windows_train=market_windows_train,
+        market_windows_val=market_windows_val,
+        market_tabular_train=market_tabular_train,
+        market_tabular_val=market_tabular_val,
         target_h=target_h,
         n_trials=15,
         device=device,

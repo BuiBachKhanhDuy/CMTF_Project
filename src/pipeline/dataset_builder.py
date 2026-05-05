@@ -14,6 +14,8 @@ import torch
 from torch.utils.data import Dataset
 from loguru import logger
 
+from .news_encoder import NEWS_HYBRID_COLUMN, SENTIMENT_TRACE_COLUMNS
+
 
 class CMTFDataset(Dataset):
     """PyTorch Dataset for the Cross-Modal Temporal Fusion model.
@@ -34,9 +36,13 @@ class CMTFDataset(Dataset):
             e.g. 1 -> ``fwd_ret_1d``, 5 -> ``fwd_ret_5d``.
     """
 
-    # Columns that are NOT market input features
+    # Columns that are NOT market input features.
+    # NOTE: SENTIMENT_TRACE_COLUMNS (sentiment_mean, sentiment_max_abs, etc.)
+    # are intentionally NOT excluded so they flow into market_cols as additional
+    # predictive features alongside OHLCV + technical indicators.
     _EXCLUDE_COLS = {
         "news_emb",
+        NEWS_HYBRID_COLUMN,
         "has_news",
         "news_count",
         "news_titles",
@@ -84,7 +90,8 @@ class CMTFDataset(Dataset):
         self._market = self.df[self.market_cols].values.astype(np.float32)
 
         # News embeddings → (N, 768) array
-        news_emb_list = self.df["news_emb"].tolist()
+        news_column = NEWS_HYBRID_COLUMN if NEWS_HYBRID_COLUMN in self.df.columns else "news_emb"
+        news_emb_list = self.df[news_column].tolist()
         self._news = np.stack(news_emb_list).astype(np.float32)  # (N, 768)
 
         # Mask: True where there is NO news (inverted has_news)
