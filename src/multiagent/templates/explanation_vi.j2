@@ -1,0 +1,35 @@
+{# Vietnamese explanation template — Jinja2 fallback when Ollama is unavailable #}
+{% set action_map = {"long": "MUA", "short": "BÁN", "flat": "GIỮ"} %}
+{% set action_vi = action_map.get(action, "GIỮ") %}
+
+📊 **Khuyến nghị: {{ action_vi }}** cho {{ symbol }} ({{ horizon }}d)
+
+**Dự báo:**
+- Baseline (chỉ thị trường): {{ "%.5f"|format(baseline_pred or 0) }}
+- Cuối cùng (có tin tức): {{ "%.5f"|format(final_pred_adjusted or 0) }}
+- Đóng góp tin tức: {{ "%.5f"|format(news_residual or 0) }} × {{ "%.1f"|format(news_residual_scale or 0) }}
+- Mức vị thế: {{ "%.0f"|format((position_scale or 0) * 100) }}%
+
+{% if regime_flags %}
+**Chế độ thị trường:**
+- Biến động 20 ngày: {{ "%.4f"|format(regime_flags.vol_20d or 0) }}{% if regime_flags.high_vol %} ⚠️ CAO{% endif %}
+
+- Drawdown tối đa: {{ "%.4f"|format(regime_flags.max_drawdown_abs or 0) }}{% if regime_flags.drawdown_breach %} 🚨 VƯỢT NGƯỠNG{% endif %}
+
+{% endif %}
+{% if news_quality_flags %}
+**Chất lượng tin tức:**
+- Số phiên có tin: {{ news_quality_flags.coverage }}/30
+- Tỷ lệ tin cũ: {{ "%.0f"|format((news_quality_flags.staleness_frac or 0) * 100) }}%
+{% endif %}
+{% if disagreement_force_flat %}
+⚠️ **Cảnh báo:** Các mô hình ensemble không đồng thuận về hướng → buộc GIỮ.
+{% endif %}
+{% if top_attended_bars %}
+**Tin tức ảnh hưởng nhất:**
+{% for bar in top_attended_bars[:3] %}
+{% for art in bar.articles[:2] %}
+  - {{ art.title }} (attention: {{ "%.3f"|format(bar.attention_weight) }})
+{% endfor %}
+{% endfor %}
+{% endif %}
