@@ -1,0 +1,16 @@
+{
+  "row_count": 1005,
+  "null_raw_titles": 0,
+  "empty_clean_titles": 0,
+  "duplicate_raw_titles": 10,
+  "duplicate_clean_titles": 10,
+  "avg_raw_char_len": 82.74925373134329,
+  "avg_clean_char_len": 80.12636815920398,
+  "avg_raw_token_len": 18.017910447761196,
+  "avg_clean_token_len": 14.423880597014925,
+  "label_distribution": {
+    "negative": 187,
+    "neutral": 249,
+    "positive": 569
+  }
+}

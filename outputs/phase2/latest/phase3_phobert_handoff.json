@@ -1,0 +1,23 @@
+{
+  "variant": "phobert",
+  "phase2_output_dir": "C:\\Users\\bachkhan\\Documents\\ChatbotThesis\\outputs\\phase2\\latest",
+  "checkpoint_path": "C:\\Users\\bachkhan\\Documents\\ChatbotThesis\\outputs\\phase2\\latest\\phobert\\phobert.pt",
+  "tokenizer_dir": "C:\\Users\\bachkhan\\Documents\\ChatbotThesis\\outputs\\phase2\\latest\\phobert\\tokenizer",
+  "model_name": "vinai/phobert-base-v2",
+  "projection_dim": 256,
+  "num_heads": 4,
+  "dropout": 0.1,
+  "freeze_backbone": false,
+  "max_length": 128,
+  "selection_metric": "macro_f1",
+  "best_selection_score": 0.7703761755485893,
+  "best_epoch": 5,
+  "preprocessing": {
+    "lowercase": false,
+    "remove_punctuation": true,
+    "segmentation": "vncorenlp",
+    "normalize_unicode_form": "NFC",
+    "strip_html": true,
+    "collapse_whitespace": true
+  }
+}

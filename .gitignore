@@ -30,7 +30,7 @@ cache/
 artifacts/
 
 # Model outputs (large checkpoints, not for VCS)
-outputs/
+outputs/phase2/_rerun_both
 
 # External data / binaries (downloaded at setup time)
 data/external/
@@ -44,3 +44,5 @@ Thumbs.db
 
 # Diagnostic / scratch scripts (not part of main pipeline)
 diag_cmtf.py
+
+docs/

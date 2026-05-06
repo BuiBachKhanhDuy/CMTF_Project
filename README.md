@@ -2,6 +2,18 @@
 
 A multimodal time-series forecasting system that fuses **OHLCV market data** with **Vietnamese financial news embeddings** through a FiLM-conditioned fusion architecture, benchmarked against Amazon Chronos foundation model baselines.
 
+## Clone Requirements
+
+This repository includes Phase 2 model checkpoints under `outputs/phase2/latest/`.
+To clone and pull these files successfully, install and enable Git LFS first:
+
+```powershell
+git lfs install
+git clone <repo-url>
+cd ChatbotThesis
+git lfs pull
+```
+
 ## Quick Start
 
 ```powershell

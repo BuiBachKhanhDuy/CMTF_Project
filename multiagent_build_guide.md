@@ -4,10 +4,16 @@
 
 This document is the implementation plan for the next step of the project. It is not a generic architecture note. It is a code-grounded guide for turning the current repository into:
 
-1. a LangGraph-based multi-agent system
-2. a separate backtesting and evaluation layer
+1. a LangGraph-based multi-agent system whose **deterministic critic agents** are allowed to *modify* the action and position size produced by the base CMTF v8 predictor, so the multi-agent layer has a real lever to outperform plain CMTF
+2. an **A/B evaluation harness** that compares CMTF-only vs CMTF + multi-agent policy on the existing test split using Sharpe of a simple long/short policy
+3. a **broker-style backtesting layer** with commission, slippage, and equity-curve accounting, reusing the same multi-agent graph as its signal source
 
-The plan below is intentionally constrained by the code that already exists in the repo.
+The plan below is intentionally constrained by the code that already exists in the repo and by these decisions:
+
+- **LLM provider**: local Ollama running `qwen2.5:7b`. Used only inside the Explanation Agent to rewrite a structured evidence dict into Vietnamese natural language. Critics are deterministic Python.
+- **News source at inference time**: cached parquet only, filtered by `published_at <= cutoff`. No live scraping, no injected article lists in the first cut.
+- **Smoke target**: VCB, horizon=1d. Full benchmark parity (all symbols × {1d, 5d, 20d}) only after the smoke graph is green.
+- **Performance claim**: multi-agent layer outperforms plain CMTF on Sharpe via three deterministic levers — Risk/Regime Critic, News-Quality Critic, Ensemble-Disagreement Gate. No LLM-driven debate.
 
 ## 2. Current Code Reality Checked
 
@@ -63,260 +69,320 @@ This plan is based on the current repository state, not on a clean-room redesign
 
 ## 3. Non-Goals for This Step
 
-- Do not retrain PhoBERT from scratch.
-- Do not replace Chronos LoRA with a new market model.
-- Do not build a second fusion architecture unless the current CMTF interface proves insufficient.
-- Do not make action classification the primary prediction target.
-- Do not mix forecast evaluation and portfolio backtesting into one report.
+- Do not retrain PhoBERT, Chronos LoRA, or CMTF v8.
+- Do not introduce a second fusion architecture.
+- Do not run live news scraping at inference time.
+- Do not let the LLM modify predictions, actions, or position sizes. The LLM only rewrites a deterministic evidence dict into Vietnamese prose.
+- Do not mix forecast metrics and portfolio metrics into one report.
+- Do not collapse the A/B harness and the broker backtester into one module. They have different goals (hypothesis testing vs realistic execution simulation) and different friction assumptions.
 
-## 4. Phase 1: Build the Multi-Agent System
+## 4. Phase 1: Multi-Agent Inference Graph
 
 ### 4.1 Objective
 
-Create a LangGraph-based orchestration layer that consumes the existing pipeline and model artifacts to answer three questions for a symbol at time $t$:
+Produce, for one `(symbol, prediction_time, horizon)` request, a structured object containing:
 
-1. What is the predicted forward return?
-2. What trading action follows from the policy threshold?
-3. Why did the system make that call?
+1. `final_pred` — forward-return forecast from CMTF v8 ensemble
+2. `action` — `long`, `short`, or `flat` after critic overrides
+3. `position_scale` — float in `[0, 1]` set by the Risk Critic
+4. `explanation` — Vietnamese natural-language rationale grounded in attention weights, sentiment trace, and any critic overrides
 
-### 4.2 Why LangGraph Here
+### 4.2 Graph Topology
 
-Use LangGraph as the control plane because it fits the missing part of the project:
+The graph is **linear with a critic fan-in** before the decision step. Critic ordering matters: critics run after Fusion (so they can see `baseline_pred`, `news_residual`, ensemble seed predictions) and before Decision (so they can override action and scale).
 
-- stateful orchestration across multiple steps
-- durable execution and resumable runs
-- traceable node execution
-- optional human-in-the-loop checkpoints
+```
+Supervisor
+    ↓
+Market Agent
+    ↓
+News Agent
+    ↓
+Fusion Agent  (loads CMTF v8 ensemble × 3 seeds, returns baseline_pred, final_pred, attn, news_weight, seed_preds)
+    ↓
+┌───────────────────────────────────────────────────────────┐
+│  Risk/Regime Critic   News-Quality Critic   Disagreement  │
+│  (deterministic)      (deterministic)       Gate          │
+└───────────────────────────────────────────────────────────┘
+    ↓
+Decision Agent  (applies threshold policy AFTER critics; combines overrides)
+    ↓
+Explanation Agent  (deterministic evidence dict → Ollama qwen2.5:7b → Vietnamese prose)
+```
 
-Use plain LangChain components only inside nodes where a chat model or tool wrapper is actually needed. The market, news, fusion, and policy nodes should stay deterministic Python components.
+The three critics may run sequentially in the first implementation. LangGraph parallel branches can be added later if profiling shows they matter.
 
-### 4.3 Proposed Agent Graph
+### 4.3 Agent Contracts
 
-1. **Supervisor Node**
+**Supervisor.** Validates `symbol`, `prediction_time`, `target_horizon_days ∈ {1, 5, 20}`, `sequence_len=30`. Sets `data_cutoff = prediction_time`. Initializes empty critic-override fields.
 
-Validates `symbol`, `prediction_time`, `target_horizon_days`, `sequence_len`, and execution mode. Creates the shared graph state and enforces the time cutoff so downstream nodes only see information available at time $t$.
+**Market Agent.** Reuses `src/pipeline/orchestrator.py` to produce `close_window (30,)`, `market_window (30, 23)`, `market_tabular (23,)`, `token_ids`, `attention_mask` for one cutoff. Must not call the orchestrator's full multi-symbol path; expose a single-symbol single-cutoff helper in `src/pipeline/orchestrator.py` if one does not exist.
 
-2. **Market Agent**
+**News Agent.** Reads cached news parquet only (path resolved via `src/multiagent/config.py`). Filters by `published_at <= cutoff` and by symbol. Calls existing PhoBERT inference from `src/phase2/inference.py` and existing `NewsEncoder.encode_window()`. Returns `news_emb (30, 773)`, `news_mask (30,)`, `articles` (list of dicts with `title`, `published_at`, `sentiment_score`, `bar_index`), and the 6 sentiment scalar features.
 
-Reuses the existing market pipeline contract. Its job is to produce the latest close window, market feature window, and tabular feature row using the same feature engineering logic already used in the benchmark path.
+**Fusion Agent.** Loads the LoRA backbone once and the 3 CMTF v8 ensemble checkpoints once via the lazy loader. Calls a new method `ChronosCMTFPredictor.predict_with_explanation(...)` that returns:
 
-3. **News Agent**
+```python
+{
+    "baseline_pred": float,        # market-only path, news_mask all False
+    "final_pred": float,           # mean over 3 seeds
+    "seed_preds": list[float],     # 3 floats for the disagreement gate
+    "news_residual": float,        # final_pred - baseline_pred
+    "attn_weights": np.ndarray,    # shape (30,), mean over 3 seeds
+    "news_weight": float,          # mean of fusion.news_weight over 3 seeds
+}
+```
 
-Reuses temporal alignment and Phase 2 PhoBERT inference. Its job is to collect only articles available before the cutoff, score titles with PhoBERT, aggregate sentiment per bar, and return `news_hybrid_emb` plus `news_mask`.
+**Risk/Regime Critic (deterministic).** Inputs: `market_window`, `close_window`, optional VN-Index features already in the tabular row. Computes:
 
-4. **Fusion Agent**
+- realized 20-day volatility from `close_window`
+- maximum drawdown over the window
+- VN-Index z-score (if available in the tabular features)
 
-Loads the current Chronos LoRA backbone and CMTF v8 head. Its job is to compute the baseline market prediction and the final fused prediction using the current regression contract. Must load the **ensemble of 3 seed checkpoints** (seeds 42, 123, 456) and average their predictions for robustness. Exposes: `baseline_pred`, `news_residual` (= final − baseline), `final_pred`, `fusion.last_attn_weights` (30-bar attention), and `fusion.news_weight` (learned scalar gate ≈ 0.04–0.10 for good models).
+Output written to state: `regime_flags` dict and `position_scale_regime ∈ [0, 1]`. Rules (configurable in `config.py`):
 
-5. **Decision Agent**
+- if 20d vol > `vol_high_pct` → `position_scale_regime = 0.5`
+- if drawdown > `dd_max_pct` → `position_scale_regime = 0.0` (force flat)
+- else `position_scale_regime = 1.0`
 
-Maps the predicted return to `long`, `short`, or `flat` using an explicit threshold or threshold band. This keeps action selection outside the model and makes backtesting rules adjustable without retraining.
+**News-Quality Critic (deterministic).** Inputs: `articles`, `news_mask`, `news_residual`, `news_weight`. Computes:
 
-6. **Explanation Agent**
+- staleness: fraction of articles older than `staleness_days`
+- coverage: number of bars with at least one article
+- sentiment dispersion: std of PhoBERT title scores
 
-Builds a structured explanation object from hard evidence: recent market context, PhoBERT sentiment scores, aggregated sentiment features, attention weights, predicted return, and final action. If a chat model is used here, it should only rewrite the structured evidence into natural language and must not invent extra reasoning.
+Output: `news_quality_flags` dict and `news_residual_scale ∈ [0, 1]`. Rules:
 
-### 4.4 Recommended Shared State
+- if coverage < `min_news_bars` (e.g. 3) → `news_residual_scale = 0.0` (ignore news contribution; effectively use baseline)
+- if staleness > `max_stale_frac` → `news_residual_scale = 0.5`
+- else `news_residual_scale = 1.0`
 
-The graph state should contain:
+The agent computes `final_pred_adjusted = baseline_pred + news_residual_scale × news_residual` and writes it to state alongside the original `final_pred`. It does **not** overwrite `final_pred`.
 
-- request fields: `symbol`, `prediction_time`, `target_horizon_days`, `sequence_len` (default 30)
-- market inputs: `close_window` (30,), `market_window` (30, 23), `market_tabular` (23,), `token_ids` (30, T), `attention_mask` (30, T)
-- news inputs: `articles` (list of dicts), `title_scores` (list of floats), `sentiment_features` (6 scalars), `news_emb` (30, 773), `news_mask` (30,) bool
-- model outputs: `baseline_pred` (float), `news_residual` (float), `final_pred` (float), `action` (str: "long"|"short"|"flat")
-- explanation fields: `attn_weights` (30,), `news_weight_scalar` (float — learned gate), `top_news_items` (list), `explanation_payload` (dict)
-- audit fields: `data_cutoff`, `artifact_versions` (dict with CMTF_VERSION="v8", backbone_ckpt hash, HPO hash), `ensemble_seed_preds` (list of 3 floats), `errors`, `warnings`
+**Ensemble-Disagreement Gate (deterministic).** Inputs: `seed_preds`. If the sign of any of the 3 seed predictions differs from the mean sign → `disagreement_force_flat = True`. Otherwise False.
 
-### 4.5 Mandatory Reuse of Current Project Assets
+**Decision Agent.** Reads `final_pred_adjusted`, `position_scale_regime`, `disagreement_force_flat`, plus thresholds from `config.py`. Logic:
 
-The first implementation must consume current assets instead of replacing them:
+```
+if disagreement_force_flat or position_scale_regime == 0.0:
+    action = "flat"; position_scale = 0.0
+elif final_pred_adjusted >=  buy_threshold:
+    action = "long";  position_scale = position_scale_regime
+elif final_pred_adjusted <= -sell_threshold:
+    action = "short"; position_scale = position_scale_regime
+else:
+    action = "flat"; position_scale = 0.0
+```
 
-- PhoBERT inference from `src/phase2/handoff.py` and `src/phase2/inference.py`
-- leakage-safe data preparation from `src/pipeline/orchestrator.py`
-- hybrid news encoding from `src/pipeline/news_encoder.py`
-- Chronos LoRA from `src/benchmark/baseline_models.py`
-- CMTF fusion from `src/benchmark/chronos_cmtf.py`
-- window and mask contract from `run_chronos_benchmark.py`
+Thresholds and friction-relevant constants live in `config.py`, not in checkpoints, so the policy can be retuned without retraining.
 
-### 4.6 Implementation Order
+**Explanation Agent.** Builds a deterministic Vietnamese evidence dict from state: top-3 attended bars (date + dominant article titles + PhoBERT scores), `baseline_pred`, `news_residual`, applied `news_residual_scale`, `regime_flags`, `disagreement_force_flat`, final `action`, `position_scale`. The Ollama call uses a fixed system prompt that forbids invented facts, with `temperature=0.2`. If Ollama is unreachable, fall back to a Jinja2 Vietnamese template — never block prediction on the LLM.
 
-1. Create a new `src/multiagent/` package with `state.py`, `graph.py`, `loaders.py`, and one file per graph node.
-2. Add a model-loader layer that loads stable PhoBERT, Chronos LoRA, and CMTF v8 artifacts from current cache paths. Must load all 3 ensemble checkpoints per (symbol, horizon) pair from `cache/cmtf_models/cmtf_lora_v8_*.pt` and the backbone from `cache/cmtf_models/ft_chronos_lora_backbone_v3_*.pt`.
-3. Add a `prepare_context` utility that reproduces the benchmark window contract for one symbol and one cutoff time: 30-bar sliding window with 23 market features, Chronos tokenization, and 773-dim hybrid news encoding with masks.
-4. Implement Market Agent and News Agent first, because they define the state contract consumed by the fusion node.
-5. Implement Fusion Agent as a thin wrapper around existing predictors. Add a `predict_with_explanation()` method to `ChronosCMTFPredictor` that returns a dict: `{"baseline_pred": float, "final_pred": float, "news_residual": float, "attn_weights": ndarray(30,), "news_weight": float}`. Run all 3 ensemble seeds and average.
-6. Implement Decision Agent with configurable thresholds, for example `flat` when $|pred| < \epsilon$. Load thresholds from a config file so they can be tuned independently of the model.
-7. Implement Explanation Agent with a deterministic template first, then optionally add an LLM rewriter through LangChain. The template should format Vietnamese-language explanations referencing specific article titles and dates.
-8. Add a CLI or service entry point for one-shot inference and batch inference.
+### 4.4 Shared State (`state.py`)
 
-### 4.7 Explanation Design
+Single `TypedDict` named `MultiAgentState`:
 
-The explanation layer is required, but it must be evidence-bounded.
+| Group | Keys |
+|---|---|
+| Request | `symbol`, `prediction_time`, `target_horizon_days`, `sequence_len` |
+| Market | `close_window`, `market_window`, `market_tabular`, `token_ids`, `attention_mask` |
+| News | `articles`, `title_scores`, `sentiment_features`, `news_emb`, `news_mask` |
+| Fusion | `baseline_pred`, `final_pred`, `seed_preds`, `news_residual`, `attn_weights`, `news_weight` |
+| Critics | `regime_flags`, `position_scale_regime`, `news_quality_flags`, `news_residual_scale`, `final_pred_adjusted`, `disagreement_force_flat` |
+| Decision | `action`, `position_scale` |
+| Explanation | `evidence_dict`, `explanation_text_vi` |
+| Audit | `data_cutoff`, `artifact_versions`, `errors`, `warnings`, `node_timings` |
 
-The explanation should report:
+### 4.5 Lazy Artifact Loader (`loaders.py`)
 
-- the predicted return from the market-only backbone (`baseline_pred`)
-- the change introduced by news-aware fusion (`news_residual = final_pred - baseline_pred`)
-- the learned `news_weight` gate value (shows how much the model trusts news in general)
-- the strongest recent news bars according to cross-attention weights (with bar indices mapped to dates)
-- the most influential titles and their PhoBERT sentiment scores from the sentiment trace
-- whether the final action came from strong signal or threshold crossing
-- ensemble agreement: whether all 3 seed models agree on direction
+Single module-level cache keyed by `(symbol, horizon)`. Public API:
 
-The explanation should not:
+```python
+get_phobert_bundle() -> PhoBERTBundle              # singleton, no key
+get_lora_backbone(symbol, horizon) -> nn.Module    # cached
+get_cmtf_ensemble(symbol, horizon) -> list[ChronosCMTFPredictor]  # 3 seeds
+get_news_encoder() -> NewsEncoder                  # singleton
+```
 
-- claim causal certainty
-- expose hidden chain-of-thought
-- describe signals that were not present in the state
-- hardcode sentiment importance if the attention or residual path disagrees
+All loaders raise `ArtifactMissingError` with the resolved cache path on failure. Tests inject a fake loader through a `set_loader_override()` hook so node tests do not hit disk.
 
-### 4.8 Acceptance Criteria for Phase 1
+### 4.6 Implementation Order (one-shot friendly)
 
-Phase 1 is done when:
+Build files in this exact order. Each step's tests must pass before moving on.
 
-- one graph call can produce a prediction for one symbol and one cutoff time
-- the graph reuses current trained artifacts rather than retraining models
-- zero-news samples still fall back to the baseline behavior
-- the explanation includes structured evidence from PhoBERT traces and CMTF attention
-- LangSmith or an equivalent trace layer can inspect each node output
+1. `src/multiagent/__init__.py`, `state.py`, `config.py`. Tests: state shape, config keys present.
+2. `src/multiagent/loaders.py` with the override hook. Tests: override hook returns fake objects; missing artifact raises `ArtifactMissingError`.
+3. **Patch** `src/benchmark/chronos_cmtf.py` to add `ChronosCMTFPredictor.predict_with_explanation()`. Tests: shape and zero-news parity (when `news_mask` all False, `news_residual ≈ 0`).
+4. **Patch** `src/pipeline/orchestrator.py` to expose `prepare_single_cutoff(symbol, cutoff, sequence_len=30)` returning the market dict plus tokenized inputs. Tests: deterministic output for fixed cutoff; cutoff strictly enforced.
+5. `market_agent.py`, `news_agent.py`. Tests with override loader: state keys populated with correct shapes; news with zero rows yields `news_mask` all False.
+6. `fusion_agent.py`. Tests: ensemble averaging, `seed_preds` length 3, attention shape `(30,)`.
+7. `critics/regime_critic.py`, `critics/news_quality_critic.py`, `critics/disagreement_gate.py`. Pure-function tests with synthetic state.
+8. `decision_agent.py`. Truth-table tests covering every override combination.
+9. `explanation_agent.py` with Ollama disabled in tests; Jinja2 fallback path tested.
+10. `graph.py` wiring all nodes. Smoke test: VCB, cutoff = last available bar in test split, horizon=1d, returns a populated state.
+11. `cli.py` with `predict` and `batch-predict` subcommands.
 
-## 5. Phase 2: Backtesting and Evaluation
+### 4.7 Acceptance Criteria for Phase 1
+
+- One graph call returns a fully populated `MultiAgentState` for VCB, horizon=1d.
+- All 3 ensemble seed checkpoints loaded once and reused across multiple cutoffs in the same process.
+- Zero-news cutoffs produce `final_pred ≈ baseline_pred` and `news_residual_scale = 0` from the news-quality critic.
+- Ollama unreachable does not break inference; Jinja2 fallback emits a Vietnamese explanation.
+- Each node writes to disjoint state keys (no node overwrites another's outputs).
+- `python -m src.multiagent.cli predict --symbol VCB --cutoff 2025-03-31 --horizon 1` succeeds end to end.
+
+## 5. Phase 2a: A/B Evaluation Harness (lightweight, no broker)
 
 ### 5.1 Objective
 
-Build a true broker-style backtesting layer on top of the Phase 1 graph. This phase must evaluate both forecast quality and trading usefulness, but those must remain separate reports.
+Test the thesis claim *"multi-agent layer improves performance over plain CMTF"* on the existing walk-forward test split, using a simple long/short policy. No commission, no slippage, no portfolio ledger — those belong to Phase 2b.
 
-### 5.2 What Exists Already
+### 5.2 Comparison Arms
 
-The current repo already supports:
+| Arm | Signal source | Action policy |
+|---|---|---|
+| `cmtf_only` | `final_pred` from CMTF v8 ensemble (no critics) | Threshold from `config.py`, `position_scale = 1` always |
+| `multiagent` | Multi-agent graph (`final_pred_adjusted`, critic overrides) | Decision Agent output (`action`, `position_scale`) |
 
-- purge-aware walk-forward splitting
-- prediction-level metrics such as MAE, RMSE, DA%, Sharpe, IC, Precision, Recall, and F1
-- per-symbol and pooled benchmark reporting
+Both arms run on identical `(symbol, cutoff, horizon)` inputs and the same realized forward returns from the test split.
 
-The current repo does not yet support:
+### 5.3 Metric
 
-- portfolio ledger simulation
-- explicit position management
-- execution price assumptions
-- commission and slippage modeling
-- equity-curve-based risk metrics such as max drawdown and Sortino
+Primary: **Sharpe of the daily PnL stream** of a 1-bar holding-period long/short policy:
 
-### 5.3 Backtest Engine Design
+```
+pnl_t = position_scale_t × sign_action_t × realized_return_{t→t+horizon}
+sharpe = mean(pnl) / std(pnl) × sqrt(252 / horizon)
+```
 
-1. **Input Stream**
+Secondary (reported but not used to declare a winner): DA%, hit rate, mean trade PnL, fraction of bars set to flat by each critic.
 
-Use the same leakage-safe chronological windows as the benchmark path. For each bar $t$, the graph only receives information available up to $t$.
+### 5.4 Module Layout
 
-2. **Signal Generation**
+```
+src/multiagent/eval/
+    __init__.py
+    ab_runner.py       # iterates test cutoffs, runs both arms, writes per-arm CSV
+    ab_metrics.py      # Sharpe + secondary metrics from per-arm CSV
+    ab_report.py       # CLI: prints comparison table; writes results/ab/{run_id}.json
+```
 
-Run the multi-agent graph to produce `final_pred` and `action`.
+### 5.5 Acceptance Criteria
 
-3. **Execution Policy**
+- Both arms run on the same cutoff list, asserted equal.
+- `results/ab/{run_id}.json` contains per-arm Sharpe, DA%, and per-critic activation counts.
+- Smoke run: VCB × 1d. Full run: all symbols × {1d, 5d, 20d}.
+- Multi-agent arm Sharpe ≥ CMTF-only Sharpe in at least one (symbol, horizon) cell — otherwise the thesis claim must be revisited before Phase 2b.
 
-Define explicit rules for when the trade is filled. Example: generate the signal at bar close $t$, execute at next open $t+1$.
+## 6. Phase 2b: Broker-Style Backtesting
 
-4. **Friction Model**
+Phase 2b is built only after Phase 2a shows a credible signal. It reuses the same multi-agent graph as the signal source.
 
-Apply commission, slippage, and optional short borrow or interest costs as separate parameters. Keep them configurable by market regime or instrument type.
+### 6.1 Engine Design
 
-5. **Portfolio Ledger**
+1. **Input stream**: same chronological cutoffs as Phase 2a; signal generated at bar close $t$, executed at next open $t+1$.
+2. **Friction**: commission and slippage as separate configurable parameters per (symbol, side); optional short borrow cost.
+3. **Portfolio ledger**: cash, exposure, position direction, position size (driven by `position_scale` from the graph), entry price, realized PnL, unrealized PnL, equity curve.
+4. **Audit trail**: each executed order stores the `evidence_dict` and `explanation_text_vi` from the graph.
 
-Track cash, exposure, position direction, position size, entry price, realized PnL, unrealized PnL, and equity curve.
+### 6.2 Module Layout
 
-6. **Audit Trail**
+```
+src/backtesting/
+    __init__.py
+    engine.py          # chronological loop; pulls signals from src.multiagent.graph
+    policy.py          # threshold + position_scale wiring (re-uses Decision Agent output)
+    ledger.py          # positions, cash, equity curve
+    friction.py        # commission and slippage models
+    metrics.py         # Sharpe, Sortino, max drawdown, turnover, hit rate, cost drag
+```
 
-Store the model explanation payload together with each executed order or daily state so later analysis can link trades back to evidence.
+### 6.3 Validation Sequence
 
-### 5.4 Policy Layer
+1. Reproduce Phase 2a Sharpe with zero commission and zero slippage. The two numbers must match within numerical tolerance — if not, there is a leakage or accounting bug.
+2. Turn commission on, confirm PnL drops monotonically with commission rate.
+3. Turn slippage on, confirm fills worsen.
+4. Confirm zero-news cutoffs follow the baseline path with no critic activations from `news_quality_critic`.
 
-Because the current model predicts returns, not discrete classes, the backtester needs an explicit policy such as:
+### 6.4 Output Locations
 
-- `long` if `pred >= buy_threshold`
-- `short` if `pred <= -sell_threshold`
-- `flat` otherwise
+| Type | Path |
+|---|---|
+| Equity curves and summary tables | `results/backtests/{run_id}/` |
+| Trade logs with explanation payloads | `artifacts/backtests/{run_id}/` |
+| Reusable simulation intermediates | `cache/backtests/{run_id}/` |
 
-This policy must be versioned separately from model checkpoints so threshold tuning does not silently alter reported model performance.
+### 6.5 Acceptance Criteria
 
-### 5.5 Evaluation Outputs
+- No leakage: the engine never reads bars at index `> t` when generating the signal for $t$.
+- Phase 2a and Phase 2b agree on Sharpe under zero friction.
+- Commission and slippage are configurable, tested in isolation, and reported in the summary.
+- Forecast metrics and portfolio metrics live in separate JSON files under `results/backtests/{run_id}/`.
+- Every executed order can be traced to a `MultiAgentState` snapshot.
 
-Keep two evaluation families:
-
-1. **Forecast Evaluation**
-
-Use the existing benchmark metrics to compare predictive quality.
-
-2. **Portfolio Evaluation**
-
-Add cumulative return, annualized return if the sample is long enough, Sharpe, Sortino, max drawdown, turnover, win rate, average trade PnL, average holding period, and cost drag.
-
-This split is important because a model can improve RMSE while still producing poor trade economics after costs.
-
-### 5.6 Validation Sequence
-
-1. Reproduce the current benchmark predictions without trading costs.
-2. Run the backtester with zero commission and zero slippage and confirm the action path behaves as expected.
-3. Turn on commission only and confirm PnL decreases.
-4. Turn on slippage and confirm fills worsen or some trades fail under the chosen rules.
-5. Compare zero-news cases against the baseline path to confirm explanation and execution remain stable.
-
-### 5.7 Recommended Outputs
-
-Store the new artifacts separately from existing benchmark CSVs:
-
-- `results/backtests/` for summary tables and equity curves
-- `artifacts/backtests/` for trade logs and per-step explanation payloads
-- `cache/backtests/` for reusable simulation intermediates
-
-### 5.8 Acceptance Criteria for Phase 2
-
-Phase 2 is done when:
-
-- the engine runs chronologically with no leakage
-- trade rules and execution timing are explicit
-- commission and slippage are configurable and tested
-- forecast metrics and portfolio metrics are reported separately
-- each trade can be traced back to the multi-agent explanation payload
-
-## 6. Suggested Code Layout for the Next Step
+## 7. Suggested Code Layout
 
 ```
 src/multiagent/
     __init__.py
-    state.py              # TypedDict graph state definition
-    graph.py              # LangGraph graph construction and compilation
-    loaders.py            # Model artifact loaders (CMTF, LoRA backbone, PhoBERT)
-    config.py             # Decision thresholds, artifact paths, symbol registry
-    market_agent.py       # Market data preparation node
-    news_agent.py         # News retrieval and encoding node
-    fusion_agent.py       # CMTF ensemble inference node
-    decision_agent.py     # Threshold-based action mapping node
-    explanation_agent.py  # Evidence-bounded explanation generation node
-    cli.py                # Command-line entry point
+    state.py
+    config.py                # thresholds, critic params, ollama settings, news cache path
+    loaders.py               # lazy artifact cache + test override hook
+    graph.py                 # LangGraph wiring
+    cli.py                   # predict / batch-predict
+    market_agent.py
+    news_agent.py
+    fusion_agent.py
+    decision_agent.py
+    explanation_agent.py
+    critics/
+        __init__.py
+        regime_critic.py
+        news_quality_critic.py
+        disagreement_gate.py
+    eval/
+        __init__.py
+        ab_runner.py
+        ab_metrics.py
+        ab_report.py
 src/backtesting/
     __init__.py
-    engine.py             # Chronological simulation loop
-    policy.py             # Threshold policy with configurable bands
-    ledger.py             # Position and equity tracking
-    metrics.py            # Portfolio-level evaluation metrics
-tests/
-    test_multiagent_graph.py
-    test_backtesting_engine.py
-    test_explanations.py
+    engine.py
+    policy.py
+    ledger.py
+    friction.py
+    metrics.py
+tests/multiagent/
+    test_state.py
+    test_loaders.py
+    test_predict_with_explanation.py     # patches chronos_cmtf
+    test_market_agent.py
+    test_news_agent.py
+    test_fusion_agent.py
+    test_critics.py
+    test_decision_agent.py
+    test_explanation_agent.py            # ollama mocked
+    test_graph_smoke.py                  # VCB 1d end-to-end
+    test_ab_runner.py
+tests/backtesting/
+    test_engine_no_friction.py
+    test_engine_with_commission.py
+    test_engine_with_slippage.py
 ```
 
-## 7. Immediate Next Actions
+## 8. Immediate Next Actions
 
-1. Install `langgraph`, `langchain-core`, and `langsmith` into the project `.venv`.
-2. Build `src/multiagent/state.py` with the TypedDict state definition matching Section 4.4 dimensions.
-3. Build `src/multiagent/loaders.py` — a module that resolves and loads CMTF v8 ensemble checkpoints, LoRA backbone, and PhoBERT bundle from their cache paths. Must handle missing-checkpoint errors gracefully.
-4. Build `src/multiagent/market_agent.py` — reuses orchestrator pipeline for feature engineering and Chronos tokenization for a single (symbol, cutoff) pair.
-5. Build `src/multiagent/news_agent.py` — reuses `NewsEncoder.encode_window()` and PhoBERT sentiment scoring for the 30-bar context window.
-6. Build `src/multiagent/fusion_agent.py` — wraps CMTF `predict_with_explanation()` across 3 ensemble seeds, averages predictions, merges attention weights.
-7. Add one-symbol smoke tests (VCB, horizon=1d) before attempting full backtests.
-8. After inference graph is stable, implement the backtesting engine as a separate layer, not inside the benchmark runner.
+1. Add to `requirements.txt`: `langgraph`, `langchain-core`, `langchain-ollama`, `langsmith`, `jinja2`. Install `qwen2.5:7b` locally via `ollama pull qwen2.5:7b`.
+2. Build `src/multiagent/state.py` and `config.py` (Section 4.4).
+3. Build `src/multiagent/loaders.py` with the test override hook (Section 4.5).
+4. Patch `ChronosCMTFPredictor.predict_with_explanation()` in `src/benchmark/chronos_cmtf.py` (Section 4.6 step 3).
+5. Add `prepare_single_cutoff()` to `src/pipeline/orchestrator.py` (Section 4.6 step 4).
+6. Build agents in the order listed in Section 4.6.
+7. Wire `graph.py` and run the VCB 1d smoke test.
+8. Build the A/B harness in `src/multiagent/eval/` and run Phase 2a on VCB 1d, then full grid.
+9. Only after Phase 2a is green, build `src/backtesting/` and run Phase 2b validation.
 
-## 8. References Used for This Plan
+## 9. References Used for This Plan
 
 | Source | Type | What is referenced here |
 | --- | --- | --- |
@@ -329,6 +395,6 @@ tests/
 | Backtrader commission documentation | Production documentation | Commission, margin, and broker-accounting concepts for future backtesting. |
 | Backtrader slippage documentation | Production documentation | Slippage rules, fill behavior, and execution-price realism for future backtesting. |
 
-## 9. Note on Referenced Material
+## 10. Note on Referenced Material
 
 This guide references architecture ideas from papers and production systems, but the implementation target is the current repository. The next step should adapt those references to the existing code paths above, not copy an external architecture verbatim.
