@@ -11,22 +11,32 @@ DEFAULT_PHASE2_OUTPUT_ROOT = Path("outputs/phase2/latest")
 PHASE3_HANDOFF_FILENAME = "phase3_phobert_handoff.json"
 
 
+def _portable_path(path: Path, *, relative_to: Path) -> str:
+    if path.is_absolute():
+        try:
+            return str(path.relative_to(relative_to))
+        except ValueError:
+            return str(path)
+    return str(path)
+
+
 def build_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_ROOT) -> dict[str, Any]:
     root = Path(output_dir)
+    root_abs = root.resolve()
     run_config = json.loads((root / "run_config.json").read_text(encoding="utf-8"))
     training_summary = json.loads((root / "phobert" / "training_summary.json").read_text(encoding="utf-8"))
 
     checkpoint_path = Path(training_summary["checkpoint_path"])
     if not checkpoint_path.is_absolute():
-        checkpoint_path = (Path.cwd() / checkpoint_path).resolve()
+        checkpoint_path = (root_abs / checkpoint_path).resolve()
 
-    tokenizer_dir = (root / "phobert" / "tokenizer").resolve()
+    tokenizer_dir = root_abs / "phobert" / "tokenizer"
     preprocessing_args = run_config.get("preprocessing", {})
     return {
         "variant": "phobert",
-        "phase2_output_dir": str(root.resolve()),
-        "checkpoint_path": str(checkpoint_path),
-        "tokenizer_dir": str(tokenizer_dir),
+        "phase2_output_dir": str(root),
+        "checkpoint_path": _portable_path(checkpoint_path, relative_to=root_abs),
+        "tokenizer_dir": _portable_path(tokenizer_dir, relative_to=root_abs),
         "model_name": str(run_config.get("phobert_model", "vinai/phobert-base-v2")),
         "projection_dim": int(run_config.get("shared_hidden_dim", 256)),
         "num_heads": int(run_config.get("custom_heads", 4)),

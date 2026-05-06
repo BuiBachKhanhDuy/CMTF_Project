@@ -18,6 +18,13 @@ from .preprocessing import PreprocessingConfig, VnCoreNLPSegmenter, apply_prepro
 _DEFAULT_VNCORENLP_JAR_PATH = Path("data/external/vncorenlp/VnCoreNLP-1.1.1.jar")
 
 
+def _resolve_handoff_path(output_dir: str | Path, handoff_path: str | Path) -> Path:
+    path = Path(handoff_path)
+    if path.is_absolute():
+        return path
+    return Path(output_dir).resolve() / path
+
+
 @dataclass(frozen=True, slots=True)
 class Phase2PhoBERTInferenceBundle:
     """Loaded Phase 2 PhoBERT inference artifacts."""
@@ -74,6 +81,8 @@ def load_phase2_phobert_inference_bundle(
     """Load the trained Phase 2 PhoBERT branch for downstream inference."""
 
     handoff = resolve_phase2_phobert_handoff(output_dir)
+    handoff["checkpoint_path"] = str(_resolve_handoff_path(output_dir, handoff["checkpoint_path"]))
+    handoff["tokenizer_dir"] = str(_resolve_handoff_path(output_dir, handoff["tokenizer_dir"]))
     preprocessing_config = _build_preprocessing_config(handoff)
     try:
         segmenter = _load_segmenter(preprocessing_config, jar_path=vncorenlp_jar_path)

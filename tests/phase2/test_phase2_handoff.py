@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -56,6 +57,9 @@ def test_phase2_phobert_handoff_builds_and_saves(tmp_path):
     assert handoff["variant"] == "phobert"
     assert handoff["preprocessing"]["segmentation"] == "vncorenlp"
     assert handoff_path.exists()
+    assert handoff["phase2_output_dir"] == str(output_dir)
+    assert handoff["checkpoint_path"] == str(Path("phobert") / "phobert.pt")
+    assert handoff["tokenizer_dir"] == str(Path("phobert") / "tokenizer")
     assert resolved["checkpoint_path"] == handoff["checkpoint_path"]
 
 
@@ -144,6 +148,7 @@ def test_phase2_phobert_inference_bundle_loads_and_scores_titles(tmp_path, monke
     aggregated = aggregate_title_sentiment_scores(scored["sentiment_score"].tolist())
 
     assert bundle.handoff["checkpoint_path"] == str(checkpoint_path.resolve())
+    assert bundle.handoff["tokenizer_dir"] == str(tokenizer_dir.resolve())
     assert list(scored.columns) == [
         "title_raw",
         "title_clean",
