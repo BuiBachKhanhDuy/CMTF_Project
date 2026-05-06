@@ -187,7 +187,7 @@ class TestEncoderHybridSentiment:
         monkeypatch.setattr(
             NewsEncoder,
             "encode_window",
-            lambda self, texts, null_mask=False: {
+            lambda self, texts, null_mask=False, weights=None: {
                 "embedding": np.ones(768, dtype=np.float32) if texts and not null_mask else np.zeros(768, dtype=np.float32),
                 "has_news": bool(texts) and not bool(null_mask),
             },

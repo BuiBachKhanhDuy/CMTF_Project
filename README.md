@@ -34,6 +34,40 @@ python run_chronos_benchmark.py --stage cmtf   # Retrain CMTF only
 python run_chronos_benchmark.py --stage plot   # Regenerate plots
 ```
 
+## Clone On Another Machine
+
+If you want another machine to receive committed Phase 2 checkpoints, install Git LFS before cloning or pull LFS objects immediately after clone.
+
+```powershell
+# 0. One-time setup on the new machine
+git lfs install
+
+# 1. Clone the repository
+git clone <your-repo-url>
+cd ChatbotThesis
+
+# 2. Fetch LFS-backed checkpoints
+git lfs pull
+
+# 3. Create & activate virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 4. Install dependencies
+pip install -r requirements.txt
+```
+
+Notes:
+
+- Phase 2 checkpoint files under `outputs/phase2/**/*.pt` are tracked with Git LFS.
+- Files under `outputs/phase2/` are allowed through `.gitignore` so a cloned repo can receive checkpoints, tokenizer files, and handoff metadata together.
+- The Phase 2 handoff JSON stores paths relative to the output directory, so it remains portable across machines.
+- `requirements.txt` now includes the direct runtime packages used by the codebase, including `transformers`, `peft`, and `vncorenlp`.
+- `data/external/` is intentionally not versioned. If you want VnCoreNLP segmentation enabled, you still need the external VnCoreNLP jar under `data/external/vncorenlp/` even after installing Python dependencies.
+- Full Phase 2 inference on another machine requires the actual checkpoint and tokenizer files to exist under `outputs/phase2/<run>/...`; metadata files alone are not sufficient.
+
+If you keep Phase 2 artifacts in a non-default run folder such as `outputs/phase2/_rerun_both`, pass that path through your config as `phase2_output_dir`; the code default remains `outputs/phase2/latest`.
+
 ## Project Structure
 
 ```

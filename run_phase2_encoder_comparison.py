@@ -16,18 +16,10 @@ from urllib.request import urlopen
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
-from src.common import (
-    JAVA_RUNTIME_ROOT,
-    PHASE2_DATASET_ROOT,
-    PHASE2_OUTPUT_ROOT,
-    VNCORENLP_JAR_PATH,
-    VNCORENLP_ROOT,
-    VNCORENLP_WORDSEGMENTER_ROOT,
-    plot_metric_panels,
-    select_best_row,
-    write_json,
-)
 from src.phase2 import (
     CustomTransformerSentimentModel,
     DatasetLoadConfig,
@@ -59,6 +51,65 @@ from src.phase2 import (
     save_dataset_manifest,
     train_sentiment_model,
 )
+
+DATA_EXTERNAL_ROOT = Path("data/external")
+JAVA_RUNTIME_ROOT = DATA_EXTERNAL_ROOT / "java"
+PHASE2_DATASET_ROOT = DATA_EXTERNAL_ROOT / "phase2_dataset"
+PHASE2_OUTPUT_ROOT = Path("outputs/phase2/latest")
+VNCORENLP_ROOT = DATA_EXTERNAL_ROOT / "vncorenlp"
+VNCORENLP_JAR_PATH = VNCORENLP_ROOT / "VnCoreNLP-1.1.1.jar"
+VNCORENLP_WORDSEGMENTER_ROOT = VNCORENLP_ROOT / "models" / "wordsegmenter"
+
+
+def write_json(path: str | Path, payload: dict[str, Any]) -> Path:
+    resolved = Path(path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return resolved
+
+
+def select_best_row(frame: pd.DataFrame, *, score_col: str, higher_is_better: bool) -> pd.Series:
+    if frame.empty:
+        raise ValueError("Cannot select a best row from an empty frame")
+    ordered = frame.sort_values(score_col, ascending=not higher_is_better)
+    return ordered.iloc[0]
+
+
+def plot_metric_panels(
+    frame: pd.DataFrame,
+    *,
+    label_col: str,
+    metric_cols: tuple[str, ...],
+    save_path: str | Path,
+    title: str,
+) -> Path:
+    path = Path(save_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if frame.empty:
+        fig, axis = plt.subplots(figsize=(8, 3))
+        axis.set_title(title)
+        axis.text(0.5, 0.5, "No data", ha="center", va="center")
+        axis.axis("off")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        return path
+
+    fig, axes = plt.subplots(1, len(metric_cols), figsize=(4 * len(metric_cols), 4))
+    if len(metric_cols) == 1:
+        axes = [axes]
+    labels = frame[label_col].astype(str).tolist()
+    for axis, metric in zip(axes, metric_cols):
+        values = frame[metric].astype(float).to_numpy()
+        axis.bar(labels, values, color="#2563eb")
+        axis.set_title(metric)
+        axis.tick_params(axis="x", rotation=25)
+        axis.grid(alpha=0.25)
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
 
 DEFAULT_DATASET_ARCHIVE_URL = (
     "https://codeload.github.com/209sontung/"
