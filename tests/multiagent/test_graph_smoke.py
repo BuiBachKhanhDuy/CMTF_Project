@@ -1,8 +1,9 @@
-"""Smoke test for the full multi-agent graph — VCB 1d end-to-end.
+"""Smoke test for the multi-agent graph topology.
 
-This test uses mocked loaders to avoid requiring real model checkpoints.
-It verifies the graph topology, state propagation, and that all nodes
-produce their expected outputs.
+Topology: orchestrator → [market_agent | news_agent] → predict_agent → fusion_agent → risk_agent → answer_agent → END
+
+Orchestrator fetches data once; market/news agents are pure analytical nodes.
+All external dependencies (prepare_single_cutoff, CMTF ensemble, LLM) are mocked.
 """
 
 import numpy as np
@@ -11,7 +12,18 @@ from unittest.mock import patch, MagicMock
 
 from src.multiagent.config import MultiAgentConfig
 from src.multiagent.loaders import set_loader_override, clear_overrides
-from src.multiagent.state import MultiAgentState
+
+# Canonical column order matching _CANONICAL_MARKET_COLS in orchestrator.py
+_MARKET_COLS = [
+    "open", "high", "low", "close", "volume",
+    "rsi_14", "macd", "macd_signal", "macd_hist",
+    "bb_lower", "bb_mid", "bb_upper", "atr_14",
+    "vol_ratio", "log_ret",
+    "vnindex_ret", "vnindex_vol_ratio",
+    "sentiment_mean", "sentiment_max_abs",
+    "sentiment_positive_ratio", "sentiment_negative_ratio",
+    "sentiment_score_count", "sentiment_missing_flag",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -22,13 +34,26 @@ def clean_loader_overrides():
 
 
 def _mock_prepare_single_cutoff(symbol, cutoff, sequence_len=30, **kwargs):
-    """Return deterministic fake data for testing the graph."""
+    """Return deterministic fake data with realistic technical indicators."""
     np.random.seed(42)
-    market_cols = [f"feat_{i}" for i in range(23)]
+    n_feat = len(_MARKET_COLS)
+
+    # Build market_tabular with realistic values at known positions
+    tabular = np.zeros(n_feat, dtype=np.float32)
+    col_idx = {name: i for i, name in enumerate(_MARKET_COLS)}
+    tabular[col_idx["close"]] = 55.0
+    tabular[col_idx["rsi_14"]] = 35.0       # oversold → long bias
+    tabular[col_idx["macd_hist"]] = 0.15     # positive → long bias
+    tabular[col_idx["atr_14"]] = 1.0
+    tabular[col_idx["bb_lower"]] = 50.0
+    tabular[col_idx["bb_mid"]] = 56.0        # close < mid → long bias
+    tabular[col_idx["bb_upper"]] = 62.0
+
     return {
         "close_window": np.linspace(50, 55, sequence_len).astype(np.float32),
-        "market_window": np.random.randn(sequence_len, 23).astype(np.float32),
-        "market_tabular": np.random.randn(23).astype(np.float32),
+        "market_window": np.random.randn(sequence_len, n_feat).astype(np.float32),
+        "market_tabular": tabular,
+        "market_feature_cols": _MARKET_COLS,
         "token_ids": np.ones((1, 512), dtype=np.int64),
         "attention_mask": np.ones((1, 512), dtype=np.int64),
         "news_emb": np.random.randn(sequence_len, 773).astype(np.float32),
@@ -39,148 +64,123 @@ def _mock_prepare_single_cutoff(symbol, cutoff, sequence_len=30, **kwargs):
             {"title": "Ngân hàng số phát triển", "published_at": "2025-03-29",
              "bar_index": 27, "sentiment_score": 0.5},
         ],
-        "sentiment_features": {
-            "sentiment_mean": 0.3,
-            "sentiment_max_abs": 0.7,
-            "sentiment_positive_ratio": 0.6,
-            "sentiment_negative_ratio": 0.1,
-            "sentiment_score_count": 2.0,
-            "sentiment_missing_flag": 0.0,
-        },
-        "market_feature_cols": [f"feat_{i}" for i in range(23)],
     }
 
 
-def _mock_predict_with_explanation(self, token_ids, attention_mask, news_test,
-                                    tabular_test=None, market_windows_test=None,
-                                    news_mask_test=None):
-    """Mock predict_with_explanation for testing."""
-    seq_len = news_test.shape[1] if news_test.ndim >= 2 else 30
+def _mock_predict_with_explanation(**kw):
+    """Mock CMTF predict_with_explanation with above-threshold signal."""
     return {
-        "baseline_pred": 0.003,
-        "final_pred": 0.005,
-        "news_residual": 0.002,
-        "attn_weights": np.random.rand(seq_len).astype(np.float32),
+        "baseline_pred": 0.030,
+        "final_pred": 0.035,
+        "news_residual": 0.005,
+        "attn_weights": np.random.rand(30).astype(np.float32),
         "news_weight": 0.15,
     }
 
 
-class TestGraphSmoke:
-    """End-to-end smoke test with mocked dependencies."""
+class TestNewGraphSmoke:
+    """End-to-end smoke test for new architecture with mocked dependencies."""
 
     @patch("src.pipeline.orchestrator.prepare_single_cutoff", side_effect=_mock_prepare_single_cutoff)
-    @patch("src.multiagent.explanation_agent._call_ollama", return_value=None)
-    def test_full_graph_vcb_1d(self, mock_ollama, mock_prepare):
-        """Run the full graph for VCB horizon=1d and verify all state keys populated."""
+    def test_full_graph_eval_mode(self, mock_prepare):
+        """Run full graph in evaluation mode (no LLM calls)."""
         from src.multiagent.graph import run_graph
 
-        # Mock the CMTF ensemble
+        # Mock CMTF ensemble
         mock_predictor = MagicMock()
-        mock_predictor.predict_with_explanation = lambda **kw: _mock_predict_with_explanation(
-            None, kw["token_ids"], kw["attention_mask"], kw["news_test"],
-            kw.get("tabular_test"), kw.get("market_windows_test"), kw.get("news_mask_test")
-        )
+        mock_predictor.predict_with_explanation = lambda **kw: _mock_predict_with_explanation(**kw)
         mock_predictor.tokenize_windows = lambda x: (
             np.ones((1, 512), dtype=np.int64),
             np.ones((1, 512), dtype=np.int64),
         )
         set_loader_override("cmtf_ensemble_VCB_1d", [mock_predictor] * 3)
 
-        cfg = MultiAgentConfig(
-            buy_threshold=0.002,
-            sell_threshold=0.002,
+        cfg = MultiAgentConfig(evaluation_mode=True)
+        result = run_graph(
+            query_text="Should I buy VCB?",
+            cutoff="2025-03-31",
+            horizon=1,
+            symbol="VCB",
+            config=cfg,
         )
 
-        result = run_graph(symbol="VCB", cutoff="2025-03-31", horizon=1, config=cfg)
-
-        # --- Verify all state groups are populated ---
-        # Request
+        # Orchestrator
         assert result["symbol"] == "VCB"
-        assert result["prediction_time"] == "2025-03-31"
         assert result["target_horizon_days"] == 1
 
-        # Market
+        # Market agent
         assert result["close_window"] is not None
-        assert result["market_window"] is not None
+        assert result["volatility_metrics"] is not None
+        assert "vol_20d" in result["volatility_metrics"]
 
-        # News
+        # News agent
         assert result["news_emb"] is not None
         assert result["news_mask"] is not None
+        assert result["sentiment_metrics"] is not None
+        assert "sentiment_mean" in result["sentiment_metrics"]
 
-        # Fusion
-        assert result["baseline_pred"] is not None
-        assert result["final_pred"] is not None
-        assert result["seed_preds"] is not None
+        # Predict agent
+        assert result["final_pred"] == pytest.approx(0.035, abs=1e-5)
+        assert result["baseline_pred"] == pytest.approx(0.030, abs=1e-5)
         assert len(result["seed_preds"]) == 3
-        assert result["news_residual"] is not None
-        assert result["attn_weights"] is not None
+        assert result["predict_confidence"] is not None
+        assert result["model_evidence"] is not None
+        assert result["model_proposal"] is not None
 
-        # Critics
-        assert result["regime_flags"] is not None
-        assert result["position_scale_regime"] is not None
-        assert result["news_quality_flags"] is not None
-        assert result["news_residual_scale"] is not None
-        assert result["final_pred_adjusted"] is not None
-        assert result["disagreement_force_flat"] is not None
+        # Fusion agent
+        assert result["fusion_decision"] is not None
+        assert "score" in result["fusion_decision"]
 
-        # Decision
+        # Risk agent (final decision)
         assert result["action"] in ("long", "short", "flat")
-        assert 0 <= result["position_scale"] <= 1.0
+        assert 0.0 <= result["position_scale"] <= 1.0
+        assert result["risk_checks"] is not None
+        assert result["decision_reasoning"] is not None
+        assert result["policy_version"] >= 1
 
-        # Explanation
-        assert result["evidence_dict"] is not None
-        assert result["explanation_text_vi"] is not None
-        assert len(result["explanation_text_vi"]) > 0
+        # Answer agent (evaluation mode = empty)
+        assert result["explanation_text_vi"] == ""
 
         # Audit
         assert result["data_cutoff"] == "2025-03-31"
+        assert "orchestrator" in result["node_timings"]
         assert "market_agent" in result["node_timings"]
+        assert "news_agent" in result["node_timings"]
+        assert "predict_agent" in result["node_timings"]
         assert "fusion_agent" in result["node_timings"]
-        assert "decision_agent" in result["node_timings"]
+        assert "risk_agent" in result["node_timings"]
+        assert "answer_agent" in result["node_timings"]
 
     @patch("src.pipeline.orchestrator.prepare_single_cutoff", side_effect=_mock_prepare_single_cutoff)
-    @patch("src.multiagent.explanation_agent._call_ollama", return_value=None)
-    def test_invalid_horizon_raises(self, mock_ollama, mock_prepare):
+    def test_invalid_horizon_raises(self, mock_prepare):
         """Horizons other than 1, 5, 20 should raise ValueError."""
         from src.multiagent.graph import run_graph
 
         with pytest.raises(ValueError, match="horizon must be 1, 5, or 20"):
-            run_graph(symbol="VCB", cutoff="2025-03-31", horizon=3)
+            run_graph(
+                query_text="VCB 3 days",
+                cutoff="2025-03-31",
+                horizon=3,
+                symbol="VCB",
+                config=MultiAgentConfig(evaluation_mode=True),
+            )
 
-    @patch("src.pipeline.orchestrator.prepare_single_cutoff")
-    @patch("src.multiagent.explanation_agent._call_ollama", return_value=None)
-    def test_zero_news_path(self, mock_ollama, mock_prepare):
-        """When no news is available, should use baseline prediction."""
-        def no_news_cutoff(symbol, cutoff, sequence_len=30, **kwargs):
-            data = _mock_prepare_single_cutoff(symbol, cutoff, sequence_len)
-            data["news_emb"] = np.zeros((sequence_len, 773), dtype=np.float32)
-            data["news_mask"] = np.ones(sequence_len, dtype=bool)
-            data["articles"] = []
-            return data
+    @patch("src.pipeline.orchestrator.prepare_single_cutoff", side_effect=_mock_prepare_single_cutoff)
+    def test_strong_signal_produces_long(self, mock_prepare):
+        """pred=0.035 > 0.025 threshold → action should be long."""
+        from src.multiagent.graph import run_graph
 
-        mock_prepare.side_effect = no_news_cutoff
-
-        # Mock predictor that returns zero residual for masked news
         mock_predictor = MagicMock()
-        def zero_news_predict(**kw):
-            return {
-                "baseline_pred": 0.003,
-                "final_pred": 0.003,  # Same as baseline
-                "news_residual": 0.0,
-                "attn_weights": np.zeros(30, dtype=np.float32),
-                "news_weight": 0.1,
-            }
-        mock_predictor.predict_with_explanation = lambda **kw: zero_news_predict(**kw)
+        mock_predictor.predict_with_explanation = lambda **kw: _mock_predict_with_explanation(**kw)
         mock_predictor.tokenize_windows = lambda x: (
-            np.ones((1, 512), dtype=np.int64), np.ones((1, 512), dtype=np.int64)
+            np.ones((1, 512), dtype=np.int64),
+            np.ones((1, 512), dtype=np.int64),
         )
         set_loader_override("cmtf_ensemble_VCB_1d", [mock_predictor] * 3)
 
-        from src.multiagent.graph import run_graph
-        cfg = MultiAgentConfig(buy_threshold=0.002, min_news_bars=3)
-        result = run_graph(symbol="VCB", cutoff="2025-03-31", horizon=1, config=cfg)
-
-        # News quality critic should ignore news (coverage=0 < min_news_bars=3)
-        assert result["news_residual_scale"] == 0.0
-        # Final adjusted = baseline + 0 * residual = baseline
-        assert result["final_pred_adjusted"] == pytest.approx(result["baseline_pred"])
+        cfg = MultiAgentConfig(evaluation_mode=True)
+        result = run_graph(
+            cutoff="2025-03-31", horizon=1, symbol="VCB", config=cfg,
+        )
+        assert result["action"] == "long"
+        assert result["position_scale"] > 0

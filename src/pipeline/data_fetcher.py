@@ -6,6 +6,10 @@ using the vnstock library (v3.x).
 
 from __future__ import annotations
 
+import os
+import threading
+import time
+from collections import deque
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +27,43 @@ from tenacity import (
 # ---------------------------------------------------------------------------
 CACHE_DIR = Path("./cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Global vnstock rate limiter (process-wide)
+# ---------------------------------------------------------------------------
+_RATE_LOCK = threading.Lock()
+_REQUEST_TIMESTAMPS: deque[float] = deque()
+_RATE_LIMIT_PER_MIN = max(1, int(os.getenv("VNSTOCK_RATE_LIMIT_PER_MIN", "16")))
+
+
+def _throttle_vnstock_requests() -> None:
+    """Block until issuing another vnstock request is within minute budget.
+
+    Defaults to 16 req/min (below Guest 20 req/min) for a safety margin.
+    Override via environment variable ``VNSTOCK_RATE_LIMIT_PER_MIN``.
+    """
+    while True:
+        now = time.monotonic()
+        with _RATE_LOCK:
+            # Drop events outside the rolling 60-second window.
+            while _REQUEST_TIMESTAMPS and now - _REQUEST_TIMESTAMPS[0] >= 60.0:
+                _REQUEST_TIMESTAMPS.popleft()
+
+            if len(_REQUEST_TIMESTAMPS) < _RATE_LIMIT_PER_MIN:
+                _REQUEST_TIMESTAMPS.append(now)
+                return
+
+            wait_for = 60.0 - (now - _REQUEST_TIMESTAMPS[0])
+
+        # Sleep outside lock so other threads can continue processing.
+        if wait_for > 0:
+            logger.info(
+                "vnstock throttle: {:.1f}s wait ({} req/min limit)",
+                wait_for,
+                _RATE_LIMIT_PER_MIN,
+            )
+            time.sleep(wait_for)
 
 
 class VnstockDataFetcher:
@@ -52,6 +93,7 @@ class VnstockDataFetcher:
         """Low-level fetch with retry logic."""
         from vnstock import Quote
 
+        _throttle_vnstock_requests()
         quote = Quote(symbol=symbol, source=source)
         df = quote.history(start=start, end=end, interval=interval)
         return df
@@ -126,6 +168,7 @@ class VnstockDataFetcher:
         """Low-level news fetch with retry."""
         from vnstock import Company
 
+        _throttle_vnstock_requests()
         company = Company(symbol=symbol, source=source)
         df = company.news()
         return df

@@ -177,15 +177,55 @@ def _dedup_articles(
 
     The keep/drop decision is quality-aware and deterministic: higher-quality
     articles are processed first so duplicates map to the best available copy.
+
+    Strategy:
+    1. Exact URL dedup (O(n)) — fast pass removes obvious duplicates.
+    2. Fuzzy title dedup (O(n²)) — capped at _FUZZY_DEDUP_CAP articles to
+       avoid quadratic blow-up when thousands of shared macro articles are
+       combined with symbol-specific ones.
     """
-    ranked_articles = sorted(
-        articles,
-        key=_article_quality_score,
-        reverse=True,
-    )
+    _FUZZY_DEDUP_CAP = 3000  # max articles for O(n²) fuzzy pass
+
+    # --- Pass 1: exact URL / article_id dedup (O(n)) ---
+    seen_urls: set[str] = set()
+    seen_ids: set[str] = set()
+    url_unique: list[dict[str, Any]] = []
+    url_dups: list[dict[str, Any]] = []
+    for art in articles:
+        url = str(art.get("source_url", art.get("url", "")))
+        aid = str(art.get("article_id", ""))
+        key = url or aid
+        if key and key in seen_urls:
+            url_dups.append({
+                "article_id": aid,
+                "source": art.get("source", ""),
+                "source_url": url,
+                "title": art.get("title", ""),
+                "published_date": art.get("published_date"),
+                "filter_reason": "duplicate_url",
+                "matched_article_id": "",
+                "dedup_score": 100.0,
+            })
+            continue
+        if key:
+            seen_urls.add(key)
+        if aid and aid not in seen_ids:
+            seen_ids.add(aid)
+        url_unique.append(art)
+
+    # --- Pass 2: fuzzy title dedup (O(n²), capped) ---
+    if len(url_unique) > _FUZZY_DEDUP_CAP:
+        # Too many articles for fuzzy pass — skip it, return URL-deduped list
+        logger.debug(
+            "Skipping fuzzy dedup ({} articles > cap {}); URL dedup only",
+            len(url_unique), _FUZZY_DEDUP_CAP,
+        )
+        return url_unique, url_dups
+
+    ranked_articles = sorted(url_unique, key=_article_quality_score, reverse=True)
 
     unique: list[dict[str, Any]] = []
-    duplicate_rows: list[dict[str, Any]] = []
+    duplicate_rows: list[dict[str, Any]] = list(url_dups)
 
     for art in ranked_articles:
         title = str(art.get("title", ""))
@@ -731,6 +771,195 @@ def _scrape_vnexpress_sector(
     return list(all_articles)
 
 
+# ------------------------------------------------------------------
+# Google News RSS scraper — broad macro / geopolitical coverage
+# ------------------------------------------------------------------
+
+# Symbol-specific queries for Google News
+_GOOGLE_NEWS_SYMBOL_KEYWORDS: dict[str, list[str]] = {
+    "VCB": ["Vietcombank cổ phiếu", "VCB ngân hàng kết quả"],
+    "BID": ["BIDV cổ phiếu", "BID ngân hàng đầu tư kết quả"],
+}
+
+# Macro / sector / geopolitical queries shared across all symbols.
+# These capture events that broadly affect Vietnamese banking stocks:
+# SBV rate decisions, inflation, GDP, US Fed, war/trade disruptions,
+# government policy — all classes of news the user requested.
+_GOOGLE_NEWS_MACRO_KEYWORDS: list[str] = [
+    "ngân hàng nhà nước lãi suất Việt Nam",     # SBV rate decisions
+    "tỷ giá USD VND Việt Nam",                   # USD/VND exchange rate
+    "lạm phát CPI Việt Nam kinh tế",             # Inflation / CPI
+    "GDP kinh tế Việt Nam tăng trưởng",          # Economic growth
+    "Fed tăng lãi suất ngân hàng thế giới",      # US Fed — affects EM markets
+    "chứng khoán ngân hàng Việt Nam VN-Index",   # Banking stocks / market
+    "chính phủ Việt Nam chính sách tài chính",   # Govt fiscal policy
+    "chiến tranh Nga Ukraine kinh tế thế giới",  # War / commodity shock
+    "xuất khẩu nhập khẩu thương mại Việt Nam",  # Trade balance
+    "tín dụng nợ xấu ngân hàng Việt Nam",       # Credit / NPL sector
+]
+
+# Module-level cache so shared macro queries are fetched once per process
+_google_news_macro_cache: dict[str, list[dict[str, Any]]] = {}
+
+# Shorter delay for Google News RSS (public API, no HTML parsing)
+_GOOGLE_NEWS_REQUEST_DELAY = 0.5
+
+
+def _generate_quarterly_chunks(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Return (chunk_start, chunk_end) pairs in 3-month (quarterly) increments."""
+    import calendar
+
+    chunks: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    cur = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    while cur <= end:
+        # Three months ahead
+        adv_month = cur.month + 2
+        adv_year = cur.year
+        while adv_month > 12:
+            adv_month -= 12
+            adv_year += 1
+        last_day = calendar.monthrange(adv_year, adv_month)[1]
+        chunk_end = min(
+            pd.Timestamp(year=adv_year, month=adv_month, day=last_day, hour=23, minute=59),
+            end,
+        )
+        chunks.append((cur, chunk_end))
+        # Advance by 3 months
+        next_month = cur.month + 3
+        next_year = cur.year
+        while next_month > 12:
+            next_month -= 12
+            next_year += 1
+        cur = pd.Timestamp(year=next_year, month=next_month, day=1)
+    return chunks
+
+
+def _fetch_google_news_rss_keyword(
+    keyword: str,
+    chunk_start: pd.Timestamp,
+    chunk_end: pd.Timestamp,
+    seen_urls: set[str],
+) -> list[dict[str, Any]]:
+    """Fetch one Google News RSS query for a single keyword + date chunk."""
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+    from urllib.parse import quote
+    import requests as _requests
+
+    after = chunk_start.strftime("%Y-%m-%d")
+    before = chunk_end.strftime("%Y-%m-%d")
+    query = f"{keyword} after:{after} before:{before}"
+    url = (
+        f"https://news.google.com/rss/search"
+        f"?q={quote(query)}&hl=vi&gl=VN&ceid=VN:vi"
+    )
+
+    articles: list[dict[str, Any]] = []
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml",
+        }
+        resp = _requests.get(url, headers=headers, timeout=20)
+        time.sleep(_GOOGLE_NEWS_REQUEST_DELAY)
+        root = ET.fromstring(resp.content)
+        for item in root.findall(".//item"):
+            title_raw = item.findtext("title", "")
+            link = item.findtext("link", "")
+            pub_date_str = item.findtext("pubDate", "")
+            description = item.findtext("description", "") or ""
+
+            if not title_raw or not link or link in seen_urls:
+                continue
+
+            # Google News appends " - Source Name" to titles; strip it
+            title = re.sub(r"\s*-\s*[^-]{2,40}$", "", title_raw).strip() or title_raw
+
+            try:
+                pub_dt = parsedate_to_datetime(pub_date_str)
+                pub_date = pd.Timestamp(pub_dt.replace(tzinfo=None))
+            except Exception:
+                continue
+
+            if pub_date < chunk_start or pub_date > chunk_end:
+                continue
+
+            # Strip HTML tags from description for plain-text content
+            content = (title + " " + re.sub(r"<[^>]+>", "", description)).strip()
+
+            seen_urls.add(link)
+            articles.append(
+                {
+                    "article_id": _build_article_id(
+                        {"source": "google_news", "url": link, "title": title}
+                    ),
+                    "title": title,
+                    "url": link,
+                    "source_url": link,
+                    "published_date": str(pub_date),
+                    "content": content,
+                    "source": "google_news",
+                }
+            )
+    except Exception as exc:
+        logger.debug(
+            "Google News RSS failed | keyword='{}' chunk={}/{}: {}",
+            keyword, after, before, exc,
+        )
+    return articles
+
+
+def _scrape_google_news_rss(
+    symbol: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> list[dict[str, Any]]:
+    """Scrape Google News RSS for *symbol*-specific + broad macro/geopolitical news.
+
+    Uses quarterly date chunks so each query returns at most ~100 articles
+    and historical coverage reaches back to 2022.  The shared macro queries
+    are cached module-level so only the first symbol incurs the fetch cost.
+    """
+    chunks = _generate_quarterly_chunks(start_date, end_date)
+    cache_key = f"{start_date.date()}_{end_date.date()}"
+
+    # --- Shared macro queries (fetched once, reused for every symbol) ---
+    if cache_key not in _google_news_macro_cache:
+        logger.info("Google News RSS: fetching {} macro keywords × {} quarterly chunks …",
+                    len(_GOOGLE_NEWS_MACRO_KEYWORDS), len(chunks))
+        seen: set[str] = set()
+        macro_arts: list[dict[str, Any]] = []
+        for kw in _GOOGLE_NEWS_MACRO_KEYWORDS:
+            for cs, ce in chunks:
+                macro_arts.extend(_fetch_google_news_rss_keyword(kw, cs, ce, seen))
+        _google_news_macro_cache[cache_key] = macro_arts
+        logger.info("Google News RSS macro cache: {} articles", len(macro_arts))
+
+    shared = list(_google_news_macro_cache[cache_key])
+
+    # --- Symbol-specific queries ---
+    sym_keywords = _GOOGLE_NEWS_SYMBOL_KEYWORDS.get(symbol.upper(), [symbol])
+    seen_sym: set[str] = set()
+    sym_arts: list[dict[str, Any]] = []
+    for kw in sym_keywords:
+        for cs, ce in chunks:
+            sym_arts.extend(_fetch_google_news_rss_keyword(kw, cs, ce, seen_sym))
+
+    all_articles = sym_arts + shared
+    logger.info(
+        "Google News RSS for {}: {} symbol-specific + {} macro = {} total",
+        symbol, len(sym_arts), len(shared), len(all_articles),
+    )
+    return all_articles
+
+
 class NewsScraper:
     """Banking web news scraper with symbol-specific + sector-wide macro coverage."""
 
@@ -793,6 +1022,13 @@ class NewsScraper:
                 all_articles.extend(_scrape_vietstock(symbol, start_ts, end_ts))
             except Exception:
                 logger.warning("Vietstock scraping failed for {} — continuing", symbol)
+
+        if "google_news" in sources:
+            try:
+                logger.info("Scraping Google News RSS for {} ...", symbol)
+                all_articles.extend(_scrape_google_news_rss(symbol, start_ts, end_ts))
+            except Exception:
+                logger.warning("Google News RSS scraping failed for {} — continuing", symbol)
 
         # Add sector-wide banking/macro news (shared across all symbols)
         if "vnexpress" in sources:

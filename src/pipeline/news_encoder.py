@@ -15,7 +15,7 @@ import pandas as pd
 from loguru import logger
 from tqdm import tqdm
 
-from src.phase2 import (
+from src.sentiment import (
     Phase2PhoBERTInferencer,
     aggregate_title_sentiment_scores,
     flatten_sentiment_scores,

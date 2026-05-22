@@ -14,6 +14,8 @@ from src.benchmark.metrics import (
     mae,
     rmse,
     sharpe_ratio,
+    max_drawdown,
+    calmar_ratio,
 )
 
 
@@ -63,10 +65,10 @@ class TestDirectionalAccuracy:
 
 class TestSharpeRatio:
     def test_returns_nan_insufficient_data(self):
-        y_true = np.array([0.01, 0.02])
-        y_pred = np.array([0.01, 0.01])
+        y_true = np.array([0.01])
+        y_pred = np.array([0.01])
         result = sharpe_ratio(y_true, y_pred)
-        assert math.isnan(result), f"Expected NaN for <5 samples, got {result}"
+        assert math.isnan(result), f"Expected NaN for <3 samples, got {result}"
 
     def test_returns_nan_zero_std(self):
         y_true = np.array([1.0] * 10)
@@ -116,3 +118,41 @@ class TestComputeAll:
         y_pred = np.array([0.01, -0.01, 0.02, 0.02, -0.02, 0.01, 0.04, -0.02, 0.02, 0.01])
         result = compute_all(y_true, y_pred)
         assert set(result.keys()) == {"MAE", "RMSE", "DA%", "Sharpe", "IC", "Prec", "Rec", "F1"}
+
+
+class TestMaxDrawdown:
+    def test_empty(self):
+        assert max_drawdown(np.array([])) == 0.0
+
+    def test_all_positive_returns(self):
+        # Monotonically rising wealth → no drawdown
+        ret = np.array([0.01, 0.02, 0.01, 0.03])
+        assert max_drawdown(ret) == 0.0
+
+    def test_known_drawdown(self):
+        # Wealth: 1.0 → 1.1 → 0.88 → 0.968
+        ret = np.array([0.10, -0.20, 0.10])
+        mdd = max_drawdown(ret)
+        assert mdd < 0, "MaxDD should be negative"
+        assert mdd == pytest.approx(-0.20, abs=0.001)
+
+    def test_single_loss(self):
+        ret = np.array([-0.05])
+        assert max_drawdown(ret) == pytest.approx(-0.05, abs=0.001)
+
+
+class TestCalmarRatio:
+    def test_too_few(self):
+        assert calmar_ratio(np.array([0.01, 0.02])) == 0.0
+
+    def test_no_drawdown_returns_zero(self):
+        # All positive → mdd ≈ 0 → Calmar = 0 (avoid div-by-zero)
+        ret = np.array([0.01, 0.01, 0.01, 0.01])
+        assert calmar_ratio(ret) == 0.0
+
+    def test_positive_calmar(self):
+        # Net positive return with some drawdown
+        rng = np.random.default_rng(42)
+        ret = rng.normal(0.002, 0.01, 50)
+        c = calmar_ratio(ret)
+        assert np.isfinite(c)

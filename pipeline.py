@@ -26,6 +26,13 @@ if __name__ == "__main__":
         "train_end": "2024-06-30",
         "val_end": "2024-12-31",
         "normalize_method": "zscore",
+        # Optional: stability-based feature selection (disabled by default)
+        "stability_selection_enabled": True,
+        "stability_corr_threshold": 0.95,
+        "stability_lasso_alpha": 0.001,
+        "stability_n_folds": 5,
+        "stability_threshold": 0.6,
+        "stability_min_train_rows": 120,
     }
 
     dataset = run_pipeline(config)

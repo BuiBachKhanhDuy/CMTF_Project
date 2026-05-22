@@ -187,7 +187,7 @@ class TestEncoderHybridSentiment:
         monkeypatch.setattr(
             NewsEncoder,
             "encode_window",
-            lambda self, texts, null_mask=False: {
+            lambda self, texts, null_mask=False, weights=None: {
                 "embedding": np.ones(768, dtype=np.float32) if texts and not null_mask else np.zeros(768, dtype=np.float32),
                 "has_news": bool(texts) and not bool(null_mask),
             },
@@ -287,7 +287,7 @@ class TestDatasetTemporalSplit:
             "targets": np.random.default_rng(1).normal(0, 0.02, n),
             "news_embs": np.random.default_rng(1).normal(0, 1, (n, 768)).astype(np.float32),
         }
-        from run_chronos_benchmark import split_by_date
+        from run_model_benchmark import split_by_date
         splits = split_by_date(data, times, "2023-03-31", "2023-04-30", target_horizon_days=1)
 
         train_set = set(range(len(splits["train"]["targets"])))
@@ -311,7 +311,7 @@ class TestDatasetTemporalSplit:
             "targets": np.random.default_rng(1).normal(0, 0.02, n),
             "news_embs": np.random.default_rng(1).normal(0, 1, (n, 768)).astype(np.float32),
         }
-        from run_chronos_benchmark import split_by_date
+        from run_model_benchmark import split_by_date
         splits = split_by_date(data, times, "2023-03-31", "2023-04-30", target_horizon_days=1)
 
         # Reconstruct times per split using the mask logic

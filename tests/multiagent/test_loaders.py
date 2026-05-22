@@ -7,8 +7,6 @@ from src.multiagent.loaders import (
     clear_overrides,
     get_cmtf_ensemble,
     get_lora_backbone,
-    get_news_encoder,
-    get_phobert_bundle,
     set_loader_override,
 )
 from src.multiagent.config import MultiAgentConfig
@@ -25,18 +23,6 @@ def clean_overrides():
 class TestLoaderOverrides:
     """Test the override hook mechanism for testing."""
 
-    def test_set_override_returns_fake(self):
-        fake_bundle = {"fake": True}
-        set_loader_override("phobert_bundle", fake_bundle)
-        result = get_phobert_bundle()
-        assert result == fake_bundle
-
-    def test_set_override_news_encoder(self):
-        fake_encoder = object()
-        set_loader_override("news_encoder", fake_encoder)
-        result = get_news_encoder()
-        assert result is fake_encoder
-
     def test_set_override_lora_backbone(self):
         fake_backbone = {"backbone": True}
         set_loader_override("lora_backbone_VCB_1d", fake_backbone)
@@ -50,15 +36,13 @@ class TestLoaderOverrides:
         assert result == fake_ensemble
 
     def test_clear_overrides_removes_all(self):
-        fake = {"fake": True}
-        set_loader_override("phobert_bundle", fake)
-        assert get_phobert_bundle() == fake
+        fake = [1, 2, 3]
+        set_loader_override("cmtf_ensemble_VCB_1d", fake)
+        assert get_cmtf_ensemble("VCB", 1) == fake
         clear_overrides()
-        # After clearing, the override dict should be empty.
-        # The real loader may or may not succeed depending on environment,
-        # but the fake object should no longer be returned.
-        result = get_phobert_bundle()
-        assert result != fake
+        # After clearing, override is gone — real loader would fail on missing artifacts
+        with pytest.raises(ArtifactMissingError):
+            get_cmtf_ensemble("VCB", 1, MultiAgentConfig(cmtf_models_dir=__import__("pathlib").Path("/nonexistent")))
 
 
 class TestLoaderMissingArtifacts:

@@ -211,6 +211,28 @@ def compute_composite_metrics(
     }
 
 
+def max_drawdown(returns: np.ndarray) -> float:
+    """Maximum drawdown of a return series (negative float, e.g. -0.15 = -15%).
+
+    Uses cumulative-sum arithmetic so that a single -5% return produces -0.05,
+    and a monotonically rising series produces 0.0.
+    """
+    r = np.asarray(returns, dtype=float)
+    if r.size == 0:
+        return 0.0
+    cum = np.concatenate([[0.0], np.cumsum(r)])
+    peak = np.maximum.accumulate(cum)
+    return float((cum - peak).min())
+
+
+def calmar_ratio(returns: np.ndarray, periods_per_year: int = 252) -> float:
+    """Calmar ratio = annualised return / abs(max drawdown). Returns 0 if MDD is zero."""
+    r = np.asarray(returns, dtype=float)
+    ann_return = float(np.mean(r) * periods_per_year)
+    mdd = abs(max_drawdown(r))
+    return ann_return / mdd if mdd > 1e-12 else 0.0
+
+
 def compute_all(
     y_true: np.ndarray,
     y_pred: np.ndarray,

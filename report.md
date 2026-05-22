@@ -142,8 +142,8 @@ Key commands:
 
 ```powershell
 python pipeline.py
-python run_chronos_benchmark.py --stage predict
-python run_chronos_benchmark.py --stage predict --horizons 20
+python run_model_benchmark.py --stage predict
+python run_model_benchmark.py --stage predict --horizons 20
 pytest -v
 ```
 

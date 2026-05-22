@@ -11,27 +11,34 @@ class TestMultiAgentState:
 
     def test_state_has_request_keys(self):
         annotations = MultiAgentState.__annotations__
+        assert "query_text" in annotations
         assert "symbol" in annotations
         assert "prediction_time" in annotations
         assert "target_horizon_days" in annotations
         assert "sequence_len" in annotations
+
+    def test_state_has_request_keys(self):
+        annotations = MultiAgentState.__annotations__
+        assert "symbol" in annotations
+        assert "target_horizon_days" in annotations
 
     def test_state_has_market_keys(self):
         annotations = MultiAgentState.__annotations__
         assert "close_window" in annotations
         assert "market_window" in annotations
         assert "market_tabular" in annotations
-        assert "token_ids" in annotations
-        assert "attention_mask" in annotations
+        assert "volatility_metrics" in annotations
+        assert "market_proposal" in annotations
 
     def test_state_has_news_keys(self):
         annotations = MultiAgentState.__annotations__
         assert "articles" in annotations
         assert "news_emb" in annotations
         assert "news_mask" in annotations
-        assert "sentiment_features" in annotations
+        assert "sentiment_metrics" in annotations
+        assert "news_proposal" in annotations
 
-    def test_state_has_fusion_keys(self):
+    def test_state_has_predict_keys(self):
         annotations = MultiAgentState.__annotations__
         assert "baseline_pred" in annotations
         assert "final_pred" in annotations
@@ -39,24 +46,24 @@ class TestMultiAgentState:
         assert "news_residual" in annotations
         assert "attn_weights" in annotations
         assert "news_weight" in annotations
+        assert "predict_confidence" in annotations
+        assert "model_evidence" in annotations
+        assert "model_proposal" in annotations
 
-    def test_state_has_critic_keys(self):
+    def test_state_has_fusion_keys(self):
         annotations = MultiAgentState.__annotations__
-        assert "regime_flags" in annotations
-        assert "position_scale_regime" in annotations
-        assert "news_quality_flags" in annotations
-        assert "news_residual_scale" in annotations
-        assert "final_pred_adjusted" in annotations
-        assert "disagreement_force_flat" in annotations
+        assert "fusion_decision" in annotations
 
-    def test_state_has_decision_keys(self):
+    def test_state_has_risk_decision_keys(self):
         annotations = MultiAgentState.__annotations__
         assert "action" in annotations
         assert "position_scale" in annotations
+        assert "final_confidence" in annotations
+        assert "risk_checks" in annotations
+        assert "decision_reasoning" in annotations
 
-    def test_state_has_explanation_keys(self):
+    def test_state_has_answer_keys(self):
         annotations = MultiAgentState.__annotations__
-        assert "evidence_dict" in annotations
         assert "explanation_text_vi" in annotations
 
     def test_state_has_audit_keys(self):
@@ -66,6 +73,17 @@ class TestMultiAgentState:
         assert "errors" in annotations
         assert "warnings" in annotations
         assert "node_timings" in annotations
+        assert "policy_version" in annotations
+        assert "decision_id" in annotations
+
+    def test_no_legacy_keys(self):
+        annotations = MultiAgentState.__annotations__
+        assert "quant_proposal" not in annotations
+        assert "risk_proposal" not in annotations
+        assert "debate_log" not in annotations
+        assert "agent_breakdown" not in annotations
+        assert "evidence_dict" not in annotations
+        assert "sentiment_features" not in annotations
 
 
 class TestMultiAgentConfig:
@@ -75,12 +93,9 @@ class TestMultiAgentConfig:
         assert DEFAULT_CONFIG is not None
         assert isinstance(DEFAULT_CONFIG, MultiAgentConfig)
 
-    def test_thresholds_positive(self):
+    def test_config_ollama(self):
         cfg = MultiAgentConfig()
-        assert cfg.buy_threshold > 0
-        assert cfg.sell_threshold > 0
-        assert cfg.vol_high_pct > 0
-        assert cfg.dd_max_pct > 0
+        assert cfg.ollama_model is not None
 
     def test_ensemble_seeds(self):
         cfg = MultiAgentConfig()
@@ -91,11 +106,12 @@ class TestMultiAgentConfig:
         cfg = MultiAgentConfig()
         assert cfg.sequence_len == 30
 
-    def test_horizon_in_valid_set(self):
-        # Config doesn't restrict horizons, but the guide specifies 1, 5, 20
+    def test_evaluation_mode_default_false(self):
         cfg = MultiAgentConfig()
-        assert cfg.cmtf_version == "v8"
-        assert cfg.hpo_version == "v7"
+        assert cfg.evaluation_mode is False
+
+    def test_no_skip_llm_reasoning_field(self):
+        assert not hasattr(MultiAgentConfig(), "skip_llm_reasoning")
 
     def test_paths_are_path_objects(self):
         from pathlib import Path

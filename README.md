@@ -38,19 +38,21 @@ pytest -m smoke tests/test_news_scraper_smoke.py -v
 python pipeline.py
 
 # 5. Run the benchmark
-python run_chronos_benchmark.py
+python run_model_benchmark.py
 
 # 5a. Run specific stages
-python run_chronos_benchmark.py --stage hpo    # Optuna HPO only
-python run_chronos_benchmark.py --stage cmtf   # Retrain CMTF only
-python run_chronos_benchmark.py --stage plot   # Regenerate plots
+python run_model_benchmark.py --stage hpo    # Optuna HPO only
+python run_model_benchmark.py --stage cmtf   # Retrain CMTF only
+python run_model_benchmark.py --stage plot   # Regenerate plots
 ```
 
 ## Project Structure
 
 ```
 ├── pipeline.py                  # Entry point: data ingestion pipeline
-├── run_chronos_benchmark.py     # Entry point: benchmark experiments
+├── run_model_benchmark.py       # Entry point: model training & evaluation
+├── run_ab_benchmark.py          # Entry point: multiagent A/B test + plots
+├── run_sentiment_benchmark.py   # Entry point: PhoBERT sentiment training
 ├── src/
 │   ├── pipeline/                # Data ingestion & preprocessing
 │   │   ├── orchestrator.py      # End-to-end pipeline orchestration
@@ -60,12 +62,25 @@ python run_chronos_benchmark.py --stage plot   # Regenerate plots
 │   │   ├── feature_engineer.py  # 15 technical indicators + normalization
 │   │   ├── news_encoder.py      # PhoBERT → 768-dim embeddings
 │   │   └── dataset_builder.py   # PyTorch Dataset with walk-forward splits
-│   └── benchmark/               # Chronos experiments & evaluation
-│       ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1 + composite
-│       ├── baseline_models.py   # LSTM, RF, Fine-tuned Chronos baselines
-│       ├── baseline_hpo.py      # Optuna HPO for baseline models
-│       ├── chronos_market.py    # Zero-shot + Chronos embeddings
-│       └── chronos_cmtf.py      # FiLM + GRN fusion head
+│   ├── benchmark/               # Model implementations & evaluation
+│   │   ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1 + composite
+│   │   ├── baseline_models.py   # LSTM, RF, Fine-tuned Chronos baselines
+│   │   ├── baseline_hpo.py      # Optuna HPO for baseline models
+│   │   ├── chronos_encoder.py   # Zero-shot + Chronos embeddings
+│   │   ├── cnn_lstm_cmtf.py     # CNN-LSTM + cross-modal news fusion
+│   │   └── plots.py             # A/B benchmark visualizations
+│   ├── sentiment/               # Vietnamese news sentiment (PhoBERT)
+│   │   ├── modeling.py          # PhoBERT + Custom Transformer architectures
+│   │   ├── training.py          # Sentiment model training loop
+│   │   ├── inference.py         # Deployed sentiment scorer
+│   │   └── handoff.py           # Phase 2 → pipeline artifact handoff
+│   └── multiagent/              # LangGraph multi-agent inference system
+│       ├── graph.py             # StateGraph topology + run_graph()
+│       ├── config.py            # All tunable parameters
+│       ├── state.py             # Typed shared state definition
+│       ├── loaders.py           # Lazy model artifact loading
+│       ├── reflection.py        # Offline policy updates
+│       └── agents/              # 7 specialized agent nodes
 ├── tests/                       # 85 unit tests (4 skipped smoke tests)
 ├── results/                     # Benchmark outputs (CSV + figures)
 └── report.md                    # Full technical report

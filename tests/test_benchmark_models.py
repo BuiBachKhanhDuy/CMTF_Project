@@ -8,8 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from run_chronos_benchmark import (
-    _run_optuna_hpo,
+from run_model_benchmark import (
     extract_per_symbol_data,
     impute_market_window_splits,
     impute_tabular_splits,
@@ -239,101 +238,22 @@ class TestBaselineHpoFallback:
         )
 
         assert params == baseline_hpo.get_default_baseline_hpo_params()
-
-
-class TestCmtfHpo:
-    def test_uses_actual_hybrid_news_dim(self, tmp_path, monkeypatch):
-        import run_chronos_benchmark as benchmark
-
-        captured_news_dims: list[int] = []
-
-        class FakeChronosCMTF:
-            def __init__(self, _backbone, news_dim, **kwargs):
-                captured_news_dims.append(int(news_dim))
-
-            def fit_tokenized(self, *args, **kwargs):
-                return {"train_loss": [0.0], "val_loss": [0.0]}
-
-            def predict_tokenized(self, token_ids, attention_mask, news_embs, **kwargs):
-                return np.zeros(news_embs.shape[0], dtype=np.float32)
-
-        def fake_load_or_train_ft_chronos_model(*args, **kwargs):
-            return object(), None, "fakehash"
-
-        monkeypatch.setattr(benchmark, "ChronosCMTFPredictor", FakeChronosCMTF)
-        monkeypatch.setattr(benchmark, "_load_or_train_ft_chronos_model", fake_load_or_train_ft_chronos_model)
-        monkeypatch.setattr(
-            benchmark,
-            "compute_composite_metrics",
-            lambda *args, **kwargs: {"CompositeScore": 0.0},
-        )
-        monkeypatch.setattr(benchmark, "_cmtf_hpo_cache_file", lambda target_h: tmp_path / f"best_params_{target_h}d.json")
-
-        news_dim = 773
-        all_symbol_splits = {
-            "VCB": {
-                "train": {
-                    "news_embs": np.zeros((2, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(2, dtype=np.float32),
-                    "market_windows": np.zeros((2, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((2, 4), dtype=np.float32),
-                    "news_masks": np.zeros((2, 3), dtype=bool),
-                },
-                "val": {
-                    "news_embs": np.zeros((1, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(1, dtype=np.float32),
-                    "market_windows": np.zeros((1, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((1, 4), dtype=np.float32),
-                    "news_masks": np.zeros((1, 3), dtype=bool),
-                },
-                "test": {
-                    "news_embs": np.zeros((1, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(1, dtype=np.float32),
-                    "market_windows": np.zeros((1, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((1, 4), dtype=np.float32),
-                    "news_masks": np.zeros((1, 3), dtype=bool),
-                },
-            }
-        }
-        all_symbol_tokens = {
-            "VCB": {
-                "train_ids": np.ones((2, 3), dtype=np.int64),
-                "train_mask": np.ones((2, 3), dtype=np.int64),
-                "val_ids": np.ones((1, 3), dtype=np.int64),
-                "val_mask": np.ones((1, 3), dtype=np.int64),
-                "test_ids": np.ones((1, 3), dtype=np.int64),
-                "test_mask": np.ones((1, 3), dtype=np.int64),
-            }
-        }
-
-        params = _run_optuna_hpo(
-            chronos=object(),
-            all_symbol_splits=all_symbol_splits,
-            all_symbol_tokens=all_symbol_tokens,
-            all_symbol_anchor_val_preds={"VCB": np.zeros(1, dtype=np.float32)},
-            target_h=1,
-            use_tabular=True,
-            device="cpu",
-            n_trials=1,
-            seq_len=3,
-            ft_backbone_params={"lr": 1e-4},
-        )
-
-        assert captured_news_dims == [news_dim]
-        assert set(params) == {"fusion_dim", "lr", "dir_penalty_weight", "dropout"}
-
-
 # ======================================================================
-# CrossModalFusionHead (pure PyTorch, no Chronos)
+# ResidualNewsFusionHead (pure PyTorch)
 # ======================================================================
 
 
-class TestCrossModalFusionHead:
+class TestResidualNewsFusionHead:
     def test_output_shape(self):
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
+        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
 
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, fusion_dim=8, n_heads=2, dropout=0.0,
+        head = ResidualNewsFusionHead(
+            baseline_dim=32,
+            market_dim=32,
+            news_dim=16,
+            hidden_dim=8,
+            n_heads=2,
+            dropout=0.0,
             seq_len=5,
         )
         import torch
@@ -343,36 +263,45 @@ class TestCrossModalFusionHead:
         pred = head(market, news)
         assert pred.shape == (4,)
 
-    def test_news_default_token_replaces_zeros(self):
-        """All-zero news rows should be replaced by the learned default token."""
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
+    def test_all_masked_news_returns_zero(self):
+        """Fully masked news should preserve exact zero residual parity."""
+        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
         import torch
 
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, fusion_dim=8, n_heads=2, dropout=0.0,
+        head = ResidualNewsFusionHead(
+            baseline_dim=32,
+            market_dim=32,
+            news_dim=16,
+            hidden_dim=8,
+            n_heads=2,
+            dropout=0.0,
             seq_len=3,
         )
         market = torch.randn(2, 32)
-        # First sample: real news; second sample: all zeros (no news)
+        news = torch.zeros(2, 3, 16)
+        news_mask = torch.ones(2, 3, dtype=torch.bool)
+
+        pred = head(market, news, news_mask=news_mask)
+        assert pred.shape == (2,)
+        assert torch.allclose(pred, torch.zeros_like(pred), atol=1e-6, rtol=0.0)
+
+    def test_zero_news_rows_stay_finite(self):
+        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
+        import torch
+
+        head = ResidualNewsFusionHead(
+            baseline_dim=32,
+            market_dim=32,
+            news_dim=16,
+            hidden_dim=8,
+            n_heads=2,
+            dropout=0.0,
+            seq_len=3,
+        )
+        market = torch.randn(2, 32)
         news = torch.zeros(2, 3, 16)
         news[0] = torch.randn(3, 16)
 
         pred = head(market, news)
         assert pred.shape == (2,)
-        # Both should produce finite outputs (no NaN from zero input)
         assert torch.isfinite(pred).all()
-
-    def test_tabular_dim(self):
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
-        import torch
-
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, tabular_dim=8,
-            fusion_dim=8, n_heads=2, dropout=0.0,
-            seq_len=5,
-        )
-        market = torch.randn(3, 32)
-        news = torch.randn(3, 5, 16)
-        tab = torch.randn(3, 8)
-        pred = head(market, news, tabular_emb=tab)
-        assert pred.shape == (3,)

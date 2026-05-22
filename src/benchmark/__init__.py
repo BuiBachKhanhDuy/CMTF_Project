@@ -1,1 +1,1 @@
-"""Benchmark package for CMTF Chronos comparison."""
+"""Benchmark package: model training, evaluation metrics, and A/B plots."""

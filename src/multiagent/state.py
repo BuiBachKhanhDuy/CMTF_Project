@@ -1,59 +1,88 @@
-"""Shared state definition for the multi-agent inference graph."""
+"""Shared state definition for the multi-agent inference graph.
+
+Topology:
+    orchestrator → [market_agent | news_agent] → predict_agent
+    → fusion_agent → risk_agent → answer_agent → END
+"""
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 import numpy as np
 
 
+def _merge_dicts(a: dict, b: dict) -> dict:
+    """Reducer: merge two dicts (later values overwrite)."""
+    merged = dict(a) if a else {}
+    if b:
+        merged.update(b)
+    return merged
+
+
+def _merge_lists(a: list, b: list) -> list:
+    """Reducer: concatenate two lists."""
+    return (a or []) + (b or [])
+
+
 class MultiAgentState(TypedDict, total=False):
-    # --- Request ---
+    # --- Request (raw input) ---
+    query_text: str
     symbol: str
-    prediction_time: str  # ISO date string e.g. "2025-03-31"
+    prediction_time: str  # ISO date e.g. "2025-03-31"
     target_horizon_days: int  # 1, 5, or 20
     sequence_len: int  # default 30
 
-    # --- Market ---
+    # --- Orchestrator output (data fetch) ---
     close_window: np.ndarray  # (seq_len,)
-    market_window: np.ndarray  # (seq_len, 23)
-    market_tabular: np.ndarray  # (23,)
-    token_ids: np.ndarray  # Chronos token IDs
-    attention_mask: np.ndarray  # Chronos attention mask
+    market_window: np.ndarray  # (seq_len, n_feat)
+    market_tabular: np.ndarray  # (n_feat,)
+    market_feature_cols: list[str]  # column names for market_tabular
+    news_emb: np.ndarray  # (seq_len, 773)
+    news_mask: np.ndarray  # (seq_len,) True=missing
+    articles: list[dict[str, Any]]
+    data_cutoff: str
 
-    # --- News ---
-    articles: list[dict[str, Any]]  # [{title, published_at, sentiment_score, bar_index}, ...]
-    news_emb: np.ndarray  # (seq_len, 773) hybrid embedding
-    news_mask: np.ndarray  # (seq_len,) boolean — True means bar has no news
-    sentiment_features: dict[str, float]  # 6 scalar sentiment features
+    # --- Market agent output ---
+    volatility_metrics: dict[str, float]  # vol_20d, max_drawdown_pct, trend_pct
+    market_proposal: dict[str, Any]  # direction, score, confidence, rationale, quality
 
-    # --- Fusion ---
-    baseline_pred: float  # market-only forecast (news_mask all True)
-    final_pred: float  # mean over 3 seeds
-    seed_preds: list[float]  # per-seed predictions
-    news_residual: float  # final_pred - baseline_pred
-    attn_weights: np.ndarray  # (seq_len,) mean attention over seeds
-    news_weight: float  # mean of fusion.news_weight over seeds
+    # --- News agent output ---
+    sentiment_metrics: dict[str, Any]  # coverage, staleness_frac, sentiment_mean, sentiment_std
+    news_proposal: dict[str, Any]  # direction, score (raw sentiment), confidence (trust_weight)
 
-    # --- Critics ---
-    regime_flags: dict[str, Any]  # {high_vol, drawdown_breach, vnindex_zscore, ...}
-    position_scale_regime: float  # [0, 1]
-    news_quality_flags: dict[str, Any]  # {coverage, staleness_frac, sentiment_std, ...}
-    news_residual_scale: float  # [0, 1]
-    final_pred_adjusted: float  # baseline + scale * residual
-    disagreement_force_flat: bool
+    # --- Predict agent output ---
+    baseline_pred: float
+    final_pred: float
+    adjusted_pred: float  # consensus-corrected prediction
+    mkt_adjusted_pred: float  # market-agent-only correction
+    news_adjusted_pred: float  # news-agent-only correction
+    seed_preds: list[float]
+    news_residual: float
+    attn_weights: np.ndarray  # (seq_len,) mean attention
+    news_weight: float
+    predict_confidence: float  # derived from seed agreement + pred strength
+    model_evidence: dict[str, Any]  # full evidence payload for answer agent
+    model_proposal: dict[str, Any]  # direction, score, confidence, rationale
 
-    # --- Decision ---
-    action: str  # "long", "short", or "flat"
-    position_scale: float  # [0, 1]
+    # --- Fusion agent output ---
+    fusion_decision: dict[str, Any]  # fused decision trace over model+market+news
 
-    # --- Explanation ---
-    evidence_dict: dict[str, Any]
+    # --- Risk agent output (final decision authority) ---
+    action: str  # "long" | "short" | "flat"
+    position_scale: float  # [0.0, 1.0]
+    final_confidence: float
+    risk_checks: dict[str, Any]  # individual check results
+    decision_reasoning: str
+
+    # --- Answer agent output ---
     explanation_text_vi: str
 
     # --- Audit ---
-    data_cutoff: str  # ISO date
-    artifact_versions: dict[str, str]
-    errors: list[str]
-    warnings: list[str]
-    node_timings: dict[str, float]  # node_name -> seconds
+    data_cutoff: str
+    artifact_versions: Annotated[dict[str, str], _merge_dicts]
+    errors: Annotated[list[str], _merge_lists]
+    warnings: Annotated[list[str], _merge_lists]
+    node_timings: Annotated[dict[str, float], _merge_dicts]
+    policy_version: int
+    decision_id: str

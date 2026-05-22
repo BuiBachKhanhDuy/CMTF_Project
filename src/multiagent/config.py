@@ -10,22 +10,6 @@ from pathlib import Path
 class MultiAgentConfig:
     """All tunable parameters for the multi-agent graph."""
 
-    # --- Decision thresholds ---
-    buy_threshold: float = 0.002
-    sell_threshold: float = 0.002
-
-    # --- Risk/Regime Critic ---
-    vol_high_pct: float = 0.30  # 20d annualized vol threshold (VN banking typical: 19-32%)
-    dd_max_pct: float = 0.08  # max drawdown threshold → force flat
-
-    # --- News-Quality Critic ---
-    min_news_bars: int = 3  # minimum bars with articles to trust news
-    max_stale_frac: float = 0.7  # fraction of stale articles → discount news
-    staleness_days: int = 14  # articles older than this are "stale"
-
-    # --- Ensemble Disagreement ---
-    # (no tunable params — pure sign check)
-
     # --- Sequence ---
     sequence_len: int = 30
 
@@ -37,18 +21,34 @@ class MultiAgentConfig:
     chronos_emb_dir: Path = field(default_factory=lambda: Path("cache/chronos_emb"))
 
     # --- Ollama ---
-    ollama_model: str = "qwen2.5:7b"
+    ollama_model: str = "qwen2.5:7b-instruct"
     ollama_base_url: str = "http://localhost:11434"
     ollama_timeout: int = 30  # seconds
 
+    # --- Evaluation mode: disables ALL LLM calls globally ---
+    evaluation_mode: bool = False
+
     # --- Model versions ---
-    cmtf_version: str = "v8"
+    cmtf_version: str = "v4"
     backbone_version: str = "v3"
     hpo_version: str = "v7"
     ensemble_seeds: list[int] = field(default_factory=lambda: [42, 123, 456])
 
     # --- VN-Index ---
     vnindex_symbol: str = "VNINDEX"
+
+    # --- Fusion: confidence modulation ---
+    market_agree_bonus: float = 0.15
+    market_disagree_penalty: float = 0.10
+    news_agree_bonus: float = 0.10
+    news_disagree_penalty: float = 0.05
+
+    # --- Fusion: agent consensus correction ---
+    override_alpha: float = 0.3  # how much agent consensus scales final_pred
+
+    # --- Policy / reflection ---
+    policy_store_path: Path = field(default_factory=lambda: Path("results/multiagent_policy.json"))
+    reflection_min_samples: int = 30
 
 
 # Singleton default config — importable everywhere

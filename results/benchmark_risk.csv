@@ -1,0 +1,2 @@
+Symbol,Horizon,N_Samples,AT_Sharpe,AT_MaxDD%,AT_WinRate%,AT_TradeFreq%,AT_Calmar,AT_AnnRet%,Thresh_Sharpe,Thresh_MaxDD%,Thresh_WinRate%,Thresh_TradeFreq%,Thresh_Calmar,Thresh_AnnRet%,RG_Sharpe,RG_MaxDD%,RG_WinRate%,RG_TradeFreq%,RG_Calmar,RG_AnnRet%
+VCB,1d,10,-0.67,-1.85,50.0,100.0,-0.012,-5.82,,0.0,0.0,0.0,0.0,0.0,,0.0,0.0,0.0,0.0,0.0
