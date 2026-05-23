@@ -22,7 +22,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from loguru import logger
 from .baseline_models import sign_aware_huber_loss, _CausalDilatedBlock, _TARGET_SCALE
 
-CNNLSTM_CMTF_VERSION = "v4"
+CNNLSTM_CMTF_VERSION = "v6"
 
 
 class ResidualNewsFusionHead(nn.Module):
@@ -228,7 +228,7 @@ class CNNLSTMCMTFPredictor(nn.Module):
           → Linear input projection
           → CausalDilatedBlock × len(dilations)  [Bai et al. 2018, causal TCN]
           → LSTM(num_filters, hidden_dim, num_layers)
-          → temporal attention (Shi et al. 2022)  → market_emb (B, hidden_dim)
+          → all-layer hidden state concat  → market_emb (B, num_layers * hidden_dim)
 
         baseline_pred = regression_head(market_emb)
         news_residual  = ResidualNewsFusionHead(market_emb, news_emb, news_mask)
@@ -259,6 +259,8 @@ class CNNLSTMCMTFPredictor(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.d_model = num_layers * hidden_dim  # all-layer concat output dim
         self.fusion_market_dim = fusion_market_dim
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
@@ -277,16 +279,19 @@ class CNNLSTMCMTFPredictor(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
             batch_first=True,
         )
-        self.attn = nn.Linear(hidden_dim, 1)
         self.drop = nn.Dropout(dropout)
-        # Baseline prediction head (market-only path)
-        self.regression_head = nn.Linear(hidden_dim, 1)
+        # Baseline prediction head (market-only path) — all-layer concat bottleneck
+        self.regression_head = nn.Sequential(
+            nn.Linear(num_layers * hidden_dim, hidden_dim // 2),
+            nn.Tanh(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
 
         # --- News fusion head ---
         # Use fusion_market_dim (default 256) as cross-attention dimension
         # to avoid over-compressing 768-d news embeddings into 64-d hidden space.
         self.fusion = ResidualNewsFusionHead(
-            baseline_dim=hidden_dim,
+            baseline_dim=num_layers * hidden_dim,
             market_dim=fusion_market_dim,
             news_dim=news_dim,
             hidden_dim=fusion_dim,
@@ -308,17 +313,16 @@ class CNNLSTMCMTFPredictor(nn.Module):
         )
 
     def _encode_market(self, x: torch.Tensor) -> torch.Tensor:
-        """Encode market windows → (batch, hidden_dim) context vector."""
+        """Encode market windows → (batch, num_layers * hidden_dim) via all-layer concat."""
         # x: (batch, seq_len, input_dim)
         x = self.input_proj(x)            # (batch, seq_len, num_filters)
         x = x.permute(0, 2, 1)           # (batch, num_filters, seq_len)
         for block in self.tcn_blocks:
             x = block(x)
         x = x.permute(0, 2, 1)           # (batch, seq_len, num_filters)
-        lstm_out, _ = self.lstm(x)        # (batch, seq_len, hidden_dim)
-        scores = self.attn(lstm_out)      # (batch, seq_len, 1)
-        weights = torch.softmax(scores, dim=1)
-        return (weights * lstm_out).sum(dim=1)  # (batch, hidden_dim)
+        _, (hidden_state, _) = self.lstm(x)  # hidden: (num_layers, batch, hidden_dim)
+        hidden_all = hidden_state.permute(1, 0, 2)  # (batch, num_layers, hidden_dim)
+        return hidden_all.reshape(hidden_all.size(0), -1)  # (batch, num_layers*hidden_dim)
 
     def forward(
         self,
@@ -396,7 +400,7 @@ class CNNLSTMCMTFPredictor(nn.Module):
 
         # Rebuild fusion head for fresh training
         self.fusion.__init__(
-            baseline_dim=self.hidden_dim,
+            baseline_dim=self.d_model,
             market_dim=self.fusion_market_dim,
             news_dim=self.fusion.news_dim,
             hidden_dim=self.fusion.hidden_dim,
@@ -412,7 +416,7 @@ class CNNLSTMCMTFPredictor(nn.Module):
             encoder_keys = {
                 k: v for k, v in backbone_state_dict.items()
                 if any(k.startswith(p) for p in (
-                    "input_proj.", "tcn_blocks.", "lstm.", "attn.", "regression_head.",
+                    "input_proj.", "tcn_blocks.", "lstm.", "regression_head.",
                     # CNNLSTMPredictor uses "fc" and "dropout" names
                     "fc.", "dropout.",
                 ))
@@ -479,7 +483,6 @@ class CNNLSTMCMTFPredictor(nn.Module):
         encoder_params = list(self.input_proj.parameters()) + \
             list(self.tcn_blocks.parameters()) + \
             list(self.lstm.parameters()) + \
-            list(self.attn.parameters()) + \
             list(self.regression_head.parameters())
         encoder_param_ids = {id(p) for p in encoder_params}
         fusion_params = [p for p in self.parameters() if id(p) not in encoder_param_ids]

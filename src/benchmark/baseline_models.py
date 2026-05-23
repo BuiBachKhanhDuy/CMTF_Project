@@ -289,15 +289,18 @@ class ChronosLoRAEncoderBackbone:
         set_peft_model_state_dict(self.transformer, checkpoint["peft_state"])
 
 
-class LSTMPredictor(nn.Module):
-    """Sequence baseline that predicts next-horizon log return.
+# Scale factor for targets during training to avoid mean-collapse.
+# Log returns (~0.008) are scaled to (~0.8) so the loss has meaningful gradients.
+_TARGET_SCALE = 100.0
 
-    Supports both close-only windows with shape ``(batch, seq_len)`` and
-    multivariate market windows with shape ``(batch, seq_len, input_dim)``.
-    
-    UNCHANGED: This model was already correctly implemented.
+
+class LSTMPredictor(nn.Module):
+    """LSTM sequence encoder for market return prediction.
+
+    Encodes multivariate market windows via a multi-layer LSTM and predicts
+    forward log-returns through a projection head.
     """
-    
+
     def __init__(
         self,
         input_dim: int = 1,
@@ -305,7 +308,7 @@ class LSTMPredictor(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.3,
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.01,
+        sign_penalty_weight: float = 0.1,      # FIX 1: raised from 0.01 → 0.1
         device: str = "cpu",
     ):
         super().__init__()
@@ -315,8 +318,8 @@ class LSTMPredictor(nn.Module):
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
         self.device = device
-        self.d_model = hidden_dim
-        
+        self.d_model = num_layers * hidden_dim  # embedding dim matches _encode_tensor output
+
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -324,29 +327,39 @@ class LSTMPredictor(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
             batch_first=True,
         )
-        
-        # Output layer: predict single return value
-        self.fc = nn.Linear(hidden_dim, 1)
+
+        # FIX 2: projection head to prevent collapse to near-zero constant
+        # Input matches num_layers * hidden_dim from _encode_tensor
+        self.fc = nn.Sequential(
+            nn.Linear(num_layers * hidden_dim, hidden_dim // 2),
+            nn.Tanh(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
         self.to(device)
 
     def _encode_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
-        """Return the last hidden state for each market window."""
+        """Return concatenation of all layer hidden states for richer encoding."""
         x = _ensure_market_sequence_tensor(market_windows, self.input_dim)
+
+        # FIX 3: use ALL layers' hidden states, not just the last layer
         _, (hidden_state, _) = self.lstm(x)
-        return hidden_state[-1]
-        
+        # hidden_state: (num_layers, batch, hidden_dim)
+        # concatenate across layers → (batch, num_layers * hidden_dim)
+        hidden_all = hidden_state.permute(1, 0, 2)          # (batch, num_layers, hidden_dim)
+        return hidden_all.reshape(hidden_all.size(0), -1)   # (batch, num_layers * hidden_dim)
+
     def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
         """
         Args:
             market_windows: (batch, seq_len) or (batch, seq_len, input_dim)
-            
+
         Returns:
             (batch,) - predicted log-return
         """
         last_hidden = self._encode_tensor(market_windows)
         pred = self.fc(last_hidden)
         return pred.squeeze(-1)  # (batch,)
-    
+
     def fit(
         self,
         market_windows_train: np.ndarray,
@@ -358,49 +371,40 @@ class LSTMPredictor(nn.Module):
         learning_rate: float = 1e-3,
         patience: int = 10,
     ) -> dict:
-        """Train LSTM with early stopping on validation loss.
-        
-        Args:
-            market_windows_train: training market windows
-            targets_train: (N_train,) log-return targets
-            market_windows_val: validation market windows
-            targets_val: (N_val,) log-return targets
-            epochs: Max number of training epochs
-            batch_size: Training batch size
-            learning_rate: Adam learning rate
-            patience: Early stopping patience
-            
-        Returns:
-            Training history dict with train/val losses
-        """
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
-        
+
         train_losses = []
         val_losses = []
         best_val_loss = float("inf")
         best_state = None
         patience_counter = 0
-        
-        # Convert to tensors (scale targets so loss has meaningful gradients)
+
         X_train = torch.tensor(market_windows_train, dtype=torch.float32, device=self.device)
         y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device) * _TARGET_SCALE
         X_val = torch.tensor(market_windows_val, dtype=torch.float32, device=self.device)
         y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * _TARGET_SCALE
-        
+
+        # FIX 4: clamp huber_delta to p25–p75 IQR, not just p75
+        # This keeps most samples in the quadratic regime where gradient is proportional to error
+        p25 = float(np.percentile(np.abs(y_train.cpu().numpy()), 25))
+        p75 = float(np.percentile(np.abs(y_train.cpu().numpy()), 75))
+        dynamic_delta = (p25 + p75) / 2.0
+        self.huber_delta = max(dynamic_delta, 0.01)   # tighter floor than before
+        logger.debug("LSTM huber_delta={:.4f} (midpoint p25/p75 of |targets|)", self.huber_delta)
+
         n_train = len(X_train)
-        
+
         for epoch in range(epochs):
-            # Training
             self.train()
             indices = np.random.permutation(n_train)
             epoch_loss = 0.0
             n_batches = 0
-            
+
             for i in range(0, n_train, batch_size):
                 batch_indices = indices[i : i + batch_size]
                 X_batch = X_train[batch_indices]
                 y_batch = y_train[batch_indices]
-                
+
                 optimizer.zero_grad()
                 pred = self.forward(X_batch)
                 loss = sign_aware_huber_loss(
@@ -410,15 +414,18 @@ class LSTMPredictor(nn.Module):
                     sign_penalty_weight=self.sign_penalty_weight,
                 )
                 loss.backward()
+
+                # FIX 5: gradient clipping to prevent vanishing/exploding on small-return targets
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+
                 optimizer.step()
-                
+
                 epoch_loss += loss.item()
                 n_batches += 1
-            
+
             train_loss = epoch_loss / n_batches
             train_losses.append(train_loss)
-            
-            # Validation
+
             self.eval()
             with torch.no_grad():
                 pred_val = self.forward(X_val)
@@ -429,14 +436,13 @@ class LSTMPredictor(nn.Module):
                     sign_penalty_weight=self.sign_penalty_weight,
                 ).item()
                 val_losses.append(val_loss)
-            
+
             if (epoch + 1) % 10 == 0:
                 logger.debug(
                     "LSTM epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}",
                     epoch + 1, epochs, train_loss, val_loss
                 )
-            
-            # Early stopping
+
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_state = {k: v.detach().clone() for k, v in self.state_dict().items()}
@@ -449,32 +455,23 @@ class LSTMPredictor(nn.Module):
 
         if best_state is not None:
             self.load_state_dict(best_state)
-        
+
         return {
             "train_losses": train_losses,
             "val_losses": val_losses,
             "best_val_loss": best_val_loss,
         }
-    
+
     def predict(self, market_windows: np.ndarray) -> np.ndarray:
-        """Generate predictions on test set (unscaled to original target space).
-        
-        Args:
-            market_windows: market windows with close-only or multivariate shape
-            
-        Returns:
-            (N,) predicted log-returns
-        """
         self.eval()
         X = torch.tensor(market_windows, dtype=torch.float32, device=self.device)
-        
+
         with torch.no_grad():
             preds = self.forward(X)
-        
+
         return preds.cpu().numpy() / _TARGET_SCALE
 
     def get_embeddings(self, market_windows: np.ndarray) -> np.ndarray:
-        """Expose frozen LSTM hidden states for downstream fusion models."""
         self.eval()
         X = torch.tensor(market_windows, dtype=torch.float32, device=self.device)
         with torch.no_grad():
@@ -1196,10 +1193,10 @@ class _CausalDilatedBlock(nn.Module):
         self._causal_pad = (kernel_size - 1) * dilation
         self.conv1 = nn.Conv1d(num_filters, num_filters, kernel_size=kernel_size,
                                dilation=dilation, padding=0)
-        self.norm1 = nn.LayerNorm(num_filters)
+        self.norm1 = nn.BatchNorm1d(num_filters)
         self.conv2 = nn.Conv1d(num_filters, num_filters, kernel_size=kernel_size,
                                dilation=dilation, padding=0)
-        self.norm2 = nn.LayerNorm(num_filters)
+        self.norm2 = nn.BatchNorm1d(num_filters)
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
 
@@ -1209,30 +1206,23 @@ class _CausalDilatedBlock(nn.Module):
         # Left-pad only → strict causality (no future leak)
         out = F.pad(x, (self._causal_pad, 0))
         out = self.conv1(out)
-        out = self.norm1(out.permute(0, 2, 1)).permute(0, 2, 1)
+        out = self.norm1(out)
         out = self.relu(out)
         out = self.dropout(out)
         out = F.pad(out, (self._causal_pad, 0))
         out = self.conv2(out)
-        out = self.norm2(out.permute(0, 2, 1)).permute(0, 2, 1)
+        out = self.norm2(out)
         # Residual connection: stabilises gradient flow in deep stacks
         return self.dropout(self.relu(out + residual))
 
 
-# Scale factor for targets during training to avoid mean-collapse.
-# Log returns (~0.008) are scaled to (~0.8) so the loss has meaningful gradients.
-_TARGET_SCALE = 100.0
-
-
 class CNNLSTMPredictor(nn.Module):
-    """Causal dilated CNN + LSTM with temporal attention for market return prediction.
+    """Causal dilated CNN + LSTM with all-layer concat for market return prediction.
 
     Architecture based on three published findings:
     - Bai et al. (2018) arXiv:1803.01271 (TCN): causal dilated convolutions with
       residual connections outperform standard LSTM on sequence tasks; dilation
       rates [1, 2, 4] give a receptive field of 28 steps with only 3 blocks.
-    - Shi et al. (2022) arXiv:2204.02623: temporal attention over all LSTM hidden
-      states (not just the last) significantly improves stock direction accuracy.
     - Chakraborty & Basu (2024) arXiv:2410.12807: hierarchical CNN→LSTM where CNN
       identifies local price-volume patterns, LSTM captures macro temporal dynamics.
 
@@ -1242,9 +1232,9 @@ class CNNLSTMPredictor(nn.Module):
         → permute → (batch, num_filters, seq_len)
         → CausalDilatedBlock × len(dilations)  [dilation=1,2,4 by default]
         → permute → (batch, seq_len, num_filters)
-        → LSTM(num_filters, hidden_dim, num_layers)  → (batch, seq_len, hidden_dim)
-        → Temporal Attention (softmax over time) → (batch, hidden_dim)
-        → Dropout → Linear(hidden_dim, 1) → (batch,)
+        → LSTM(num_filters, hidden_dim, num_layers)
+        → All-layer hidden state concat → (batch, num_layers * hidden_dim)
+        → Dropout → Linear bottleneck(num_layers*hidden_dim, hidden_dim//2, 1) → (batch,)
 
     Effective receptive field with kernel=3, dilations=[1,2,4]:
         2*(3-1)*1 + 2*(3-1)*2 + 2*(3-1)*4 = 4+8+16 = 28 timesteps
@@ -1260,7 +1250,7 @@ class CNNLSTMPredictor(nn.Module):
         dropout: float = 0.3,
         dilations: tuple[int, ...] = (1, 2, 4),
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.01,
+        sign_penalty_weight: float = 0.1,
         device: str = "cpu",
     ):
         super().__init__()
@@ -1271,6 +1261,10 @@ class CNNLSTMPredictor(nn.Module):
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
         self.device = device
+        self.d_model = num_layers * hidden_dim  # all-layer concat output dim
+
+        # FIX: enforce minimum dropout to prevent overfitting with high param count
+        dropout = max(dropout, 0.15)
 
         # Project raw features into filter space before CNN
         self.input_proj = nn.Linear(input_dim, num_filters)
@@ -1289,11 +1283,13 @@ class CNNLSTMPredictor(nn.Module):
             batch_first=True,
         )
 
-        # Temporal attention: learn which timestep is most predictive
-        self.attn = nn.Linear(hidden_dim, 1)
-
         self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_dim, 1)
+        # All-layer concat bottleneck head (matches LSTM architecture)
+        self.fc = nn.Sequential(
+            nn.Linear(num_layers * hidden_dim, hidden_dim // 2),
+            nn.Tanh(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
         self.to(device)
 
         receptive_field = sum(2 * (kernel_size - 1) * d for d in dilations)
@@ -1302,14 +1298,6 @@ class CNNLSTMPredictor(nn.Module):
             "dilations={}, hidden={}, layers={} | receptive_field={}",
             input_dim, num_filters, list(dilations), hidden_dim, num_layers, receptive_field,
         )
-
-    def _temporal_attention(self, lstm_out: torch.Tensor) -> torch.Tensor:
-        """Soft attention over all LSTM hidden states (Shi et al. 2022)."""
-        # lstm_out: (batch, seq_len, hidden_dim)
-        scores = self.attn(lstm_out)              # (batch, seq_len, 1)
-        weights = torch.softmax(scores, dim=1)    # normalise over time axis
-        context = (weights * lstm_out).sum(dim=1) # (batch, hidden_dim)
-        return context
 
     def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
         """
@@ -1326,19 +1314,18 @@ class CNNLSTMPredictor(nn.Module):
         x = self.input_proj(x)            # (batch, seq_len, num_filters)
         x = x.permute(0, 2, 1)           # (batch, num_filters, seq_len)
 
-        # Causal dilated TCN blocks
+        # Causal dilated TCN blocks (each block has internal residual connection)
         for block in self.tcn_blocks:
             x = block(x)                  # (batch, num_filters, seq_len)
 
         x = x.permute(0, 2, 1)           # (batch, seq_len, num_filters)
 
-        # LSTM over all timesteps
-        lstm_out, _ = self.lstm(x)        # (batch, seq_len, hidden_dim)
+        # LSTM — all-layer hidden state concat (matches LSTMPredictor encoding)
+        _, (hidden_state, _) = self.lstm(x)  # hidden: (num_layers, batch, hidden_dim)
+        hidden_all = hidden_state.permute(1, 0, 2)  # (batch, num_layers, hidden_dim)
+        encoding = hidden_all.reshape(hidden_all.size(0), -1)  # (batch, num_layers*hidden_dim)
 
-        # Temporal attention → context vector
-        context = self._temporal_attention(lstm_out)  # (batch, hidden_dim)
-
-        out = self.dropout(context)
+        out = self.dropout(encoding)
         out = self.fc(out)                # (batch, 1)
         return out.squeeze(-1)            # (batch,)
 
@@ -1353,13 +1340,29 @@ class CNNLSTMPredictor(nn.Module):
         learning_rate: float = 1e-3,
         patience: int = 10,
     ) -> dict:
-        """Train CNN-LSTM with early stopping on validation loss."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+        """Train CNN-LSTM with early stopping on validation loss.
+
+        Uses gradient clipping (max_norm=1.0) and ReduceLROnPlateau scheduler
+        following Yang (2025) and Wang et al. (2026) best practices for
+        hybrid CNN-LSTM financial forecasting.
+        """
+        # FIX: AdamW with weight decay to regularize 550K+ params
+        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6,
+        )
 
         X_train = torch.tensor(market_windows_train, dtype=torch.float32, device=self.device)
         y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device) * _TARGET_SCALE
         X_val = torch.tensor(market_windows_val, dtype=torch.float32, device=self.device)
         y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * _TARGET_SCALE
+
+        # FIX: align huber_delta with LSTM — IQR midpoint, tighter floor
+        p25 = float(np.percentile(np.abs(y_train.cpu().numpy()), 25))
+        p75 = float(np.percentile(np.abs(y_train.cpu().numpy()), 75))
+        dynamic_delta = (p25 + p75) / 2.0
+        self.huber_delta = max(dynamic_delta, 0.01)
+        logger.debug("CNN-LSTM huber_delta={:.4f} (IQR midpoint of |targets|)", self.huber_delta)
 
         n_train = len(X_train)
         train_losses: list[float] = []
@@ -1384,6 +1387,7 @@ class CNNLSTMPredictor(nn.Module):
                     sign_penalty_weight=self.sign_penalty_weight,
                 )
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 optimizer.step()
                 epoch_loss += loss.item()
                 n_batches += 1
@@ -1399,11 +1403,13 @@ class CNNLSTMPredictor(nn.Module):
                     sign_penalty_weight=self.sign_penalty_weight,
                 ).item()
             val_losses.append(val_loss)
+            scheduler.step(val_loss)
 
             if (epoch + 1) % 10 == 0:
+                current_lr = optimizer.param_groups[0]["lr"]
                 logger.debug(
-                    "CNN-LSTM epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}",
-                    epoch + 1, epochs, train_losses[-1], val_loss,
+                    "CNN-LSTM epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}, lr={:.2e}",
+                    epoch + 1, epochs, train_losses[-1], val_loss, current_lr,
                 )
 
             if val_loss < best_val_loss:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -238,6 +239,78 @@ class TestBaselineHpoFallback:
         )
 
         assert params == baseline_hpo.get_default_baseline_hpo_params()
+
+    def test_cached_params_backfill_missing_cnn_lstm(self, tmp_path, monkeypatch):
+        from src.benchmark import baseline_hpo
+
+        cache_file = tmp_path / "best_baseline_params_1d.json"
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "lstm": {
+                        "hidden_dim": 64,
+                        "num_layers": 2,
+                        "dropout": 0.2,
+                        "lr": 0.001,
+                        "batch_size": 32,
+                    },
+                    "rf": {
+                        "n_estimators": 200,
+                        "max_depth": 9,
+                        "min_samples_split": 3,
+                        "max_features": "log2",
+                    },
+                    "finetuned_chronos": {
+                        "hidden_dim": 64,
+                        "dropout": 0.2,
+                        "lr": 0.0001,
+                        "sign_penalty_weight": 0.01,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            baseline_hpo,
+            "run_lstm_hpo",
+            lambda *args, **kwargs: pytest.fail("LSTM HPO should not rerun"),
+        )
+        monkeypatch.setattr(
+            baseline_hpo,
+            "run_rf_hpo",
+            lambda *args, **kwargs: pytest.fail("RF HPO should not rerun"),
+        )
+        monkeypatch.setattr(
+            baseline_hpo,
+            "run_finetuned_chronos_hpo",
+            lambda *args, **kwargs: pytest.fail("Chronos HPO should not rerun"),
+        )
+        monkeypatch.setattr(
+            baseline_hpo,
+            "run_cnn_lstm_hpo",
+            lambda *args, **kwargs: {
+                "num_filters": 96,
+                "hidden_dim": 64,
+                "num_layers": 2,
+                "dropout": 0.1,
+                "lr": 0.0007,
+                "batch_size": 32,
+            },
+        )
+
+        params = baseline_hpo.load_or_run_baseline_hpo(
+            tmp_path,
+            market_windows_train=np.zeros((4, 3, 2), dtype=np.float32),
+            targets_train=np.zeros(4, dtype=np.float32),
+            market_windows_val=np.zeros((2, 3, 2), dtype=np.float32),
+            targets_val=np.zeros(2, dtype=np.float32),
+            target_h=1,
+        )
+
+        assert params["cnn_lstm"]["num_filters"] == 96
+        cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        assert cached["cnn_lstm"]["num_filters"] == 96
 # ======================================================================
 # ResidualNewsFusionHead (pure PyTorch)
 # ======================================================================

@@ -1063,8 +1063,12 @@ def main() -> None:
             all_preds["Chronos Fine-Tuned (LoRA)"].append(preds_ft_chronos)
 
             # --- CNN-LSTM (end-to-end CNN + LSTM on market windows) ---
-            cnn_lstm_cache = CACHE_PRED_DIR / f"cnn_lstm_v2_{sym}_{target_h}d_{sh}.npy"
-            cnn_lstm_ckpt = CACHE_CMTF_DIR / f"cnn_lstm_model_v2_{sym}_{target_h}d_{sh}.pt"
+            cnn_lstm_params = baseline_hpo_params.get("cnn_lstm", baseline_hpo_params["lstm"])
+            cnn_lstm_param_hash = hashlib.md5(
+                str(sorted(cnn_lstm_params.items())).encode()
+            ).hexdigest()[:8]
+            cnn_lstm_cache = CACHE_PRED_DIR / f"cnn_lstm_v3_{sym}_{target_h}d_{cnn_lstm_param_hash}_{sh}.npy"
+            cnn_lstm_ckpt = CACHE_CMTF_DIR / f"cnn_lstm_model_v3_{sym}_{target_h}d_{cnn_lstm_param_hash}_{sh}.pt"
             cnn_lstm_ckpt.parent.mkdir(parents=True, exist_ok=True)
 
             cached_cnn_lstm = _load_npy(cnn_lstm_cache)
@@ -1075,10 +1079,10 @@ def main() -> None:
                 logger.info("[{}] Training CNN-LSTM…", sym)
                 cnn_lstm_model = CNNLSTMPredictor(
                     input_dim=splits["train"]["market_windows"].shape[-1],
-                    num_filters=lstm_params.get("hidden_dim", 64),
-                    hidden_dim=lstm_params.get("hidden_dim", 64),
-                    num_layers=lstm_params.get("num_layers", 2),
-                    dropout=lstm_params.get("dropout", 0.3),
+                    num_filters=cnn_lstm_params.get("num_filters", cnn_lstm_params.get("hidden_dim", 64)),
+                    hidden_dim=cnn_lstm_params.get("hidden_dim", 64),
+                    num_layers=cnn_lstm_params.get("num_layers", 2),
+                    dropout=cnn_lstm_params.get("dropout", 0.3),
                     device=device,
                 )
                 cnn_lstm_model.fit(
@@ -1087,8 +1091,8 @@ def main() -> None:
                     splits["val"]["market_windows"],
                     splits["val"]["targets"],
                     epochs=100,
-                    batch_size=lstm_params.get("batch_size", 32),
-                    learning_rate=lstm_params.get("lr", 1e-3),
+                    batch_size=cnn_lstm_params.get("batch_size", 32),
+                    learning_rate=cnn_lstm_params.get("lr", 1e-3),
                     patience=15,
                 )
                 preds_cnn_lstm = cnn_lstm_model.predict(splits["test"]["market_windows"])
@@ -1145,9 +1149,9 @@ def main() -> None:
                     _cl_model = CNNLSTMCMTFPredictor(
                         input_dim=splits["train"]["market_windows"].shape[-1],
                         news_dim=news_dim,
-                        hidden_dim=lstm_params.get("hidden_dim", 64),
-                        num_filters=lstm_params.get("hidden_dim", 64),
-                        num_layers=lstm_params.get("num_layers", 2),
+                        hidden_dim=cnn_lstm_params.get("hidden_dim", 64),
+                        num_filters=cnn_lstm_params.get("num_filters", cnn_lstm_params.get("hidden_dim", 64)),
+                        num_layers=cnn_lstm_params.get("num_layers", 2),
                         dropout=cnn_lstm_cmtf_dropout,
                         fusion_dim=cnn_lstm_cmtf_fusion_dim,
                         fusion_market_dim=cnn_lstm_cmtf_fusion_market_dim,
