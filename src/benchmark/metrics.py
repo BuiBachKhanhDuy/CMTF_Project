@@ -239,13 +239,149 @@ def compute_all(
     horizon: int = 1,
 ) -> dict[str, float]:
     """Compute all metrics and return as a dict."""
+    da_val = directional_accuracy(y_true, y_pred)
+
+    # Effective sample size: corrects for autocorrelation in the target series.
+    # Overlapping H-day windows inflate n by ~H; ESS removes that inflation.
+    # At 20D (autocorr≈0.96) this turns 574 nominal samples into ~23 effective.
+    ac1 = float(np.corrcoef(y_true[:-1], y_true[1:])[0, 1]) if len(y_true) > 2 else 0.0
+    ess = max(1, int(len(y_true) * (1.0 - ac1) / (1.0 + ac1 + 1e-9)))
+
+    # Base-rate DA%: best naive classifier (always predict majority class).
+    # Any model below this threshold has no directional skill.
+    up_frac = float((y_true > 0).mean())
+    base_rate_da = round(max(up_frac, 1.0 - up_frac) * 100, 2)
+
     return {
         "MAE": mae(y_true, y_pred),
         "RMSE": rmse(y_true, y_pred),
-        "DA%": directional_accuracy(y_true, y_pred),
+        "DA%": da_val,
         "Sharpe": sharpe_ratio(y_true, y_pred, horizon=horizon),
         "IC": information_coefficient(y_true, y_pred),
         "Prec": direction_precision(y_true, y_pred),
         "Rec": direction_recall(y_true, y_pred),
         "F1": direction_f1(y_true, y_pred),
+        "ESS": ess,
+        "base_rate_DA%": base_rate_da,
+        "DA_skill%": round(da_val - base_rate_da, 2),
+    }
+
+
+# ======================================================================
+# Statistical significance tests
+# ======================================================================
+
+
+def diebold_mariano_test(
+    y_true: np.ndarray,
+    preds_a: np.ndarray,
+    preds_b: np.ndarray,
+    horizon: int = 1,
+    loss: str = "se",
+) -> dict[str, float]:
+    """Diebold-Mariano test for equal predictive accuracy.
+
+    H0: E[L(e_a)] = E[L(e_b)]  (equal forecast loss)
+    H1: E[L(e_a)] ≠ E[L(e_b)]  (different forecast loss)
+
+    Uses Newey-West HAC standard errors with bandwidth = horizon.
+
+    Args:
+        y_true: (N,) actual values
+        preds_a: (N,) predictions from model A (e.g. baseline)
+        preds_b: (N,) predictions from model B (e.g. CMTF)
+        horizon: forecast horizon (used for HAC bandwidth)
+        loss: "se" (squared error) or "ae" (absolute error)
+
+    Returns:
+        dict with keys: DM_stat, p_value
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    preds_a = np.asarray(preds_a, dtype=float)
+    preds_b = np.asarray(preds_b, dtype=float)
+    n = len(y_true)
+
+    if loss == "se":
+        loss_a = (y_true - preds_a) ** 2
+        loss_b = (y_true - preds_b) ** 2
+    elif loss == "ae":
+        loss_a = np.abs(y_true - preds_a)
+        loss_b = np.abs(y_true - preds_b)
+    else:
+        raise ValueError(f"Unknown loss: {loss}")
+
+    d = loss_a - loss_b  # positive means A is worse
+    d_mean = d.mean()
+
+    # Newey-West HAC variance estimator
+    bandwidth = max(horizon, 1)
+    gamma_0 = np.mean((d - d_mean) ** 2)
+    gamma_sum = 0.0
+    for k in range(1, bandwidth + 1):
+        weight = 1.0 - k / (bandwidth + 1)
+        gamma_k = np.mean((d[k:] - d_mean) * (d[:-k] - d_mean))
+        gamma_sum += 2 * weight * gamma_k
+    var_d = (gamma_0 + gamma_sum) / n
+
+    if var_d < 1e-15:
+        return {"DM_stat": 0.0, "p_value": 1.0}
+
+    dm_stat = d_mean / np.sqrt(var_d)
+    p_value = 2.0 * (1.0 - stats.norm.cdf(abs(dm_stat)))
+
+    return {"DM_stat": float(dm_stat), "p_value": float(p_value)}
+
+
+def paired_bootstrap_da(
+    y_true: np.ndarray,
+    preds_a: np.ndarray,
+    preds_b: np.ndarray,
+    n_bootstrap: int = 10000,
+    seed: int = 42,
+) -> dict[str, float]:
+    """Paired bootstrap test for directional accuracy difference.
+
+    Resamples (with replacement) and computes DA(B) - DA(A) for each
+    bootstrap sample. Returns mean delta, 95% CI, and empirical p-value.
+
+    Args:
+        y_true: (N,) actual values
+        preds_a: (N,) predictions from model A (baseline)
+        preds_b: (N,) predictions from model B (CMTF)
+        n_bootstrap: number of bootstrap iterations
+        seed: random seed
+
+    Returns:
+        dict with: delta_da (mean), ci_low, ci_high, p_value
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    preds_a = np.asarray(preds_a, dtype=float)
+    preds_b = np.asarray(preds_b, dtype=float)
+    n = len(y_true)
+    rng = np.random.RandomState(seed)
+
+    nonzero = y_true != 0
+    correct_a = (np.sign(y_true) == np.sign(preds_a)) & nonzero
+    correct_b = (np.sign(y_true) == np.sign(preds_b)) & nonzero
+
+    deltas = np.empty(n_bootstrap, dtype=float)
+    for i in range(n_bootstrap):
+        idx = rng.randint(0, n, size=n)
+        nz_sum = nonzero[idx].sum()
+        if nz_sum == 0:
+            deltas[i] = 0.0
+            continue
+        da_a = correct_a[idx].sum() / nz_sum * 100
+        da_b = correct_b[idx].sum() / nz_sum * 100
+        deltas[i] = da_b - da_a
+
+    ci_low, ci_high = np.percentile(deltas, [2.5, 97.5])
+    # Two-sided p-value: fraction of bootstrap samples where delta ≤ 0
+    p_value = float(np.mean(deltas <= 0))
+
+    return {
+        "delta_da": float(deltas.mean()),
+        "ci_low": float(ci_low),
+        "ci_high": float(ci_high),
+        "p_value": float(p_value),
     }

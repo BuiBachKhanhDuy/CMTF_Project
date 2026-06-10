@@ -16,7 +16,7 @@ if __name__ == "__main__":
         "interval": "1D",
         "ohlcv_source": "KBS",
         "news_source": "web",
-        "news_sources": ("vnexpress", "cafef_banking", "vietstock"),
+        "news_sources": ("vnexpress", "cafef_banking", "vietstock", "google_news"),
         "news_use_cache": False,
         "news_export_trace": True,
         "news_similarity_threshold": 85.0,

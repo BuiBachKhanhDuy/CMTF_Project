@@ -9,13 +9,11 @@ from transformers import T5Config, T5ForConditionalGeneration
 
 from src.benchmark.baseline_models import (
     CNNLSTMPredictor,
-    ChronosLoRAPredictor,
     FineTunedChronosPredictor,
     LSTMPredictor,
     RandomForestRegressor_Wrapper,
     sign_aware_huber_loss,
 )
-from src.benchmark.cnn_lstm_cmtf import CNNLSTMCMTFPredictor
 
 
 class _DummyChronosPredictor:
@@ -62,14 +60,6 @@ class _DummyChronosModel(torch.nn.Module):
     @property
     def device(self):
         return next(self.model.parameters()).device
-
-
-class _DummyChronosLoRAPredictor:
-    def __init__(self):
-        self.d_model = 32
-        self.pipeline = type("Pipeline", (), {})()
-        self.pipeline.tokenizer = _DummyTokenizer()
-        self.pipeline.model = _DummyChronosModel()
 
 
 def _make_multivariate_data():
@@ -258,196 +248,3 @@ def test_finetuned_chronos_reuses_cached_embeddings_across_repeated_calls():
 
     assert chronos.calls == 3
 
-
-def test_chronos_lora_fit_predict_checkpoint_round_trip():
-    pytest.importorskip("peft")
-    data = _make_multivariate_data()
-    chronos = _DummyChronosLoRAPredictor()
-    model = ChronosLoRAPredictor(
-        chronos,
-        hidden_dim=16,
-        dropout=0.0,
-        market_input_dim=data["market_windows_train"].shape[-1],
-        market_hidden_dim=12,
-        lora_rank=4,
-        lora_alpha=8,
-        lora_dropout=0.0,
-        device="cpu",
-    )
-
-    history = model.fit(
-        data["close_train"],
-        data["y_train"],
-        data["close_val"],
-        data["y_val"],
-        market_windows_train=data["market_windows_train"],
-        market_windows_val=data["market_windows_val"],
-        epochs=2,
-        batch_size=8,
-        learning_rate=1e-3,
-        patience=2,
-    )
-    preds_before = model.predict(data["close_test"], market_windows=data["market_windows_test"])
-    checkpoint = model.checkpoint_state()
-
-    reloaded = ChronosLoRAPredictor(
-        chronos,
-        hidden_dim=16,
-        dropout=0.0,
-        market_input_dim=data["market_windows_train"].shape[-1],
-        market_hidden_dim=12,
-        lora_rank=4,
-        lora_alpha=8,
-        lora_dropout=0.0,
-        device="cpu",
-    )
-    reloaded.load_checkpoint_state(checkpoint)
-    preds_after = reloaded.predict(data["close_test"], market_windows=data["market_windows_test"])
-    trainable_names = [name for name, param in model.transformer.named_parameters() if param.requires_grad]
-
-    assert preds_before.shape == (5,)
-    assert np.allclose(preds_before, preds_after)
-    assert np.isfinite(history["best_val_loss"])
-    assert trainable_names
-    assert all("encoder." in name for name in trainable_names)
-
-
-def test_cnn_lstm_cmtf_fit_predict_checkpoint_round_trip():
-    data = _make_multivariate_data()
-    rng = np.random.default_rng(11)
-    news_train = rng.normal(size=(24, 10, 16)).astype(np.float32)
-    news_val = rng.normal(size=(8, 10, 16)).astype(np.float32)
-    news_test = rng.normal(size=(5, 10, 16)).astype(np.float32)
-    news_mask_train = np.zeros((24, 10), dtype=bool)
-    news_mask_val = np.zeros((8, 10), dtype=bool)
-    news_mask_test = np.zeros((5, 10), dtype=bool)
-    news_mask_test[:, -2:] = True
-    news_test[:, -2:, :] = 0.0
-
-    model = CNNLSTMCMTFPredictor(
-        input_dim=data["market_windows_train"].shape[-1],
-        news_dim=16,
-        hidden_dim=16,
-        num_filters=16,
-        num_layers=2,
-        fusion_dim=16,
-        fusion_market_dim=16,
-        n_heads=2,
-        dropout=0.0,
-        sign_penalty_weight=0.05,
-        seq_len=data["market_windows_train"].shape[1],
-        device="cpu",
-    )
-
-    history = model.fit(
-        data["market_windows_train"],
-        news_train,
-        data["y_train"],
-        data["market_windows_val"],
-        news_val,
-        data["y_val"],
-        news_mask_train=news_mask_train,
-        news_mask_val=news_mask_val,
-        epochs=2,
-        batch_size=8,
-        patience=2,
-        seed=11,
-        freeze_encoder_epochs=0,
-    )
-    preds_before = model.predict(
-        data["market_windows_test"],
-        news_test,
-        news_mask_test=news_mask_test,
-    )
-    checkpoint = model.get_checkpoint()
-
-    reloaded = CNNLSTMCMTFPredictor(
-        input_dim=data["market_windows_train"].shape[-1],
-        news_dim=16,
-        hidden_dim=16,
-        num_filters=16,
-        num_layers=2,
-        fusion_dim=16,
-        fusion_market_dim=16,
-        n_heads=2,
-        dropout=0.0,
-        sign_penalty_weight=0.05,
-        seq_len=data["market_windows_train"].shape[1],
-        device="cpu",
-    )
-    reloaded.load_checkpoint(checkpoint)
-    preds_after = reloaded.predict(
-        data["market_windows_test"],
-        news_test,
-        news_mask_test=news_mask_test,
-    )
-
-    assert preds_before.shape == (5,)
-    assert np.allclose(preds_before, preds_after)
-    assert np.isfinite(history["val_loss"][-1])
-    assert checkpoint["is_fitted"] is True
-
-
-def test_cnn_lstm_cmtf_zero_news_matches_cnn_lstm_baseline():
-    data = _make_multivariate_data()
-    baseline = CNNLSTMPredictor(
-        input_dim=data["market_windows_train"].shape[-1],
-        num_filters=16,
-        hidden_dim=16,
-        num_layers=2,
-        dropout=0.0,
-        device="cpu",
-    )
-    baseline.fit(
-        data["market_windows_train"],
-        data["y_train"],
-        data["market_windows_val"],
-        data["y_val"],
-        epochs=2,
-        batch_size=8,
-        learning_rate=1e-3,
-        patience=2,
-    )
-
-    seq_len = data["market_windows_test"].shape[1]
-    zero_news = np.zeros((len(data["market_windows_test"]), seq_len, 16), dtype=np.float32)
-    zero_news_mask = np.ones((len(data["market_windows_test"]), seq_len), dtype=bool)
-
-    baseline_preds = baseline.predict(
-        data["market_windows_test"],
-    )
-
-    cmtf = CNNLSTMCMTFPredictor(
-        input_dim=data["market_windows_train"].shape[-1],
-        news_dim=16,
-        hidden_dim=16,
-        num_filters=16,
-        num_layers=2,
-        fusion_dim=16,
-        fusion_market_dim=16,
-        n_heads=2,
-        dropout=0.0,
-        sign_penalty_weight=0.05,
-        seq_len=seq_len,
-        device="cpu",
-    )
-    baseline_state = baseline.checkpoint_state()["state_dict"]
-    cmtf.load_state_dict(
-        {
-            (
-                key.replace("fc.", "regression_head.")
-                if key.startswith("fc.") else key
-            ): value
-            for key, value in baseline_state.items()
-        },
-        strict=False,
-    )
-    cmtf.is_fitted = True
-
-    preds = cmtf.predict(
-        data["market_windows_test"],
-        zero_news,
-        news_mask_test=zero_news_mask,
-    )
-
-    assert np.allclose(preds, baseline_preds, atol=1e-6, rtol=0.0)

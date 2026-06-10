@@ -1,12 +1,11 @@
-"""Run model benchmark: all baselines + CNN-LSTM CMTF.
+"""Run model benchmark: all baselines.
 
-Trains and evaluates: LSTM, Random Forest, Chronos LoRA, CNN-LSTM, CNN-LSTM CMTF.
+Trains and evaluates: LSTM, Random Forest, Chronos Zero-Shot, CNN-LSTM.
 
 Usage:
     python run_model_benchmark.py                  # full run (use caches)
     python run_model_benchmark.py --stage data     # rebuild dataset only
     python run_model_benchmark.py --stage predict  # rerun models, reuse data
-    python run_model_benchmark.py --stage cmtf     # retrain CMTF only
     python run_model_benchmark.py --stage hpo      # run Optuna HPO for baselines
     python run_model_benchmark.py --stage plot     # regenerate plots from CSVs
 """
@@ -44,16 +43,10 @@ from src.pipeline import run_pipeline
 from src.pipeline.data_fetcher import VnstockDataFetcher
 from src.benchmark.metrics import compute_all, compute_composite_metrics
 from src.benchmark.chronos_encoder import ChronosMarketPredictor
-from src.benchmark.cnn_lstm_cmtf import (
-    CNNLSTMCMTFPredictor,
-    CNNLSTM_CMTF_VERSION,
-)
 from src.benchmark.baseline_models import (
-    ChronosLoRAPredictor,
     CNNLSTMPredictor,
     LSTMPredictor,
     RandomForestRegressor_Wrapper,
-    FineTunedChronosPredictor,
 )
 from src.benchmark.baseline_hpo import get_default_baseline_hpo_params, load_or_run_baseline_hpo
 
@@ -61,7 +54,7 @@ RESULTS_DIR = Path("results")
 FIGURES_DIR = RESULTS_DIR / "figures"
 CACHE_EMB_DIR = Path("cache/chronos_emb")
 CACHE_PRED_DIR = Path("cache/predictions")
-CACHE_CMTF_DIR = Path("cache/cmtf_models")
+CACHE_MODEL_DIR = Path("cache/cmtf_models")
 CACHE_HPO_DIR = Path("cache/optuna")
 
 
@@ -84,138 +77,6 @@ def _load_npy(path: Path) -> np.ndarray | None:
     if path.exists():
         return np.load(path)
     return None
-
-
-# ======================================================================
-# Chronos tokenization helpers
-# ======================================================================
-
-def _tokenize_chronos_windows(
-    chronos: ChronosMarketPredictor,
-    close_windows: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Tokenize close windows as log-returns for the Chronos encoder.
-
-    Creates a temporary LoRA backbone (no adapter weights loaded) solely for
-    its tokenizer — the LoRA parameters themselves are never used here.
-
-    Returns:
-        token_ids: (N, n_tokens) integer token ids
-        attention_mask: (N, n_tokens) binary attention mask
-    """
-    from src.benchmark.baseline_models import ChronosLoRAEncoderBackbone
-    backbone = ChronosLoRAEncoderBackbone(chronos, device=chronos.device)
-    return backbone.tokenize_windows(close_windows)
-
-
-def _load_or_cache_chronos_tokens(
-    chronos: ChronosMarketPredictor,
-    cache_base: Path,
-    close_windows_train: np.ndarray,
-    close_windows_val: np.ndarray,
-    close_windows_test: np.ndarray,
-    sym: str,
-) -> dict[str, np.ndarray]:
-    """Load tokenized close windows from cache or compute and save them.
-
-    Returns:
-        dict with keys train_ids, train_mask, val_ids, val_mask, test_ids, test_mask
-    """
-    keys = ("train_ids", "train_mask", "val_ids", "val_mask", "test_ids", "test_mask")
-    paths = {k: Path(str(cache_base) + f"_{k}.npy") for k in keys}
-
-    if all(p.exists() for p in paths.values()):
-        logger.info("[{}] Loading Chronos tokens from cache", sym)
-        return {k: np.load(paths[k]) for k in keys}
-
-    logger.info("[{}] Tokenizing close windows for Chronos LoRA…", sym)
-    train_ids, train_mask = _tokenize_chronos_windows(chronos, close_windows_train)
-    val_ids, val_mask = _tokenize_chronos_windows(chronos, close_windows_val)
-    test_ids, test_mask = _tokenize_chronos_windows(chronos, close_windows_test)
-
-    result = {
-        "train_ids": train_ids, "train_mask": train_mask,
-        "val_ids": val_ids, "val_mask": val_mask,
-        "test_ids": test_ids, "test_mask": test_mask,
-    }
-    cache_base.parent.mkdir(parents=True, exist_ok=True)
-    for k, arr in result.items():
-        np.save(paths[k], arr)
-    logger.info("[{}] Chronos tokens cached", sym)
-    return result
-
-
-def _build_ft_chronos_model(
-    chronos: ChronosMarketPredictor,
-    ft_params: dict,
-    device: str,
-) -> ChronosLoRAPredictor:
-    """Instantiate a ChronosLoRAPredictor from hyperparameter dict."""
-    return ChronosLoRAPredictor(
-        chronos,
-        hidden_dim=ft_params.get("hidden_dim", 64),
-        dropout=ft_params.get("dropout", 0.2),
-        sign_penalty_weight=ft_params.get("sign_penalty_weight", 0.01),
-        device=device,
-    )
-
-
-def _load_or_train_ft_chronos_model(
-    chronos: ChronosMarketPredictor,
-    sym: str,
-    target_h: int,
-    ft_params: dict,
-    split_hash: str,
-    sym_tokens: dict[str, np.ndarray],
-    splits: dict[str, dict[str, np.ndarray]],
-    device: str,
-    stage: str | None,
-    return_test_predictions: bool = True,
-) -> tuple[ChronosLoRAPredictor, np.ndarray | None, str]:
-    """Load or train the fine-tuned Chronos LoRA model for one symbol/horizon.
-
-    Returns:
-        (model, test_preds, ft_param_hash)
-        test_preds is None when return_test_predictions=False.
-    """
-    ft_param_hash = hashlib.md5(
-        str(sorted(ft_params.items())).encode()
-    ).hexdigest()[:8]
-    ckpt_path = (
-        CACHE_CMTF_DIR
-        / f"ft_chronos_lora_{sym}_{target_h}d_{ft_param_hash}_{split_hash}.pt"
-    )
-    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-
-    ft_model = _build_ft_chronos_model(chronos, ft_params, device)
-
-    if ckpt_path.exists() and stage not in ("predict", "cmtf", "hpo"):
-        ft_model.load_checkpoint_state(
-            torch.load(ckpt_path, map_location=device, weights_only=False)
-        )
-        logger.info("[{}] Fine-tuned Chronos loaded from checkpoint", sym)
-    else:
-        logger.info("[{}] Training fine-tuned Chronos LoRA ({}D)…", sym, target_h)
-        ft_model.fit_tokenized(
-            sym_tokens["train_ids"], sym_tokens["train_mask"],
-            splits["train"]["targets"],
-            sym_tokens["val_ids"], sym_tokens["val_mask"],
-            splits["val"]["targets"],
-            epochs=20,
-            batch_size=ft_params.get("batch_size", 32),
-            learning_rate=ft_params.get("lr", 1e-4),
-            patience=5,
-        )
-        torch.save(ft_model.checkpoint_state(), ckpt_path)
-        logger.info("[{}] Fine-tuned Chronos checkpoint saved", sym)
-
-    test_preds: np.ndarray | None = None
-    if return_test_predictions:
-        test_preds = ft_model.predict_tokenized(
-            sym_tokens["test_ids"], sym_tokens["test_mask"]
-        )
-
-    return ft_model, test_preds, ft_param_hash
 
 
 # ======================================================================
@@ -261,7 +122,7 @@ def extract_per_symbol_data(
         raw_c = sym_df["raw_close"].values.astype(np.float64)
 
         if n < seq_len + 1:
-            logger.warning("{} has only {} rows, need {} — skipping", sym, n, seq_len + 1)
+            logger.warning("{} has only {} rows, need {} â€” skipping", sym, n, seq_len + 1)
             continue
 
         # News embeddings
@@ -277,7 +138,7 @@ def extract_per_symbol_data(
         # Forward returns (target)
         target_col_name = f"fwd_ret_{int(target_horizon_days)}d"
         if target_col_name not in sym_df.columns:
-            logger.warning("{} missing target column {} — skipping", sym, target_col_name)
+            logger.warning("{} missing target column {} â€” skipping", sym, target_col_name)
             continue
         target_col = sym_df[target_col_name].values.astype(np.float32)
 
@@ -325,7 +186,7 @@ def extract_per_symbol_data(
             "targets": np.array(targets),
             "times": np.array(times),
         }
-        logger.info("{} → {} samples extracted", sym, len(targets))
+        logger.info("{} â†’ {} samples extracted", sym, len(targets))
 
     return result
 
@@ -391,101 +252,54 @@ def split_by_date(
     return splits
 
 
+def _impute_splits_key(
+    splits: dict[str, dict[str, np.ndarray]],
+    key: str,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Impute NaNs in splits[*][key] using train-only feature means.
+
+    Works for any ndim array: uses all axes except the last (feature dim)
+    to compute per-feature means from training data only.
+    """
+    if key not in splits.get("train", {}):
+        return splits
+
+    train_arr = splits["train"][key]
+    if train_arr.size == 0:
+        return splits
+
+    reduce_axes = tuple(range(train_arr.ndim - 1))
+    feature_means = np.nanmean(train_arr, axis=reduce_axes)
+    feature_means = np.where(np.isnan(feature_means), 0.0, feature_means).astype(np.float32)
+    fill_shape = (1,) * (train_arr.ndim - 1) + (feature_means.shape[0],)
+    fill_values = feature_means.reshape(fill_shape)
+
+    for split_name in ("train", "val", "test"):
+        arr = splits[split_name].get(key)
+        if arr is None or arr.size == 0:
+            continue
+        splits[split_name][key] = np.where(np.isnan(arr), fill_values, arr).astype(np.float32)
+
+    return splits
+
+
 def impute_tabular_splits(
     splits: dict[str, dict[str, np.ndarray]],
 ) -> dict[str, dict[str, np.ndarray]]:
-    """Impute NaNs in market_tabular using train-only column means.
-
-    This avoids leakage while keeping validation/test aligned with train stats.
-    """
-    if "market_tabular" not in splits.get("train", {}):
-        return splits
-
-    train_tab = splits["train"]["market_tabular"]
-    if train_tab.size == 0:
-        return splits
-
-    col_means = np.nanmean(train_tab, axis=0)
-    col_means = np.where(np.isnan(col_means), 0.0, col_means).astype(np.float32)
-
-    for split_name in ("train", "val", "test"):
-        tab = splits[split_name].get("market_tabular")
-        if tab is None or tab.size == 0:
-            continue
-        splits[split_name]["market_tabular"] = np.where(
-            np.isnan(tab),
-            col_means,
-            tab,
-        ).astype(np.float32)
-
-    return splits
+    """Impute NaNs in market_tabular using train-only column means."""
+    return _impute_splits_key(splits, "market_tabular")
 
 
 def impute_market_window_splits(
     splits: dict[str, dict[str, np.ndarray]],
 ) -> dict[str, dict[str, np.ndarray]]:
-    """Impute NaNs in market_windows using train-only feature means.
-
-    Market windows feed the LSTM and Random Forest baselines directly, so they
-    need the same train-only NaN handling as the tabular branch.
-    """
-    if "market_windows" not in splits.get("train", {}):
-        return splits
-
-    train_windows = splits["train"]["market_windows"]
-    if train_windows.size == 0:
-        return splits
-
-    reduce_axes = tuple(range(train_windows.ndim - 1))
-    feature_means = np.nanmean(train_windows, axis=reduce_axes)
-    feature_means = np.where(np.isnan(feature_means), 0.0, feature_means).astype(np.float32)
-    fill_shape = (1,) * (train_windows.ndim - 1) + (feature_means.shape[0],)
-    fill_values = feature_means.reshape(fill_shape)
-
-    for split_name in ("train", "val", "test"):
-        windows = splits[split_name].get("market_windows")
-        if windows is None or windows.size == 0:
-            continue
-        splits[split_name]["market_windows"] = np.where(
-            np.isnan(windows),
-            fill_values,
-            windows,
-        ).astype(np.float32)
-
-    return splits
+    """Impute NaNs in market_windows using train-only feature means."""
+    return _impute_splits_key(splits, "market_windows")
 
 
 # ======================================================================
 # Visualization
 # ======================================================================
-
-def plot_cmtf_vs_actual(
-    y_true: np.ndarray,
-    cmtf_preds: np.ndarray,
-    title: str,
-    save_path: Path,
-    cnn_lstm_preds: np.ndarray | None = None,
-) -> None:
-    """Line chart: CNN-LSTM and CMTF predictions vs actual returns."""
-    fig, ax = plt.subplots(figsize=(14, 5))
-    x = np.arange(len(y_true))
-    ax.plot(x, y_true, label="Actual", color="black", linewidth=1.2, alpha=0.8)
-    if cnn_lstm_preds is not None:
-        ax.plot(x, cnn_lstm_preds, label="CNN-LSTM", linewidth=1.0, alpha=0.75,
-                color="#059669")
-    ax.plot(x, cmtf_preds, label="CNN-LSTM CMTF", linewidth=1.0, alpha=0.85,
-            color="#4f46e5")
-    ax.fill_between(x, y_true, cmtf_preds, alpha=0.08, color="#4f46e5")
-    ax.axhline(0, color="grey", lw=0.6, ls="--", alpha=0.5)
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.set_xlabel("Test Sample Index")
-    ax.set_ylabel("Log Return")
-    ax.legend(fontsize=10, loc="upper right")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
-    plt.close(fig)
-    logger.info("Saved plot → {}", save_path)
 
 
 def plot_ablation(results_df: pd.DataFrame, save_path: Path) -> None:
@@ -500,11 +314,8 @@ def plot_ablation(results_df: pd.DataFrame, save_path: Path) -> None:
     # Shorten labels for display
     label_map = {
         "Chronos Zero-Shot": "Zero-Shot",
-        "CMTF": "CMTF",
-        "CNN-LSTM CMTF": "CNN+LSTM CMTF",
         "LSTM Baseline": "LSTM",
         "Random Forest Baseline": "RF",
-        "Chronos Fine-Tuned (LoRA)": "Chronos FT LoRA",
         "CNN-LSTM": "CNN-LSTM",
     }
     short_labels = [label_map.get(exp, exp[:15]) for exp in experiments]
@@ -549,11 +360,11 @@ def plot_ablation(results_df: pd.DataFrame, save_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logger.info("Saved ablation chart → {}", save_path)
+    logger.info("Saved ablation chart â†’ {}", save_path)
 
 
 def plot_per_symbol(results_df: pd.DataFrame, save_path: Path) -> None:
-    """Per-symbol heatmap: color-coded table of all metrics × experiments × symbols."""
+    """Per-symbol heatmap: color-coded table of all metrics Ã— experiments Ã— symbols."""
     metrics = ["MAE", "RMSE", "DA%", "Sharpe", "IC"]
     # Higher-is-better for DA%, Sharpe, IC; lower-is-better for MAE, RMSE
     higher_better = {"MAE": False, "RMSE": False, "DA%": True, "Sharpe": True, "IC": True}
@@ -629,7 +440,7 @@ def plot_per_symbol(results_df: pd.DataFrame, save_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logger.info("Saved per-symbol heatmap → {}", save_path)
+    logger.info("Saved per-symbol heatmap â†’ {}", save_path)
 
 
 # ======================================================================
@@ -639,15 +450,9 @@ def plot_per_symbol(results_df: pd.DataFrame, save_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chronos benchmark")
     parser.add_argument(
-        "--stage", choices=["data", "predict", "cmtf", "hpo", "plot"],
+        "--stage", choices=["data", "predict", "hpo", "plot"],
         default=None,
         help="Run only a specific stage (default: full run using caches)",
-    )
-    parser.add_argument(
-        "--comparison-set",
-        choices=["base", "full"],
-        default="base",
-        help="Benchmark scope: 'base' skips all CMTF models, 'full' includes CMTF.",
     )
     parser.add_argument(
         "--horizons",
@@ -657,11 +462,6 @@ def main() -> None:
     )
     args = parser.parse_args()
     stage = args.stage  # None = full run
-    comparison_set = args.comparison_set
-    include_cmtf = comparison_set == "full"
-
-    if stage in ("cmtf", "hpo") and not include_cmtf:
-        raise ValueError("CMTF-only stages require --comparison-set full")
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -717,14 +517,14 @@ def main() -> None:
             suffix = f"{target_h}d"
             csv_path = RESULTS_DIR / f"chronos_benchmark_{suffix}.csv"
             if not csv_path.exists():
-                logger.warning("No results CSV for {}D — skipping plot", target_h)
+                logger.warning("No results CSV for {}D â€” skipping plot", target_h)
                 continue
             results_df = pd.read_csv(csv_path)
             avg_df = results_df[results_df["Symbol"] == "AVG"]
             plot_ablation(avg_df, FIGURES_DIR / f"model_{suffix}.png")
             plot_per_symbol(results_df, FIGURES_DIR / f"per_symbol_heatmap_{suffix}.png")
             logger.info("Plots regenerated for {}D", target_h)
-        logger.info("═══ Plot-only mode complete ═══")
+        logger.info("â•â•â• Plot-only mode complete â•â•â•")
         return
 
     # ----- 3. Device & feature flags -----
@@ -735,11 +535,11 @@ def main() -> None:
             run_cfg = {**config, "target_horizon_days": target_h}
             logger.info("Building dataset for target horizon {}D", target_h)
             run_pipeline(run_cfg)
-        logger.info("═══ Data-only mode complete ═══")
+        logger.info("â•â•â• Data-only mode complete â•â•â•")
         return
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info("═══ Loading Chronos (device={}) ═══", device)
+    logger.info("â•â•â• Loading Chronos (device={}) â•â•â•", device)
     chronos = ChronosMarketPredictor(device=device)
     use_tabular_market_features = bool(config.get("use_tabular_market_features", False))
     if use_tabular_market_features:
@@ -751,7 +551,7 @@ def main() -> None:
             "Tabular market features disabled; trainable baselines fall back to close-only inputs"
         )
 
-    logger.info("═══ Fetching raw OHLCV for Chronos ═══")
+    logger.info("â•â•â• Fetching raw OHLCV for Chronos â•â•â•")
     fetcher = VnstockDataFetcher()
     raw_ohlcv = fetcher.fetch_multi_symbol(
         config["symbols"], config["start"], config["end"],
@@ -760,7 +560,7 @@ def main() -> None:
     # ----- 4. Run experiments for each target horizon -----
     horizons = [int(h) for h in config.get("target_horizons_days", [1])]
     for target_h in horizons:
-        logger.info("═══ Horizon {}D benchmark ═══", target_h)
+        logger.info("â•â•â• Horizon {}D benchmark â•â•â•", target_h)
         run_cfg = {**config, "target_horizon_days": target_h}
 
         logger.info("Building dataset for target horizon {}D", target_h)
@@ -774,27 +574,31 @@ def main() -> None:
             target_horizon_days=target_h,
         )
 
+        logger.info("Extracting 365-day close windows for Chronos zero-shot ({}D)", target_h)
+        per_symbol_365 = extract_per_symbol_data(
+            dataset,
+            raw_ohlcv,
+            seq_len=365,
+            target_horizon_days=target_h,
+        )
+
         all_results: list[dict] = []
         all_preds: dict[str, list[np.ndarray]] = {
             "Chronos Zero-Shot": [],
             "LSTM Baseline": [],
             "Random Forest Baseline": [],
-            "Chronos Fine-Tuned (LoRA)": [],
             "CNN-LSTM": [],
         }
-        if include_cmtf:
-            all_preds["CNN-LSTM CMTF"] = []
         all_y_true: list[np.ndarray] = []
 
-        # ---- Phase 1: splits, zero-shot anchor, token cache ----
+        # ---- Phase 1: splits, zero-shot anchor ----
         _all_splits: dict[str, dict[str, dict[str, np.ndarray]]] = {}
-        _all_tokens: dict[str, dict[str, np.ndarray]] = {}
         _all_sh: dict[str, str] = {}
         _all_zs_val_preds: dict[str, np.ndarray] = {}
         _sym_order: list[str] = []  # track order for indexing
 
         for sym, data in per_symbol.items():
-            logger.info("━━━ Benchmark: {} ({}D) ━━━", sym, target_h)
+            logger.info("â”â”â” Benchmark: {} ({}D) â”â”â”", sym, target_h)
 
             splits = split_by_date(
                 {k: v for k, v in data.items() if k != "times"},
@@ -806,7 +610,7 @@ def main() -> None:
             splits = impute_market_window_splits(splits)
             splits = impute_tabular_splits(splits)
 
-            # News coverage summary — check the *last* bar in each window
+            # News coverage summary â€” check the *last* bar in each window
             # (the current bar), not the entire 30-bar lookback window.
             if config.get("log_news_coverage", True) and "news_embs" in data:
                 total_bars = len(data["times"])
@@ -825,7 +629,7 @@ def main() -> None:
                 )
 
             if len(splits["test"]["targets"]) == 0:
-                logger.warning("{}: no test samples — skipping", sym)
+                logger.warning("{}: no test samples â€” skipping", sym)
                 continue
 
             y_test = splits["test"]["targets"]
@@ -882,16 +686,6 @@ def main() -> None:
             all_results.append(metrics_zs)
             all_preds["Chronos Zero-Shot"].append(preds_zs)
 
-            token_cache_base = CACHE_EMB_DIR / f"chronos_lora_logret_tokens_{sym}_{target_h}d_{sh}"
-            _all_tokens[sym] = _load_or_cache_chronos_tokens(
-                chronos,
-                token_cache_base,
-                splits["train"]["close_windows"],
-                splits["val"]["close_windows"],
-                splits["test"]["close_windows"],
-                sym,
-            )
-
         # ---- Phase 1 complete; run baseline HPO (once per horizon) ----
         baseline_hpo_params = None
         if _sym_order:
@@ -911,33 +705,23 @@ def main() -> None:
                 market_tabular_val=_baseline_splits["val"].get("market_tabular") if use_tabular_market_features else None,
                 target_h=target_h,
                 device=device,
-                fallback_to_defaults=not include_cmtf,
+                fallback_to_defaults=True,
             )
         if baseline_hpo_params is None:
             baseline_hpo_params = get_default_baseline_hpo_params()
 
-        # CNN-LSTM CMTF fusion defaults
-        cmtf_hpo_params: dict = {
-            "fusion_dim": 128,
-            "n_heads": 4,
-            "dropout": 0.2,
-            "lr": 5e-4,
-            "dir_penalty_weight": 0.01,
-        }
-
-        # ---- Phase 2: trainable baselines and optional CMTF ----
+        # ---- Phase 2: trainable baselines ----
         _ensemble_seeds = [42, 123, 456]
         for sym in _sym_order:
             splits = _all_splits[sym]
             sh = _all_sh[sym]
-            sym_tokens = _all_tokens[sym]
             y_test = splits["test"]["targets"]
 
-            # ---- Baseline: LSTM (trained early — reused by CMTF & Hybrid) ----
+            # ---- Baseline: LSTM ----
             lstm_cache = CACHE_PRED_DIR / f"lstm_{sym}_{target_h}d_{sh}.npy"
             lstm_params = baseline_hpo_params["lstm"]
             lstm_param_hash = hashlib.md5(str(sorted(lstm_params.items())).encode()).hexdigest()[:8]
-            lstm_backbone_ckpt = CACHE_CMTF_DIR / f"lstm_backbone_v3_{sym}_{target_h}d_{lstm_param_hash}_{sh}.pt"
+            lstm_backbone_ckpt = CACHE_MODEL_DIR / f"lstm_backbone_v3_{sym}_{target_h}d_{lstm_param_hash}_{sh}.pt"
             lstm_backbone_ckpt.parent.mkdir(parents=True, exist_ok=True)
             lstm_model = LSTMPredictor(
                 input_dim=splits["train"]["market_windows"].shape[-1],
@@ -957,7 +741,7 @@ def main() -> None:
                     torch.load(lstm_backbone_ckpt, map_location=device, weights_only=False)
                 )
             else:
-                logger.info("[{}] Training LSTM with HPO params…", sym)
+                logger.info("[{}] Training LSTM with HPO paramsâ€¦", sym)
                 lstm_model.fit(
                     splits["train"]["market_windows"],
                     splits["train"]["targets"],
@@ -996,7 +780,7 @@ def main() -> None:
                 logger.info("[{}] Random Forest loaded from cache", sym)
                 preds_rf = cached_rf
             else:
-                logger.info("[{}] Training Random Forest with HPO params…", sym)
+                logger.info("[{}] Training Random Forest with HPO paramsâ€¦", sym)
                 rf_params = baseline_hpo_params["rf"]
                 rf_model = RandomForestRegressor_Wrapper(
                     n_estimators=rf_params.get("n_estimators", 100),
@@ -1029,38 +813,6 @@ def main() -> None:
             })
             all_results.append(metrics_rf)
             all_preds["Random Forest Baseline"].append(preds_rf)
-            
-            # --- Fine-tuned Chronos Baseline ---
-            ft_chronos_model, preds_ft_chronos, _ = _load_or_train_ft_chronos_model(
-                chronos,
-                sym=sym,
-                target_h=target_h,
-                ft_params=baseline_hpo_params["finetuned_chronos"],
-                split_hash=sh,
-                sym_tokens=sym_tokens,
-                splits=splits,
-                device=device,
-                stage=stage,
-                return_test_predictions=True,
-            )
-
-            metrics_ft_chronos = compute_all(y_test, preds_ft_chronos, horizon=target_h)
-            metrics_ft_chronos.update(
-                compute_composite_metrics(
-                    y_test,
-                    preds_ft_chronos,
-                    horizon=target_h,
-                    anchor_pred=all_preds["Chronos Zero-Shot"][_sym_order.index(sym)],
-                )
-            )
-            metrics_ft_chronos.update({
-                "Experiment": "Chronos Fine-Tuned (LoRA)",
-                "ComparisonSet": "fairness",
-                "Symbol": sym,
-                "TargetHorizonD": target_h,
-            })
-            all_results.append(metrics_ft_chronos)
-            all_preds["Chronos Fine-Tuned (LoRA)"].append(preds_ft_chronos)
 
             # --- CNN-LSTM (end-to-end CNN + LSTM on market windows) ---
             cnn_lstm_params = baseline_hpo_params.get("cnn_lstm", baseline_hpo_params["lstm"])
@@ -1068,7 +820,7 @@ def main() -> None:
                 str(sorted(cnn_lstm_params.items())).encode()
             ).hexdigest()[:8]
             cnn_lstm_cache = CACHE_PRED_DIR / f"cnn_lstm_v3_{sym}_{target_h}d_{cnn_lstm_param_hash}_{sh}.npy"
-            cnn_lstm_ckpt = CACHE_CMTF_DIR / f"cnn_lstm_model_v3_{sym}_{target_h}d_{cnn_lstm_param_hash}_{sh}.pt"
+            cnn_lstm_ckpt = CACHE_MODEL_DIR / f"cnn_lstm_model_v3_{sym}_{target_h}d_{cnn_lstm_param_hash}_{sh}.pt"
             cnn_lstm_ckpt.parent.mkdir(parents=True, exist_ok=True)
 
             cached_cnn_lstm = _load_npy(cnn_lstm_cache)
@@ -1076,7 +828,7 @@ def main() -> None:
                 logger.info("[{}] CNN-LSTM loaded from cache", sym)
                 preds_cnn_lstm = cached_cnn_lstm
             else:
-                logger.info("[{}] Training CNN-LSTM…", sym)
+                logger.info("[{}] Training CNN-LSTMâ€¦", sym)
                 cnn_lstm_model = CNNLSTMPredictor(
                     input_dim=splits["train"]["market_windows"].shape[-1],
                     num_filters=cnn_lstm_params.get("num_filters", cnn_lstm_params.get("hidden_dim", 64)),
@@ -1117,122 +869,7 @@ def main() -> None:
             all_results.append(metrics_cnn_lstm)
             all_preds["CNN-LSTM"].append(preds_cnn_lstm)
 
-            # --- CNN-LSTM CMTF (causal TCN + LSTM encoder + news fusion) ---
-            if include_cmtf:
-                logger.info(
-                    "[{}] Running CNN-LSTM CMTF (ensemble × {} seeds) …",
-                    sym, len(_ensemble_seeds),
-                )
-                news_dim = int(splits["train"]["news_embs"].shape[-1])
-                cnn_lstm_cmtf_fusion_dim = cmtf_hpo_params.get("fusion_dim", 128)
-                cnn_lstm_cmtf_fusion_market_dim = cmtf_hpo_params.get("fusion_market_dim", 256)
-                cnn_lstm_cmtf_n_heads = cmtf_hpo_params.get("n_heads", 4)
-                cnn_lstm_cmtf_dropout = cmtf_hpo_params.get("dropout", 0.2)
-                cnn_lstm_cmtf_lr = cmtf_hpo_params.get("lr", 5e-4)
-                cnn_lstm_cmtf_dir_penalty = cmtf_hpo_params.get(
-                    "dir_penalty_weight", 0.08 if target_h >= 20 else 0.05
-                )
-
-                # Load CNN-LSTM backbone state dict for warm-start
-                _backbone_sd = None
-                if cnn_lstm_ckpt.exists():
-                    _bb_ckpt = torch.load(cnn_lstm_ckpt, map_location=device, weights_only=False)
-                    _backbone_sd = _bb_ckpt.get("state_dict", _bb_ckpt)
-
-                _cl_cmtf_ensemble: list[np.ndarray] = []
-                for _seed in _ensemble_seeds:
-                    _cl_ckpt = (
-                        CACHE_CMTF_DIR
-                        / f"cnn_lstm_cmtf_{CNNLSTM_CMTF_VERSION}_{sym}_{target_h}d_seed{_seed}_{sh}.pt"
-                    )
-                    _cl_ckpt.parent.mkdir(parents=True, exist_ok=True)
-                    _cl_model = CNNLSTMCMTFPredictor(
-                        input_dim=splits["train"]["market_windows"].shape[-1],
-                        news_dim=news_dim,
-                        hidden_dim=cnn_lstm_params.get("hidden_dim", 64),
-                        num_filters=cnn_lstm_params.get("num_filters", cnn_lstm_params.get("hidden_dim", 64)),
-                        num_layers=cnn_lstm_params.get("num_layers", 2),
-                        dropout=cnn_lstm_cmtf_dropout,
-                        fusion_dim=cnn_lstm_cmtf_fusion_dim,
-                        fusion_market_dim=cnn_lstm_cmtf_fusion_market_dim,
-                        n_heads=cnn_lstm_cmtf_n_heads,
-                        sign_penalty_weight=cnn_lstm_cmtf_dir_penalty,
-                        seq_len=run_cfg["sequence_len"],
-                        device=device,
-                    )
-                    if _cl_ckpt.exists() and stage not in ("cmtf", "hpo"):
-                        _cl_model.load_checkpoint(
-                            torch.load(_cl_ckpt, map_location=device, weights_only=False)
-                        )
-                        logger.info(
-                            "[{}] CNN-LSTM CMTF seed {} loaded from checkpoint", sym, _seed
-                        )
-                    else:
-                        _cl_model.fit(
-                            splits["train"]["market_windows"],
-                            splits["train"]["news_embs"],
-                            splits["train"]["targets"],
-                            splits["val"]["market_windows"],
-                            splits["val"]["news_embs"],
-                            splits["val"]["targets"],
-                            news_mask_train=splits["train"].get("news_masks"),
-                            news_mask_val=splits["val"].get("news_masks"),
-                            seed=_seed,
-                            lr=cnn_lstm_cmtf_lr,
-                            epochs=80,
-                            patience=12,
-                            backbone_state_dict=_backbone_sd,
-                            freeze_encoder_epochs=20,
-                        )
-                        torch.save(_cl_model.get_checkpoint(), _cl_ckpt)
-                        logger.info(
-                            "[{}] CNN-LSTM CMTF seed {} checkpoint saved", sym, _seed
-                        )
-
-                    _cl_preds = _cl_model.predict(
-                        splits["test"]["market_windows"],
-                        splits["test"]["news_embs"],
-                        news_mask_test=splits["test"].get("news_masks"),
-                    )
-                    _cl_da = float(np.mean((_cl_preds > 0) == (y_test > 0))) * 100
-                    _cl_rmse = float(np.sqrt(np.mean((_cl_preds - y_test) ** 2)))
-                    logger.info(
-                        "[{}] CNN-LSTM CMTF seed {} | DA={:.1f}% | RMSE={:.6f}",
-                        sym, _seed, _cl_da, _cl_rmse,
-                    )
-                    _cl_cmtf_ensemble.append(_cl_preds)
-
-                preds_cl_cmtf = np.mean(_cl_cmtf_ensemble, axis=0)
-                metrics_cl_cmtf = compute_all(y_test, preds_cl_cmtf, horizon=target_h)
-                metrics_cl_cmtf.update(
-                    compute_composite_metrics(
-                        y_test,
-                        preds_cl_cmtf,
-                        horizon=target_h,
-                        anchor_pred=all_preds["Chronos Zero-Shot"][_sym_order.index(sym)],
-                    )
-                )
-                metrics_cl_cmtf.update({
-                    "Experiment": "CNN-LSTM CMTF",
-                    "ComparisonSet": "fairness",
-                    "Symbol": sym,
-                    "TargetHorizonD": target_h,
-                })
-                all_results.append(metrics_cl_cmtf)
-                all_preds["CNN-LSTM CMTF"].append(preds_cl_cmtf)
-
-            # Per-symbol CMTF prediction vs actual
-            if include_cmtf:
-                _sym_idx = _sym_order.index(sym)
-                plot_cmtf_vs_actual(
-                    y_test,
-                    all_preds["CNN-LSTM CMTF"][_sym_idx],
-                    f"CNN-LSTM vs CMTF vs Actual — {sym} ({target_h}D)",
-                    FIGURES_DIR / f"cmtf_vs_actual_{sym}_{target_h}d.png",
-                    cnn_lstm_preds=all_preds["CNN-LSTM"][_sym_idx],
-                )
-
-        # Aggregate results — pooled metrics across all symbols
+        # Aggregate results â€” pooled metrics across all symbols
         results_df = pd.DataFrame(all_results)
         for exp_name in results_df["Experiment"].unique():
             # Concatenate per-symbol predictions for pooled computation
@@ -1286,7 +923,7 @@ def main() -> None:
         results_df = pd.DataFrame(all_results)
 
         print("\n" + "=" * 76)
-        print(f"  CNN-LSTM CMTF BENCHMARK RESULTS — TARGET HORIZON {target_h}D")
+        print(f"  BASELINE BENCHMARK RESULTS â€” TARGET HORIZON {target_h}D")
         print("=" * 76)
         col_order = [
             "Experiment",
@@ -1320,25 +957,13 @@ def main() -> None:
         suffix = f"{target_h}d"
         csv_path = RESULTS_DIR / f"chronos_benchmark_{suffix}.csv"
         results_df.to_csv(csv_path, index=False)
-        logger.info("Results saved → {}", csv_path)
+        logger.info("Results saved â†’ {}", csv_path)
 
         avg_df = results_df[results_df["Symbol"] == "AVG"]
         plot_ablation(avg_df, FIGURES_DIR / f"model_{suffix}.png")
         plot_per_symbol(results_df, FIGURES_DIR / f"per_symbol_heatmap_{suffix}.png")
 
-        if all_y_true and "CNN-LSTM CMTF" in all_preds and all_preds["CNN-LSTM CMTF"]:
-            combined_y = np.concatenate(all_y_true)
-            combined_cmtf = np.concatenate(all_preds["CNN-LSTM CMTF"])
-            combined_cnn_lstm = np.concatenate(all_preds["CNN-LSTM"]) if all_preds.get("CNN-LSTM") else None
-            plot_cmtf_vs_actual(
-                combined_y,
-                combined_cmtf,
-                f"CNN-LSTM vs CMTF vs Actual — All Symbols ({target_h}D)",
-                FIGURES_DIR / f"cmtf_vs_actual_combined_{suffix}.png",
-                cnn_lstm_preds=combined_cnn_lstm,
-            )
-
-    logger.info("═══ Benchmark complete ═══")
+    logger.info("â•â•â• Benchmark complete â•â•â•")
 
 
 if __name__ == "__main__":

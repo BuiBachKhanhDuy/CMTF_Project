@@ -1,0 +1,4 @@
+split,row_count,avg_raw_token_len,avg_clean_token_len,negative_count,neutral_count,positive_count
+test,101,18.099009900990097,14.267326732673267,19,25,57
+train,804,18.14179104477612,14.490049751243781,150,199,455
+val,100,16.94,14.05,18,25,57

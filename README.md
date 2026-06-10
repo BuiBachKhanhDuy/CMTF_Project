@@ -64,10 +64,10 @@ python run_model_benchmark.py --stage plot   # Regenerate plots
 │   │   └── dataset_builder.py   # PyTorch Dataset with walk-forward splits
 │   ├── benchmark/               # Model implementations & evaluation
 │   │   ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1 + composite
-│   │   ├── baseline_models.py   # LSTM, RF, Fine-tuned Chronos baselines
+│   │   ├── baseline_models.py   # LSTM, RF, Chronos, CNN-LSTM, CNN-LSTM CMTF
 │   │   ├── baseline_hpo.py      # Optuna HPO for baseline models
 │   │   ├── chronos_encoder.py   # Zero-shot + Chronos embeddings
-│   │   ├── cnn_lstm_cmtf.py     # CNN-LSTM + cross-modal news fusion
+│   │   ├── fusion_wrappers.py   # News fusion heads (early/late/hybrid/residual)
 │   │   └── plots.py             # A/B benchmark visualizations
 │   ├── sentiment/               # Vietnamese news sentiment (PhoBERT)
 │   │   ├── modeling.py          # PhoBERT + Custom Transformer architectures

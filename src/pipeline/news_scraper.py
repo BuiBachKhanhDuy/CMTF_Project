@@ -975,6 +975,7 @@ class NewsScraper:
         use_cache: bool = True,
         export_trace: bool = True,
         similarity_threshold: float = 85.0,
+        news_filter_by_symbol: bool = True,
     ) -> pd.DataFrame:
         """Fetch banking news for one supported bank symbol."""
         symbol = str(symbol).upper().strip()
@@ -1011,7 +1012,7 @@ class NewsScraper:
                     logger.info("Scraping CafeF banking source for {} ...", symbol)
                     cafef_raw = _scrape_cafef_banking(start_ts, end_ts)
                     _cafef_banking_cache[cafef_key] = cafef_raw
-                cafef_filtered = _filter_cafef_by_relevance(cafef_raw, symbol)
+                cafef_filtered = _filter_cafef_by_relevance(cafef_raw, symbol) if news_filter_by_symbol else cafef_raw
                 all_articles.extend(cafef_filtered)
             except Exception:
                 logger.warning("CafeF banking scraping failed for {} — continuing", symbol)

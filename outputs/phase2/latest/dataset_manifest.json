@@ -1,5 +1,5 @@
 {
-  "dataset_path": "C:\\Users\\bachkhan\\Documents\\ChatbotThesis\\data\\external\\vietnamese_stock_article_classification\\Dataset",
+  "dataset_path": "data\\phase2",
   "source_files": [
     "raw_data.xlsx"
   ],

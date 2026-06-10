@@ -219,11 +219,6 @@ class TestBaselineHpoFallback:
             "run_rf_hpo",
             lambda *args, **kwargs: pytest.fail("RF HPO should not run"),
         )
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_finetuned_chronos_hpo",
-            lambda *args, **kwargs: pytest.fail("Chronos HPO should not run"),
-        )
 
         params = baseline_hpo.load_or_run_baseline_hpo(
             tmp_path,
@@ -240,77 +235,7 @@ class TestBaselineHpoFallback:
 
         assert params == baseline_hpo.get_default_baseline_hpo_params()
 
-    def test_cached_params_backfill_missing_cnn_lstm(self, tmp_path, monkeypatch):
-        from src.benchmark import baseline_hpo
 
-        cache_file = tmp_path / "best_baseline_params_1d.json"
-        cache_file.write_text(
-            json.dumps(
-                {
-                    "lstm": {
-                        "hidden_dim": 64,
-                        "num_layers": 2,
-                        "dropout": 0.2,
-                        "lr": 0.001,
-                        "batch_size": 32,
-                    },
-                    "rf": {
-                        "n_estimators": 200,
-                        "max_depth": 9,
-                        "min_samples_split": 3,
-                        "max_features": "log2",
-                    },
-                    "finetuned_chronos": {
-                        "hidden_dim": 64,
-                        "dropout": 0.2,
-                        "lr": 0.0001,
-                        "sign_penalty_weight": 0.01,
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_lstm_hpo",
-            lambda *args, **kwargs: pytest.fail("LSTM HPO should not rerun"),
-        )
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_rf_hpo",
-            lambda *args, **kwargs: pytest.fail("RF HPO should not rerun"),
-        )
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_finetuned_chronos_hpo",
-            lambda *args, **kwargs: pytest.fail("Chronos HPO should not rerun"),
-        )
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_cnn_lstm_hpo",
-            lambda *args, **kwargs: {
-                "num_filters": 96,
-                "hidden_dim": 64,
-                "num_layers": 2,
-                "dropout": 0.1,
-                "lr": 0.0007,
-                "batch_size": 32,
-            },
-        )
-
-        params = baseline_hpo.load_or_run_baseline_hpo(
-            tmp_path,
-            market_windows_train=np.zeros((4, 3, 2), dtype=np.float32),
-            targets_train=np.zeros(4, dtype=np.float32),
-            market_windows_val=np.zeros((2, 3, 2), dtype=np.float32),
-            targets_val=np.zeros(2, dtype=np.float32),
-            target_h=1,
-        )
-
-        assert params["cnn_lstm"]["num_filters"] == 96
-        cached = json.loads(cache_file.read_text(encoding="utf-8"))
-        assert cached["cnn_lstm"]["num_filters"] == 96
 # ======================================================================
 # ResidualNewsFusionHead (pure PyTorch)
 # ======================================================================
@@ -318,7 +243,7 @@ class TestBaselineHpoFallback:
 
 class TestResidualNewsFusionHead:
     def test_output_shape(self):
-        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
+        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
 
         head = ResidualNewsFusionHead(
             baseline_dim=32,
@@ -338,7 +263,7 @@ class TestResidualNewsFusionHead:
 
     def test_all_masked_news_returns_zero(self):
         """Fully masked news should preserve exact zero residual parity."""
-        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
+        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
         import torch
 
         head = ResidualNewsFusionHead(
@@ -359,7 +284,7 @@ class TestResidualNewsFusionHead:
         assert torch.allclose(pred, torch.zeros_like(pred), atol=1e-6, rtol=0.0)
 
     def test_zero_news_rows_stay_finite(self):
-        from src.benchmark.cnn_lstm_cmtf import ResidualNewsFusionHead
+        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
         import torch
 
         head = ResidualNewsFusionHead(
@@ -378,3 +303,141 @@ class TestResidualNewsFusionHead:
         pred = head(market, news)
         assert pred.shape == (2,)
         assert torch.isfinite(pred).all()
+
+
+class TestNewsBranchPredictor:
+    def test_all_masked_news_returns_zero(self):
+        from src.benchmark.fusion_wrappers import NewsBranchPredictor
+        import torch
+
+        branch = NewsBranchPredictor(news_dim=16, hidden_dim=8, device="cpu")
+        news = torch.zeros(2, 3, 16)
+        news_mask = torch.ones(2, 3, dtype=torch.bool)
+
+        pred = branch(news, news_mask)
+        assert pred.shape == (2,)
+        assert torch.allclose(pred, torch.zeros_like(pred), atol=1e-6, rtol=0.0)
+
+
+class _DummyFrozenEncoder:
+    d_model = 8
+    supports_sequence = True
+
+    def encode(self, market_windows: np.ndarray) -> np.ndarray:
+        return np.ones((len(market_windows), self.d_model), dtype=np.float32)
+
+    def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
+        return np.full((len(market_windows),), 0.25, dtype=np.float32)
+
+
+class TestHybridFusionWrapper:
+    def test_zero_news_matches_market_only(self):
+        from src.benchmark.fusion_wrappers import HybridFusionWrapper
+
+        encoder = _DummyFrozenEncoder()
+        wrapper = HybridFusionWrapper(
+            encoder=encoder,
+            news_dim=16,
+            fusion_dim=8,
+            fusion_market_dim=8,
+            n_heads=2,
+            dropout=0.0,
+            seq_len=3,
+            device="cpu",
+        )
+
+        market = np.random.randn(2, 3, 4).astype(np.float32)
+        news = np.zeros((2, 3, 16), dtype=np.float32)
+        news_mask = np.ones((2, 3), dtype=bool)
+
+        pred = wrapper.predict(market, news, news_mask)
+        assert np.allclose(pred, encoder.predict_market_only(market), atol=1e-6)
+
+    def test_single_branch_mode(self):
+        """HybridFusionWrapper should have fusion head, no extra branches."""
+        from src.benchmark.fusion_wrappers import HybridFusionWrapper
+
+        encoder = _DummyFrozenEncoder()
+        wrapper = HybridFusionWrapper(
+            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
+            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
+        )
+        assert not hasattr(wrapper, "news_branch")
+        assert not hasattr(wrapper, "mix_gate")
+        assert hasattr(wrapper, "fusion")
+
+    def test_two_stage_fallback_for_non_temporal(self):
+        """Non-TemporalEncoder should fall back to single-stage even with use_two_stage=True."""
+        from src.benchmark.fusion_wrappers import HybridFusionWrapper
+
+        encoder = _DummyFrozenEncoder()
+        wrapper = HybridFusionWrapper(
+            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
+            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
+            use_two_stage=True,
+        )
+        # _is_temporal should be False for _DummyFrozenEncoder
+        assert not wrapper._is_temporal
+
+    def test_fit_single_stage_runs(self):
+        """Single-stage fit should complete without errors."""
+        from src.benchmark.fusion_wrappers import HybridFusionWrapper
+
+        encoder = _DummyFrozenEncoder()
+        wrapper = HybridFusionWrapper(
+            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
+            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
+            use_two_stage=False,
+        )
+        mw = np.random.randn(8, 3, 4).astype(np.float32)
+        ne = np.random.randn(8, 3, 16).astype(np.float32)
+        nm = np.zeros((8, 3), dtype=bool)
+        y = np.random.randn(8).astype(np.float32)
+
+        history = wrapper.fit(mw, ne, y, mw, ne, y, news_mask_train=nm, news_mask_val=nm,
+                              epochs=2, batch_size=4, patience=5)
+        assert "train_loss" in history
+        assert "val_loss" in history
+        assert len(history["train_loss"]) > 0
+
+
+class TestDieboldMarianoTest:
+    def test_identical_predictions_p_value_1(self):
+        from src.benchmark.metrics import diebold_mariano_test
+
+        y = np.array([0.01, -0.02, 0.03, -0.01, 0.02, -0.03, 0.01, -0.01])
+        preds = np.array([0.005, -0.01, 0.02, -0.005, 0.01, -0.02, 0.005, -0.005])
+        result = diebold_mariano_test(y, preds, preds, horizon=1)
+        assert result["p_value"] == pytest.approx(1.0)
+        assert result["DM_stat"] == pytest.approx(0.0)
+
+    def test_better_model_positive_stat(self):
+        from src.benchmark.metrics import diebold_mariano_test
+
+        rng = np.random.RandomState(42)
+        y = rng.randn(100) * 0.01
+        preds_a = y + rng.randn(100) * 0.02  # worse
+        preds_b = y + rng.randn(100) * 0.005  # better
+        result = diebold_mariano_test(y, preds_a, preds_b, horizon=1)
+        # DM_stat should be positive (A has higher loss)
+        assert result["DM_stat"] > 0
+
+
+class TestPairedBootstrapDA:
+    def test_identical_predictions_zero_delta(self):
+        from src.benchmark.metrics import paired_bootstrap_da
+
+        y = np.array([0.01, -0.02, 0.03, -0.01, 0.02, -0.03])
+        preds = np.array([0.005, -0.01, 0.02, 0.005, 0.01, -0.02])
+        result = paired_bootstrap_da(y, preds, preds, n_bootstrap=1000)
+        assert abs(result["delta_da"]) < 0.5
+        # CI should include 0
+        assert result["ci_low"] <= 0.0 <= result["ci_high"]
+
+    def test_returns_expected_keys(self):
+        from src.benchmark.metrics import paired_bootstrap_da
+
+        y = np.array([0.01, -0.02, 0.03])
+        p = np.array([0.005, -0.01, 0.02])
+        result = paired_bootstrap_da(y, p, p, n_bootstrap=100)
+        assert set(result.keys()) == {"delta_da", "ci_low", "ci_high", "p_value"}

@@ -25,76 +25,6 @@ _cache: dict[str, Any] = {}
 _overrides: dict[str, Any] = {}
 
 
-def _cmtf_version_rank(path: Path) -> tuple[int, str]:
-    """Sort helper for cnn_lstm_cmtf_vN_* artifacts."""
-    parts = path.stem.split("_")
-    version = parts[3] if len(parts) > 3 else "v0"
-    if version.startswith("v") and version[1:].isdigit():
-        return int(version[1:]), version
-    return -1, version
-
-
-def _resolve_cmtf_checkpoint(
-    cfg: MultiAgentConfig,
-    symbol: str,
-    horizon: int,
-    seed: int,
-) -> Path:
-    """Resolve the preferred CNN-LSTM CMTF checkpoint for one ensemble seed."""
-    exact_pattern = f"cnn_lstm_cmtf_{cfg.cmtf_version}_{symbol}_{horizon}d_seed{seed}_*.pt"
-    exact_matches = sorted(cfg.cmtf_models_dir.glob(exact_pattern))
-    if exact_matches:
-        return exact_matches[0]
-
-    fallback_pattern = f"cnn_lstm_cmtf_v*_{symbol}_{horizon}d_seed{seed}_*.pt"
-    fallback_matches = sorted(
-        cfg.cmtf_models_dir.glob(fallback_pattern),
-        key=_cmtf_version_rank,
-        reverse=True,
-    )
-    if fallback_matches:
-        return fallback_matches[0]
-
-    raise ArtifactMissingError(
-        "No CNN-LSTM CMTF checkpoint matching "
-        f"'{exact_pattern}' or '{fallback_pattern}' in {cfg.cmtf_models_dir}"
-    )
-
-
-def _build_cnn_lstm_cmtf_from_checkpoint(
-    ckpt: dict,
-    hpo_params: dict[str, Any],
-    seq_len: int,
-):
-    """Reconstruct a CNN-LSTM CMTF predictor from its checkpoint shapes."""
-    state_dict = ckpt.get("state_dict", ckpt)
-
-    input_dim = int(state_dict["input_proj.weight"].shape[1])
-    num_filters = int(state_dict["input_proj.weight"].shape[0])
-    hidden_dim = int(state_dict["lstm.weight_hh_l0"].shape[1])
-    num_layers = len([key for key in state_dict if key.startswith("lstm.weight_ih_l")])
-    news_dim = int(state_dict["fusion.news_proj.0.weight"].shape[1])
-    fusion_market_dim = int(state_dict["fusion.market_query_proj.0.weight"].shape[0])
-    fusion_dim = int(state_dict["fusion.residual_head.0.weight"].shape[0])
-
-    from src.benchmark.cnn_lstm_cmtf import CNNLSTMCMTFPredictor
-
-    return CNNLSTMCMTFPredictor(
-        input_dim=input_dim,
-        news_dim=news_dim,
-        hidden_dim=hidden_dim,
-        num_filters=num_filters,
-        num_layers=num_layers,
-        dropout=float(hpo_params.get("dropout", 0.2)),
-        fusion_dim=fusion_dim,
-        fusion_market_dim=fusion_market_dim,
-        n_heads=int(hpo_params.get("n_heads", 4)),
-        sign_penalty_weight=float(hpo_params.get("dir_penalty_weight", 0.05)),
-        seq_len=seq_len,
-        device="cpu",
-    )
-
-
 def set_loader_override(name: str, obj: Any) -> None:
     """Inject a fake artifact for testing. Bypasses disk loading."""
     _overrides[name] = obj
@@ -134,7 +64,7 @@ def get_lora_backbone(symbol: str, horizon: int, config: MultiAgentConfig | None
     # The LoRA backbone params are under the "finetuned_chronos" key
     ft_params = baseline_params.get("finetuned_chronos", baseline_params)
 
-    from src.benchmark.chronos_encoder import ChronosMarketPredictor
+    from src.benchmark.chronos_market import ChronosMarketPredictor
     from src.benchmark.baseline_models import ChronosLoRAPredictor
 
     chronos = ChronosMarketPredictor(device="cpu")
@@ -164,7 +94,7 @@ def get_lora_backbone(symbol: str, horizon: int, config: MultiAgentConfig | None
 def get_cmtf_ensemble(
     symbol: str, horizon: int, config: MultiAgentConfig | None = None
 ) -> list:
-    """Load the CNN-LSTM CMTF ensemble predictors for (symbol, horizon)."""
+    """Load 3 CMTF v8 ensemble predictors for (symbol, horizon)."""
     key = f"cmtf_ensemble_{symbol}_{horizon}d"
     if key in _overrides:
         return _overrides[key]
@@ -173,25 +103,40 @@ def get_cmtf_ensemble(
 
     cfg = config or DEFAULT_CONFIG
 
+    # Load HPO params for CMTF fusion
     hpo_path = cfg.optuna_dir / f"best_params_{cfg.hpo_version}_{horizon}d.json"
-    hpo_params = (
-        json.loads(hpo_path.read_text(encoding="utf-8"))
-        if hpo_path.exists() else {}
-    )
+    if not hpo_path.exists():
+        raise ArtifactMissingError(f"CMTF HPO params not found: {hpo_path}")
+    hpo_params = json.loads(hpo_path.read_text(encoding="utf-8"))
+
+    # Get shared backbone
+    backbone = get_lora_backbone(symbol, horizon, cfg)
+
+    from src.benchmark.chronos_cmtf import ChronosCMTFPredictor
 
     ensemble = []
     for seed in cfg.ensemble_seeds:
-        ckpt_path = _resolve_cmtf_checkpoint(cfg, symbol, horizon, seed)
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        predictor = _build_cnn_lstm_cmtf_from_checkpoint(
-            ckpt,
-            hpo_params=hpo_params,
+        pattern = f"cmtf_lora_{cfg.cmtf_version}_{symbol}_{horizon}d_seed{seed}_*.pt"
+        matches = list(cfg.cmtf_models_dir.glob(pattern))
+        if not matches:
+            raise ArtifactMissingError(
+                f"No CMTF checkpoint matching '{pattern}' in {cfg.cmtf_models_dir}"
+            )
+        ckpt_path = matches[0]
+
+        predictor = ChronosCMTFPredictor(
+            chronos_lora_predictor=backbone,
+            news_dim=773,  # 768 vietnamese-embedding + 5 PhoBERT sentiment features
+            tabular_dim=0,  # tabular features already folded into backbone combined_feature_dim
+            fusion_dim=int(hpo_params.get("fusion_dim", 64)),
+            n_heads=int(hpo_params.get("n_heads", 2)),
+            dropout=float(hpo_params.get("dropout", 0.2)),
             seq_len=cfg.sequence_len,
+            device="cpu",
         )
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         predictor.load_checkpoint(ckpt)
         predictor.is_fitted = True
-        predictor.loaded_checkpoint_name = ckpt_path.name
-        predictor.loaded_checkpoint_version = ckpt.get("version", _cmtf_version_rank(ckpt_path)[1])
         ensemble.append(predictor)
         logger.debug("Loaded CMTF seed {}: {}", seed, ckpt_path.name)
 

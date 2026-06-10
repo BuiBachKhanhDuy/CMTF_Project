@@ -8,14 +8,14 @@
   "num_heads": 4,
   "dropout": 0.1,
   "freeze_backbone": false,
-  "max_length": 128,
+  "max_length": 64,
   "selection_metric": "macro_f1",
-  "best_selection_score": 0.7703761755485893,
-  "best_epoch": 5,
+  "best_selection_score": 0.8005771150828916,
+  "best_epoch": 6,
   "preprocessing": {
     "lowercase": false,
     "remove_punctuation": true,
-    "segmentation": "vncorenlp",
+    "segmentation": "none",
     "normalize_unicode_form": "NFC",
     "strip_html": true,
     "collapse_whitespace": true

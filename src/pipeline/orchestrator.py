@@ -20,7 +20,6 @@ from src.sentiment import Phase2PhoBERTInferencer, load_phase2_phobert_inference
 from .data_fetcher import VnstockDataFetcher
 from .temporal_aligner import TemporalAligner
 from .feature_engineer import FeatureEngineer
-from .feature_selector import StabilityFeatureSelector
 from .news_encoder import NEWS_HYBRID_COLUMN, SENTIMENT_TRACE_COLUMNS, NewsEncoder
 from .dataset_builder import CMTFDataset
 
@@ -36,9 +35,6 @@ def _config_hash(config: dict[str, Any]) -> str:
         "sequence_len", "horizon", "target_horizon_days",
         "train_end", "val_end", "normalize_method",
         "news_sentiment_enabled", "phase2_output_dir", "news_sentiment_device",
-        "stability_selection_enabled", "stability_corr_threshold",
-        "stability_lasso_alpha", "stability_n_folds",
-        "stability_threshold", "stability_min_train_rows",
     ]
     h = hashlib.sha256()
     for k in keys:
@@ -171,17 +167,12 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     news_sentiment_device: str = str(config.get("news_sentiment_device", "cpu"))
     news_sentiment_export_trace: bool = bool(config.get("news_sentiment_export_trace", True))
     news_sentiment_batch_size: int = int(config.get("news_sentiment_batch_size", 32))
-    stability_selection_enabled: bool = bool(config.get("stability_selection_enabled", False))
-    stability_corr_threshold: float = float(config.get("stability_corr_threshold", 0.95))
-    stability_lasso_alpha: float = float(config.get("stability_lasso_alpha", 0.001))
-    stability_n_folds: int = int(config.get("stability_n_folds", 5))
-    stability_threshold: float = float(config.get("stability_threshold", 0.6))
-    stability_min_train_rows: int = int(config.get("stability_min_train_rows", 120))
 
-    # When rebuild_data is True, bypass ALL caches (news, embeddings, dataset)
+    # When rebuild_data is True, bypass the dataset cache only.
+    # News scraper cache (news_use_cache) is intentionally preserved so that
+    # repeated runs do not re-scrape the web from scratch.
     if rebuild_data:
-        news_use_cache = False
-        logger.info("rebuild_data=True → all caches bypassed")
+        logger.info("rebuild_data=True → dataset cache bypassed (news cache preserved)")
 
     # --- Try loading from dataset cache ---
     cfg_hash = _config_hash(config)
@@ -335,39 +326,9 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         and c not in {
             "news_emb", NEWS_HYBRID_COLUMN, "has_news", "news_count",
             "news_titles", "news_content", "news_missing_flag", "symbol",
-            *SENTIMENT_TRACE_COLUMNS,
         }
         and df_all[c].dtype in ("float64", "float32", "int64", "int32")
     ]
-
-    if stability_selection_enabled and market_feature_cols:
-        selector = StabilityFeatureSelector(
-            corr_threshold=stability_corr_threshold,
-            lasso_alpha=stability_lasso_alpha,
-            n_folds=stability_n_folds,
-            stability_threshold=stability_threshold,
-            min_train_rows=stability_min_train_rows,
-        )
-        report = selector.select(
-            df_all,
-            feature_cols=market_feature_cols,
-            target_col=target_col,
-            train_end=train_end,
-        )
-        selected_set = set(report.selected_features)
-        dropped_cols = [c for c in market_feature_cols if c not in selected_set]
-        if dropped_cols:
-            df_all = df_all.drop(columns=dropped_cols)
-        market_feature_cols = report.selected_features
-
-        report_path = Path("artifacts") / "feature_selection" / f"stability_{cfg_hash}.json"
-        selector.save_report(report, report_path)
-        logger.info(
-            "Stability selection enabled | kept {} / {} market features | report={} ",
-            len(report.selected_features),
-            len(report.preselected_features) + len(report.dropped_by_correlation),
-            report_path,
-        )
 
     # Ensure all market feature columns are float before normalization
     # (e.g. volume is int64 but becomes float after z-score)
@@ -385,7 +346,7 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
             split_date=train_end,
             symbol=sym,
         )
-        df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols]
+        df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols].astype("float32")
 
     # Drop rows with NaN target (first / last rows from indicator warm-up)
     df_all = df_all.dropna(subset=[target_col])

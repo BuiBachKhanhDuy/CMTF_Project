@@ -1,4 +1,4 @@
-"""Baseline models for comparison: LSTM, Random Forest, Fine-tuned Chronos.
+﻿"""Baseline models for comparison: LSTM, Random Forest, Fine-tuned Chronos.
 
 CORRECTED VERSION - Fixed major logic issues:
 1. Consistent target scaling across all models
@@ -15,7 +15,6 @@ Models:
     - LSTMPredictor: sequence encoder over market windows
     - RandomForestRegressor_Wrapper: tree baseline over window summaries
     - FineTunedChronosPredictor: Chronos embeddings plus optional market tabular branch
-    - ChronosLoRAPredictor: true Chronos encoder fine-tuning via LoRA
 """
 
 from __future__ import annotations
@@ -31,6 +30,8 @@ import torch.nn.functional as F
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from loguru import logger
+
+from .training_utils import compute_huber_delta, train_with_early_stopping
 
 
 def sign_aware_huber_loss(
@@ -95,200 +96,6 @@ def _as_float32_array(values: np.ndarray) -> np.ndarray:
     return array
 
 
-class ChronosLoRAEncoderBackbone:
-    """Shared Chronos encoder backbone adapted via LoRA.
-
-    Supports a shared-backbone mode: pass an existing PEFT-wrapped transformer
-    via ``existing_peft_model`` to avoid the expensive ``copy.deepcopy`` on
-    every HPO trial. Call ``reset_lora_adapters()`` between trials to reinit
-    the lightweight LoRA A/B matrices without touching the frozen base weights.
-    """
-
-    def __init__(
-        self,
-        chronos_predictor,
-        lora_rank: int = 16,
-        lora_alpha: int = 16,
-        lora_dropout: float = 0.0,
-        device: str = "cpu",
-        existing_peft_model=None,
-    ) -> None:
-        from peft import LoraConfig, TaskType, get_peft_model
-
-        self.chronos = chronos_predictor
-        self.device = device
-        self.d_model = chronos_predictor.d_model
-        self.output_dim = self.d_model  # masked mean pooling
-        self.tokenizer = chronos_predictor.pipeline.tokenizer
-
-        if existing_peft_model is not None:
-            # Reuse an already-created PEFT model (shared backbone for HPO)
-            self.transformer = existing_peft_model
-        else:
-            pipeline_model = chronos_predictor.pipeline.model
-            base_transformer = getattr(pipeline_model, "model", pipeline_model)
-            transformer = copy.deepcopy(base_transformer).to(device)
-            transformer.requires_grad_(False)
-
-            lora_config = LoraConfig(
-                task_type=TaskType.SEQ_2_SEQ_LM,
-                inference_mode=False,
-                r=lora_rank,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                target_modules=["q", "v", "wi", "wo"],
-                bias="none",
-            )
-            self.transformer = get_peft_model(transformer, lora_config)
-
-        self.transformer.requires_grad_(False)
-        self._enable_encoder_lora_parameters()
-
-    def _enable_encoder_lora_parameters(self) -> None:
-        from peft.tuners.lora import LoraLayer
-
-        encoder = getattr(self.transformer, "encoder", None)
-        if encoder is None:
-            raise AttributeError("LoRA-wrapped Chronos model does not expose an encoder module")
-
-        def _iter_adapter_leaves(adapter_container):
-            if adapter_container is None:
-                return
-            if isinstance(adapter_container, torch.nn.ModuleDict):
-                for module in adapter_container.values():
-                    yield from module.parameters()
-                return
-            if isinstance(adapter_container, torch.nn.ParameterDict):
-                yield from adapter_container.values()
-                return
-            if isinstance(adapter_container, torch.nn.Module):
-                yield from adapter_container.parameters()
-                return
-            if isinstance(adapter_container, torch.nn.Parameter):
-                yield adapter_container
-
-        enabled_params = 0
-        for module in encoder.modules():
-            if not isinstance(module, LoraLayer):
-                continue
-            for attr_name in (
-                "lora_A",
-                "lora_B",
-                "lora_embedding_A",
-                "lora_embedding_B",
-                "lora_magnitude_vector",
-            ):
-                for param in _iter_adapter_leaves(getattr(module, attr_name, None)):
-                    param.requires_grad = True
-                    enabled_params += int(param.numel())
-
-        if enabled_params == 0:
-            raise RuntimeError("No encoder LoRA parameters were enabled for training")
-
-    def trainable_parameters(self) -> list[torch.nn.Parameter]:
-        return [param for param in self.transformer.parameters() if param.requires_grad]
-
-    def trainable_parameter_names(self) -> list[str]:
-        return [name for name, param in self.transformer.named_parameters() if param.requires_grad]
-
-    def reset_lora_adapters(self) -> None:
-        """Reinitialize LoRA A/B matrices in-place (avoids deepcopy per HPO trial).
-
-        Uses Kaiming-uniform for A and zeros for B — the PEFT default init scheme
-        so the adapter starts as a no-op on the frozen base weights.
-        """
-        from peft.tuners.lora import LoraLayer
-
-        encoder = getattr(self.transformer, "encoder", None)
-        if encoder is None:
-            return
-        for module in encoder.modules():
-            if not isinstance(module, LoraLayer):
-                continue
-            # Reset lora_A (Kaiming uniform) and lora_B (zeros)
-            for attr_name in ("lora_A", "lora_B"):
-                container = getattr(module, attr_name, None)
-                if container is None:
-                    continue
-                if isinstance(container, torch.nn.ModuleDict):
-                    for linear in container.values():
-                        if hasattr(linear, "weight"):
-                            if attr_name == "lora_A":
-                                nn.init.kaiming_uniform_(linear.weight, a=5**0.5)
-                            else:
-                                nn.init.zeros_(linear.weight)
-                elif isinstance(container, torch.nn.Module):
-                    if hasattr(container, "weight"):
-                        if attr_name == "lora_A":
-                            nn.init.kaiming_uniform_(container.weight, a=5**0.5)
-                        else:
-                            nn.init.zeros_(container.weight)
-
-    def tokenize_windows(self, close_windows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Tokenize close windows as log-returns for the Chronos encoder.
-
-        Converts absolute prices to log-returns before tokenizing to ensure
-        meaningful token diversity (absolute prices produce degenerate constant
-        token sequences for low-volatility stocks).
-        """
-        prices = np.clip(close_windows, 1e-12, None)
-        log_returns = np.diff(np.log(prices), axis=1)  # (N, seq_len-1)
-        log_returns = np.concatenate(
-            [np.zeros((log_returns.shape[0], 1), dtype=log_returns.dtype), log_returns],
-            axis=1,
-        )  # (N, seq_len)
-        close_tensor = torch.as_tensor(log_returns, dtype=torch.float32)
-        if close_tensor.ndim != 2:
-            raise ValueError("close_windows must have shape (N, seq_len) for Chronos tokenization")
-        token_ids, attention_mask, _ = self.tokenizer.context_input_transform(close_tensor)
-        return token_ids.cpu().numpy(), attention_mask.cpu().numpy()
-
-    def encode_tokenized(
-        self,
-        token_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Encode tokenized windows through the LoRA-adapted Chronos encoder.
-
-        Returns the last valid token position's hidden state.
-        Directional signal (momentum, recent trend) concentrates in the most
-        recent timestep; mean pooling over all 30 steps dilutes it by ~10x,
-        leaving the regression head with no recoverable directional gradient.
-        Output shape: (batch, d_model) where d_model = 512.
-        """
-        encoder_out = self.transformer.encoder(
-            input_ids=token_ids.to(self.device),
-            attention_mask=attention_mask.to(self.device),
-        )
-        hidden = encoder_out.last_hidden_state  # (B, S, d_model)
-        # Index of last valid (non-padding) token per sample
-        seq_lengths = attention_mask.to(self.device).sum(dim=1).long() - 1  # (B,)
-        seq_lengths = seq_lengths.clamp_min(0)
-        pooled = hidden[torch.arange(hidden.size(0), device=self.device), seq_lengths, :]  # (B, d_model)
-        return pooled
-
-    def get_embeddings(self, close_windows: np.ndarray) -> np.ndarray:
-        """Extract pooled encoder embeddings for raw close windows."""
-        token_ids, attention_mask = self.tokenize_windows(close_windows)
-        self.transformer.eval()
-        with torch.no_grad():
-            pooled = self.encode_tokenized(
-                torch.as_tensor(token_ids, dtype=torch.long),
-                torch.as_tensor(attention_mask, dtype=torch.long),
-            )
-        return pooled.cpu().numpy().astype(np.float32)
-
-    def checkpoint_state(self) -> dict:
-        from peft import get_peft_model_state_dict
-
-        return {"peft_state": get_peft_model_state_dict(self.transformer)}
-
-    def load_checkpoint_state(self, checkpoint: dict) -> None:
-        from peft import set_peft_model_state_dict
-
-        set_peft_model_state_dict(self.transformer, checkpoint["peft_state"])
-
-
 # Scale factor for targets during training to avoid mean-collapse.
 # Log returns (~0.008) are scaled to (~0.8) so the loss has meaningful gradients.
 _TARGET_SCALE = 100.0
@@ -308,7 +115,7 @@ class LSTMPredictor(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.3,
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.1,      # FIX 1: raised from 0.01 → 0.1
+        sign_penalty_weight: float = 0.1,      # FIX 1: raised from 0.01 â†’ 0.1
         device: str = "cpu",
     ):
         super().__init__()
@@ -337,16 +144,30 @@ class LSTMPredictor(nn.Module):
         )
         self.to(device)
 
-    def _encode_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
-        """Return concatenation of all layer hidden states for richer encoding."""
+    def _encode_market_tensors(
+        self,
+        market_windows: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return temporal states and pooled latent encoding for market windows."""
         x = _ensure_market_sequence_tensor(market_windows, self.input_dim)
 
         # FIX 3: use ALL layers' hidden states, not just the last layer
-        _, (hidden_state, _) = self.lstm(x)
+        seq_output, (hidden_state, _) = self.lstm(x)
         # hidden_state: (num_layers, batch, hidden_dim)
-        # concatenate across layers → (batch, num_layers * hidden_dim)
+        # concatenate across layers â†’ (batch, num_layers * hidden_dim)
         hidden_all = hidden_state.permute(1, 0, 2)          # (batch, num_layers, hidden_dim)
-        return hidden_all.reshape(hidden_all.size(0), -1)   # (batch, num_layers * hidden_dim)
+        pooled = hidden_all.reshape(hidden_all.size(0), -1)   # (batch, num_layers * hidden_dim)
+        return seq_output, pooled
+
+    def _encode_sequence_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
+        """Return per-timestep hidden states from the last LSTM layer."""
+        seq_output, _ = self._encode_market_tensors(market_windows)
+        return seq_output
+
+    def _encode_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
+        """Return concatenation of all layer hidden states for richer encoding."""
+        _, pooled = self._encode_market_tensors(market_windows)
+        return pooled
 
     def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
         """
@@ -369,98 +190,35 @@ class LSTMPredictor(nn.Module):
         epochs: int = 50,
         batch_size: int = 32,
         learning_rate: float = 1e-3,
-        patience: int = 10,
+        patience: int = 5,
+        warmup_epochs: int = 0,
     ) -> dict:
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
-
-        train_losses = []
-        val_losses = []
-        best_val_loss = float("inf")
-        best_state = None
-        patience_counter = 0
 
         X_train = torch.tensor(market_windows_train, dtype=torch.float32, device=self.device)
         y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device) * _TARGET_SCALE
         X_val = torch.tensor(market_windows_val, dtype=torch.float32, device=self.device)
         y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * _TARGET_SCALE
 
-        # FIX 4: clamp huber_delta to p25–p75 IQR, not just p75
-        # This keeps most samples in the quadratic regime where gradient is proportional to error
-        p25 = float(np.percentile(np.abs(y_train.cpu().numpy()), 25))
-        p75 = float(np.percentile(np.abs(y_train.cpu().numpy()), 75))
-        dynamic_delta = (p25 + p75) / 2.0
-        self.huber_delta = max(dynamic_delta, 0.01)   # tighter floor than before
+        self.huber_delta = compute_huber_delta(y_train.cpu().numpy())
         logger.debug("LSTM huber_delta={:.4f} (midpoint p25/p75 of |targets|)", self.huber_delta)
 
-        n_train = len(X_train)
+        def _loss_fn(pred, target):
+            return sign_aware_huber_loss(
+                pred, target,
+                huber_delta=self.huber_delta,
+                sign_penalty_weight=self.sign_penalty_weight,
+            )
 
-        for epoch in range(epochs):
-            self.train()
-            indices = np.random.permutation(n_train)
-            epoch_loss = 0.0
-            n_batches = 0
-
-            for i in range(0, n_train, batch_size):
-                batch_indices = indices[i : i + batch_size]
-                X_batch = X_train[batch_indices]
-                y_batch = y_train[batch_indices]
-
-                optimizer.zero_grad()
-                pred = self.forward(X_batch)
-                loss = sign_aware_huber_loss(
-                    pred,
-                    y_batch,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                )
-                loss.backward()
-
-                # FIX 5: gradient clipping to prevent vanishing/exploding on small-return targets
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-
-                optimizer.step()
-
-                epoch_loss += loss.item()
-                n_batches += 1
-
-            train_loss = epoch_loss / n_batches
-            train_losses.append(train_loss)
-
-            self.eval()
-            with torch.no_grad():
-                pred_val = self.forward(X_val)
-                val_loss = sign_aware_huber_loss(
-                    pred_val,
-                    y_val,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                ).item()
-                val_losses.append(val_loss)
-
-            if (epoch + 1) % 10 == 0:
-                logger.debug(
-                    "LSTM epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}",
-                    epoch + 1, epochs, train_loss, val_loss
-                )
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_state = {k: v.detach().clone() for k, v in self.state_dict().items()}
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    logger.info("LSTM early stopping at epoch {}", epoch + 1)
-                    break
-
-        if best_state is not None:
-            self.load_state_dict(best_state)
-
-        return {
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "best_val_loss": best_val_loss,
-        }
+        return train_with_early_stopping(
+            self, X_train, y_train, X_val, y_val, _loss_fn,
+            optimizer=optimizer,
+            epochs=epochs,
+            batch_size=batch_size,
+            patience=patience,
+            warmup_epochs=warmup_epochs,
+            model_name="LSTM",
+        )
 
     def predict(self, market_windows: np.ndarray) -> np.ndarray:
         self.eval()
@@ -477,6 +235,38 @@ class LSTMPredictor(nn.Module):
         with torch.no_grad():
             embeddings = self._encode_tensor(X)
         return embeddings.cpu().numpy()
+
+    # --- BaseEncoder protocol ---
+
+    @property
+    def supports_sequence(self) -> bool:
+        return True
+
+    @property
+    def supports_temporal_fusion(self) -> bool:
+        return True
+
+    @property
+    def sequence_d_model(self) -> int:
+        return self.hidden_dim
+
+    def encode_sequence_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self._encode_sequence_tensor(market_windows)
+
+    def encode_pooled_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self._encode_tensor(market_windows)
+
+    def predict_market_only_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self.forward(market_windows)
+
+    def encoder_parameters(self) -> list[torch.nn.Parameter]:
+        return list(self.parameters())
+
+    def encode(self, market_windows: np.ndarray) -> np.ndarray:
+        return self.get_embeddings(market_windows)
+
+    def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
+        return self.predict(market_windows)
 
 
 class RandomForestRegressor_Wrapper:
@@ -592,6 +382,22 @@ class RandomForestRegressor_Wrapper:
         preds = self.model.predict(X_scaled)
         
         return preds.astype(np.float32)
+
+    # --- BaseEncoder protocol ---
+
+    @property
+    def d_model(self) -> int:
+        return 0
+
+    @property
+    def supports_sequence(self) -> bool:
+        return False
+
+    def encode(self, market_windows: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("RandomForest has no latent space")
+
+    def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
+        return self.predict(market_windows)
 
 
 class FineTunedChronosPredictor:
@@ -877,311 +683,10 @@ class FineTunedChronosPredictor:
         return preds.astype(np.float32)
 
 
-class ChronosLoRAPredictor:
-    """True Chronos fine-tuning via LoRA adapters on the encoder stack.
-
-    This model is purely close-price-only: LoRA adapters are trained on Chronos
-    encoder embeddings derived from tokenized close price windows. No market
-    features, no OHLCV side branches — ensuring the model name honestly
-    reflects what it does.
-
-    Architecture:
-        close_windows → Chronos tokenizer (raw prices)
-        → Chronos encoder + LoRA → masked mean pool (d_model=512)
-        → regression head → scalar log-return prediction
-    """
-
-    def __init__(
-        self,
-        chronos_predictor,
-        hidden_dim: int = 64,
-        dropout: float = 0.2,
-        huber_delta: float = 0.02,
-        sign_penalty_weight: float = 0.05,
-        lora_rank: int = 16,
-        lora_alpha: int = 16,
-        lora_dropout: float = 0.0,
-        device: str = "cpu",
-        shared_backbone: "ChronosLoRAEncoderBackbone | None" = None,
-        # Legacy kwargs (ignored, kept for cache-key backward compat)
-        tabular_dim: int = 0,
-        market_input_dim: int = 0,
-        market_hidden_dim: int = 0,
-        sign_aux_weight: float = 0.0,
-    ):
-        self.chronos = chronos_predictor
-        self.device = device
-        self.huber_delta = huber_delta
-        self.sign_penalty_weight = sign_penalty_weight
-        self.lora_rank = lora_rank
-        self.lora_alpha = lora_alpha
-        self.lora_dropout = lora_dropout
-
-        if shared_backbone is not None:
-            self.backbone = shared_backbone
-        else:
-            self.backbone = ChronosLoRAEncoderBackbone(
-                chronos_predictor,
-                lora_rank=lora_rank,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                device=device,
-            )
-        self.transformer = self.backbone.transformer
-        self.tokenizer = self.backbone.tokenizer
-        self.d_model = self.backbone.d_model
-
-        # Regression head takes d_model (512) from masked mean pooling.
-        self.regression_head = nn.Sequential(
-            nn.Linear(self.backbone.output_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        ).to(device)
-
-        trainable_names = self.backbone.trainable_parameter_names()
-        logger.info(
-            "Chronos LoRA initialized | rank={} | output_dim={} | trainable adapter params={} | encoder-only={}",
-            lora_rank, self.backbone.output_dim,
-            len(trainable_names),
-            all("encoder." in name for name in trainable_names),
-        )
-
-        self.is_fitted = False
-
-    @property
-    def combined_feature_dim(self) -> int:
-        """Dimension of the pre-regression feature vector (d_model=512)."""
-        return self.backbone.output_dim
-
-    def extract_tokenized_features(
-        self,
-        token_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        **kwargs,
-    ) -> torch.Tensor:
-        """Encode tokenized close windows into pooled Chronos embeddings."""
-        return self._encode_tokenized(token_ids, attention_mask)
-
-    def regress_features(self, features: torch.Tensor) -> torch.Tensor:
-        """Map pre-regression market features to the baseline scalar prediction."""
-        return self.regression_head(features).squeeze(-1)
-
-    def tokenize_windows(self, close_windows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Tokenize close price windows for Chronos encoder."""
-        return self.backbone.tokenize_windows(close_windows)
-
-    def _encode_tokenized(
-        self,
-        token_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Encode tokenized sequences through LoRA-adapted Chronos encoder."""
-        return self.backbone.encode_tokenized(token_ids, attention_mask)
-
-    def get_embeddings(self, close_windows: np.ndarray) -> np.ndarray:
-        """Extract embeddings from Chronos encoder for given price windows."""
-        return self.backbone.get_embeddings(close_windows)
-
-    def fit(
-        self,
-        close_windows_train: np.ndarray,
-        targets_train: np.ndarray,
-        close_windows_val: np.ndarray,
-        targets_val: np.ndarray,
-        epochs: int = 20,
-        batch_size: int = 32,
-        learning_rate: float = 1e-4,
-        patience: int = 5,
-        pruning_callback=None,
-        **kwargs,
-    ) -> dict:
-        """Train model with tokenization wrapper."""
-        train_token_ids, train_attention_mask = self.tokenize_windows(close_windows_train)
-        val_token_ids, val_attention_mask = self.tokenize_windows(close_windows_val)
-        return self.fit_tokenized(
-            train_token_ids,
-            train_attention_mask,
-            targets_train,
-            val_token_ids,
-            val_attention_mask,
-            targets_val,
-            epochs=epochs,
-            batch_size=batch_size,
-            learning_rate=learning_rate,
-            patience=patience,
-            pruning_callback=pruning_callback,
-        )
-
-    def fit_tokenized(
-        self,
-        token_ids_train: np.ndarray,
-        attention_mask_train: np.ndarray,
-        targets_train: np.ndarray,
-        token_ids_val: np.ndarray,
-        attention_mask_val: np.ndarray,
-        targets_val: np.ndarray,
-        epochs: int = 20,
-        batch_size: int = 32,
-        learning_rate: float = 1e-4,
-        patience: int = 5,
-        pruning_callback=None,
-        **kwargs,
-    ) -> dict:
-        """Fine-tune Chronos LoRA encoder + regression head on close-only tokens."""
-        import torch.optim as optim
-        from torch.utils.data import DataLoader, TensorDataset
-
-        token_train = torch.as_tensor(token_ids_train, dtype=torch.long)
-        mask_train = torch.as_tensor(attention_mask_train, dtype=torch.long)
-        token_val = torch.as_tensor(token_ids_val, dtype=torch.long)
-        mask_val = torch.as_tensor(attention_mask_val, dtype=torch.long)
-        y_train = torch.as_tensor(targets_train, dtype=torch.float32)
-        y_val = torch.as_tensor(targets_val, dtype=torch.float32, device=self.device)
-
-        # Adaptive delta: 75th percentile of |targets| so ~75% of samples get
-        # smooth quadratic gradients; works for any horizon without magic numbers
-        self.huber_delta = float(np.percentile(np.abs(targets_train), 75))
-        logger.info("Chronos LoRA huber_delta={:.5f} (p75 of |targets|)", self.huber_delta)
-
-        train_ds = TensorDataset(token_train, mask_train, y_train)
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=False)
-
-        # Separate param groups: lower weight_decay for LoRA adapters
-        # (they start near zero; aggressive decay fights the gradient signal)
-        lora_params = list(self.backbone.trainable_parameters())
-        head_params = list(self.regression_head.parameters())
-        optimizer = optim.AdamW([
-            {"params": head_params, "weight_decay": 1e-2},
-            {"params": lora_params, "weight_decay": 1e-5},
-        ], lr=learning_rate)
-
-        train_losses = []
-        val_losses = []
-        best_val_loss = float("inf")
-        best_state = None
-        patience_counter = 0
-
-        for epoch in range(epochs):
-            self.transformer.train()
-            self.regression_head.train()
-            epoch_loss = 0.0
-            n_batches = 0
-
-            for mb_token_ids, mb_attention_mask, mb_targets in train_loader:
-                optimizer.zero_grad()
-                features = self.extract_tokenized_features(mb_token_ids, mb_attention_mask)
-                pred = self.regress_features(features)
-                loss = sign_aware_huber_loss(
-                    pred,
-                    mb_targets.to(self.device),
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                )
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(head_params + lora_params, 1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
-                n_batches += 1
-
-            train_loss = epoch_loss / max(n_batches, 1)
-            train_losses.append(train_loss)
-
-            # Validation
-            self.transformer.eval()
-            self.regression_head.eval()
-            with torch.no_grad():
-                val_features = self.extract_tokenized_features(token_val, mask_val)
-                pred_val = self.regress_features(val_features)
-                val_loss = sign_aware_huber_loss(
-                    pred_val, y_val,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                ).item()
-            val_losses.append(val_loss)
-
-            if pruning_callback is not None:
-                pruning_callback(epoch, val_loss)
-
-            if (epoch + 1) % 5 == 0:
-                logger.debug(
-                    "Chronos LoRA epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}",
-                    epoch + 1, epochs, train_loss, val_loss,
-                )
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_state = self.checkpoint_state()
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    logger.info("Chronos LoRA early stopping at epoch {}", epoch + 1)
-                    break
-
-        if best_state is not None:
-            self.load_checkpoint_state(best_state)
-
-        self.is_fitted = True
-        return {
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "best_val_loss": best_val_loss,
-        }
-
-    def checkpoint_state(self) -> dict:
-        """Save LoRA + regression head state."""
-        return {
-            **self.backbone.checkpoint_state(),
-            "regression_head_state": {k: v.detach().cpu().clone() for k, v in self.regression_head.state_dict().items()},
-            "is_fitted": self.is_fitted,
-        }
-
-    def load_checkpoint_state(self, checkpoint: dict) -> None:
-        """Restore LoRA + regression head from checkpoint."""
-        self.backbone.load_checkpoint_state(checkpoint)
-        self.regression_head.load_state_dict(checkpoint["regression_head_state"])
-        self.is_fitted = bool(checkpoint.get("is_fitted", True))
-
-    def predict(
-        self,
-        close_windows: np.ndarray,
-        **kwargs,
-    ) -> np.ndarray:
-        """Generate predictions with tokenization wrapper."""
-        token_ids, attention_mask = self.tokenize_windows(close_windows)
-        return self.predict_tokenized(token_ids, attention_mask)
-
-    def predict_tokenized(
-        self,
-        token_ids: np.ndarray,
-        attention_mask: np.ndarray,
-        **kwargs,
-    ) -> np.ndarray:
-        """Generate predictions from tokenized close windows.
-
-        Returns:
-            (N,) predicted log-returns
-        """
-        if not self.is_fitted:
-            raise ValueError("Model must be fitted before prediction")
-
-        token_ids_t = torch.as_tensor(token_ids, dtype=torch.long)
-        attention_mask_t = torch.as_tensor(attention_mask, dtype=torch.long)
-
-        self.transformer.eval()
-        self.regression_head.eval()
-        with torch.no_grad():
-            features = self.extract_tokenized_features(token_ids_t, attention_mask_t)
-            preds = self.regress_features(features).cpu().numpy()
-
-        return preds.astype(np.float32)
-
-
 class _CausalDilatedBlock(nn.Module):
     """Causal dilated convolutional residual block (from TCN, Bai et al. 2018).
 
-    Uses left-only padding to enforce strict causality — no future information
+    Uses left-only padding to enforce strict causality â€” no future information
     leaks into the current timestep. Dilated convolutions expand the receptive
     field exponentially without adding parameters.
 
@@ -1203,7 +708,7 @@ class _CausalDilatedBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch, num_filters, seq_len)
         residual = x
-        # Left-pad only → strict causality (no future leak)
+        # Left-pad only â†’ strict causality (no future leak)
         out = F.pad(x, (self._causal_pad, 0))
         out = self.conv1(out)
         out = self.norm1(out)
@@ -1223,18 +728,18 @@ class CNNLSTMPredictor(nn.Module):
     - Bai et al. (2018) arXiv:1803.01271 (TCN): causal dilated convolutions with
       residual connections outperform standard LSTM on sequence tasks; dilation
       rates [1, 2, 4] give a receptive field of 28 steps with only 3 blocks.
-    - Chakraborty & Basu (2024) arXiv:2410.12807: hierarchical CNN→LSTM where CNN
+    - Chakraborty & Basu (2024) arXiv:2410.12807: hierarchical CNNâ†’LSTM where CNN
       identifies local price-volume patterns, LSTM captures macro temporal dynamics.
 
     Architecture:
         (batch, seq_len, input_dim)
-        → Linear input projection → (batch, seq_len, num_filters)
-        → permute → (batch, num_filters, seq_len)
-        → CausalDilatedBlock × len(dilations)  [dilation=1,2,4 by default]
-        → permute → (batch, seq_len, num_filters)
-        → LSTM(num_filters, hidden_dim, num_layers)
-        → All-layer hidden state concat → (batch, num_layers * hidden_dim)
-        → Dropout → Linear bottleneck(num_layers*hidden_dim, hidden_dim//2, 1) → (batch,)
+        â†’ Linear input projection â†’ (batch, seq_len, num_filters)
+        â†’ permute â†’ (batch, num_filters, seq_len)
+        â†’ CausalDilatedBlock Ã— len(dilations)  [dilation=1,2,4 by default]
+        â†’ permute â†’ (batch, seq_len, num_filters)
+        â†’ LSTM(num_filters, hidden_dim, num_layers)
+        â†’ All-layer hidden state concat â†’ (batch, num_layers * hidden_dim)
+        â†’ Dropout â†’ Linear bottleneck(num_layers*hidden_dim, hidden_dim//2, 1) â†’ (batch,)
 
     Effective receptive field with kernel=3, dilations=[1,2,4]:
         2*(3-1)*1 + 2*(3-1)*2 + 2*(3-1)*4 = 4+8+16 = 28 timesteps
@@ -1299,14 +804,11 @@ class CNNLSTMPredictor(nn.Module):
             input_dim, num_filters, list(dilations), hidden_dim, num_layers, receptive_field,
         )
 
-    def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            market_windows: (batch, seq_len) or (batch, seq_len, input_dim)
-
-        Returns:
-            (batch,) predicted log-return
-        """
+    def _encode_market_tensors(
+        self,
+        market_windows: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return temporal states and pooled latent encoding for market windows."""
         x = _ensure_market_sequence_tensor(market_windows, self.input_dim)
         # x: (batch, seq_len, input_dim)
 
@@ -1320,10 +822,32 @@ class CNNLSTMPredictor(nn.Module):
 
         x = x.permute(0, 2, 1)           # (batch, seq_len, num_filters)
 
-        # LSTM — all-layer hidden state concat (matches LSTMPredictor encoding)
-        _, (hidden_state, _) = self.lstm(x)  # hidden: (num_layers, batch, hidden_dim)
+        # LSTM â€” all-layer hidden state concat (matches LSTMPredictor encoding)
+        seq_output, (hidden_state, _) = self.lstm(x)  # hidden: (num_layers, batch, hidden_dim)
         hidden_all = hidden_state.permute(1, 0, 2)  # (batch, num_layers, hidden_dim)
         encoding = hidden_all.reshape(hidden_all.size(0), -1)  # (batch, num_layers*hidden_dim)
+
+        return seq_output, encoding
+
+    def _encode_sequence_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
+        """Return per-timestep hidden states from the last LSTM layer."""
+        seq_output, _ = self._encode_market_tensors(market_windows)
+        return seq_output
+
+    def _encode_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
+        """Return pooled encoder state matching the market-only regression head."""
+        _, encoding = self._encode_market_tensors(market_windows)
+        return encoding
+
+    def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            market_windows: (batch, seq_len) or (batch, seq_len, input_dim)
+
+        Returns:
+            (batch,) predicted log-return
+        """
+        _, encoding = self._encode_market_tensors(market_windows)
 
         out = self.dropout(encoding)
         out = self.fc(out)                # (batch, 1)
@@ -1338,7 +862,8 @@ class CNNLSTMPredictor(nn.Module):
         epochs: int = 50,
         batch_size: int = 32,
         learning_rate: float = 1e-3,
-        patience: int = 10,
+        patience: int = 5,
+        warmup_epochs: int = 0,
     ) -> dict:
         """Train CNN-LSTM with early stopping on validation loss.
 
@@ -1346,7 +871,6 @@ class CNNLSTMPredictor(nn.Module):
         following Yang (2025) and Wang et al. (2026) best practices for
         hybrid CNN-LSTM financial forecasting.
         """
-        # FIX: AdamW with weight decay to regularize 550K+ params
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6,
@@ -1357,79 +881,26 @@ class CNNLSTMPredictor(nn.Module):
         X_val = torch.tensor(market_windows_val, dtype=torch.float32, device=self.device)
         y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * _TARGET_SCALE
 
-        # FIX: align huber_delta with LSTM — IQR midpoint, tighter floor
-        p25 = float(np.percentile(np.abs(y_train.cpu().numpy()), 25))
-        p75 = float(np.percentile(np.abs(y_train.cpu().numpy()), 75))
-        dynamic_delta = (p25 + p75) / 2.0
-        self.huber_delta = max(dynamic_delta, 0.01)
+        self.huber_delta = compute_huber_delta(y_train.cpu().numpy())
         logger.debug("CNN-LSTM huber_delta={:.4f} (IQR midpoint of |targets|)", self.huber_delta)
 
-        n_train = len(X_train)
-        train_losses: list[float] = []
-        val_losses: list[float] = []
-        best_val_loss = float("inf")
-        best_state: dict | None = None
-        patience_counter = 0
+        def _loss_fn(pred, target):
+            return sign_aware_huber_loss(
+                pred, target,
+                huber_delta=self.huber_delta,
+                sign_penalty_weight=self.sign_penalty_weight,
+            )
 
-        for epoch in range(epochs):
-            self.train()
-            indices = np.random.permutation(n_train)
-            epoch_loss = 0.0
-            n_batches = 0
-            for i in range(0, n_train, batch_size):
-                batch_idx = indices[i : i + batch_size]
-                optimizer.zero_grad()
-                pred = self.forward(X_train[batch_idx])
-                loss = sign_aware_huber_loss(
-                    pred,
-                    y_train[batch_idx],
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                )
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
-                n_batches += 1
-            train_losses.append(epoch_loss / n_batches)
-
-            self.eval()
-            with torch.no_grad():
-                pred_val = self.forward(X_val)
-                val_loss = sign_aware_huber_loss(
-                    pred_val,
-                    y_val,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                ).item()
-            val_losses.append(val_loss)
-            scheduler.step(val_loss)
-
-            if (epoch + 1) % 10 == 0:
-                current_lr = optimizer.param_groups[0]["lr"]
-                logger.debug(
-                    "CNN-LSTM epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}, lr={:.2e}",
-                    epoch + 1, epochs, train_losses[-1], val_loss, current_lr,
-                )
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_state = {k: v.detach().clone() for k, v in self.state_dict().items()}
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    logger.info("CNN-LSTM early stopping at epoch {}", epoch + 1)
-                    break
-
-        if best_state is not None:
-            self.load_state_dict(best_state)
-
-        return {
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "best_val_loss": best_val_loss,
-        }
+        return train_with_early_stopping(
+            self, X_train, y_train, X_val, y_val, _loss_fn,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            epochs=epochs,
+            batch_size=batch_size,
+            patience=patience,
+            warmup_epochs=warmup_epochs,
+            model_name="CNN-LSTM",
+        )
 
     def predict(self, market_windows: np.ndarray) -> np.ndarray:
         """Generate predictions from market windows (unscaled to original target space)."""
@@ -1446,3 +917,42 @@ class CNNLSTMPredictor(nn.Module):
 
     def load_checkpoint_state(self, checkpoint: dict) -> None:
         self.load_state_dict(checkpoint["state_dict"])
+
+    # --- BaseEncoder protocol ---
+
+    @property
+    def supports_sequence(self) -> bool:
+        return True
+
+    @property
+    def supports_temporal_fusion(self) -> bool:
+        return True
+
+    @property
+    def sequence_d_model(self) -> int:
+        return self.hidden_dim
+
+    def encode_sequence_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self._encode_sequence_tensor(market_windows)
+
+    def encode_pooled_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self._encode_tensor(market_windows)
+
+    def predict_market_only_torch(self, market_windows: torch.Tensor) -> torch.Tensor:
+        return self.forward(market_windows)
+
+    def encoder_parameters(self) -> list[torch.nn.Parameter]:
+        return list(self.parameters())
+
+    def encode(self, market_windows: np.ndarray) -> np.ndarray:
+        """Encode market windows via TCN + LSTM â†’ (N, num_layers * hidden_dim)."""
+        self.eval()
+        X = torch.tensor(market_windows, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            encoding = self._encode_tensor(X)
+        return encoding.cpu().numpy()
+
+    def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
+        return self.predict(market_windows)
+
+

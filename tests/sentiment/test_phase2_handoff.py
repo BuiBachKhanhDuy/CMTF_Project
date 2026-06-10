@@ -135,8 +135,8 @@ def test_phase2_phobert_inference_bundle_loads_and_scores_titles(tmp_path, monke
                 "expected_value": expected,
             }
 
-    monkeypatch.setattr("src.phase2.inference._load_tokenizer", lambda tokenizer_dir: FakeTokenizer())
-    monkeypatch.setattr("src.phase2.inference.PhoBERTSentimentModel", FakeModel)
+    monkeypatch.setattr("src.sentiment.inference._load_tokenizer", lambda tokenizer_dir: FakeTokenizer())
+    monkeypatch.setattr("src.sentiment.inference.PhoBERTSentimentModel", FakeModel)
 
     bundle = load_phase2_phobert_inference_bundle(output_dir, device="cpu")
     inferencer = Phase2PhoBERTInferencer(bundle)
@@ -219,10 +219,10 @@ def test_phase2_phobert_inference_bundle_falls_back_without_java(tmp_path, monke
         def eval(self):
             return self
 
-    monkeypatch.setattr("src.phase2.inference._load_tokenizer", lambda tokenizer_dir: FakeTokenizer())
-    monkeypatch.setattr("src.phase2.inference.PhoBERTSentimentModel", FakeModel)
+    monkeypatch.setattr("src.sentiment.inference._load_tokenizer", lambda tokenizer_dir: FakeTokenizer())
+    monkeypatch.setattr("src.sentiment.inference.PhoBERTSentimentModel", FakeModel)
     monkeypatch.setattr(
-        "src.phase2.inference.VnCoreNLPSegmenter",
+        "src.sentiment.inference.VnCoreNLPSegmenter",
         lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("Java missing")),
     )
 

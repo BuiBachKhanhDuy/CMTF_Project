@@ -1,0 +1,5 @@
+table,horizon,best_model,best_setting,DA%,Sharpe,IC,RMSE,F1
+fusion,5,rf,late,53.89,0.775,0.1227,0.04626,0.465
+news_scope,5,rf,matched,53.89,0.775,0.1227,0.04626,0.465
+sentiment,5,rf,none,56.87,0.498,0.1158,0.04696,0.439
+component,5,cnn_lstm,True,52.82,0.328,0.1131,0.04663,0.386

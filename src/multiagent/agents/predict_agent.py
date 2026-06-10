@@ -1,7 +1,7 @@
-"""Predict Agent — runs CNN-LSTM CMTF ensemble inference and produces prediction output.
+"""Predict Agent — runs CMTF v8 ensemble inference and produces prediction output.
 
-This is the ML core: takes market data + news embeddings, runs the deployed
-cross-modal fusion model (3 seeds), and outputs predictions with model evidence.
+This is the ML core: takes market data + news embeddings, runs cross-modal
+fusion model (3 seeds), and outputs predictions with model evidence.
 """
 
 from __future__ import annotations
@@ -46,20 +46,24 @@ def predict_agent_node(
 
     symbol = state["symbol"]
     horizon = state["target_horizon_days"]
+    close_window = state["close_window"]
     market_window = state["market_window"]
+    market_tabular = state["market_tabular"]
     news_emb = state["news_emb"]
     news_mask = state["news_mask"]
 
     # Load ensemble (cached after first call)
     ensemble = get_cmtf_ensemble(symbol, horizon, cfg)
 
-    if market_window is None:
-        raise ValueError("predict_agent requires market_window for CNN-LSTM CMTF inference")
+    # Tokenize close window
+    close_2d = close_window.reshape(1, -1)
+    token_ids, attention_mask = ensemble[0].tokenize_windows(close_2d)
 
     # Prepare batched inputs
     news_batch = news_emb[np.newaxis, ...]
     news_mask_batch = news_mask[np.newaxis, ...]
-    market_batch = market_window[np.newaxis, ...]
+    market_batch = market_window[np.newaxis, ...] if market_window is not None else None
+    tabular_batch = market_tabular[np.newaxis, ...] if market_tabular is not None else None
 
     # Run each seed
     seed_preds: list[float] = []
@@ -69,8 +73,11 @@ def predict_agent_node(
 
     for predictor in ensemble:
         result = predictor.predict_with_explanation(
-            market_windows_test=market_batch,
+            token_ids=token_ids,
+            attention_mask=attention_mask,
             news_test=news_batch,
+            tabular_test=tabular_batch,
+            market_windows_test=market_batch,
             news_mask_test=news_mask_batch,
         )
         seed_preds.append(result["final_pred"])
@@ -99,21 +106,6 @@ def predict_agent_node(
         "predict_confidence": predict_confidence,
     }
 
-    if abs(final_pred) < 0.001:
-        model_direction = "flat"
-    else:
-        model_direction = "long" if final_pred > 0 else "short"
-
-    model_proposal = {
-        "direction": model_direction,
-        "score": round(final_pred, 6),
-        "confidence": predict_confidence,
-        "rationale": (
-            f"ensemble_mean={final_pred:+.5f} baseline={baseline_pred:+.5f} "
-            f"spread={model_evidence['spread']:.5f}"
-        ),
-    }
-
     elapsed = time.time() - t0
     logger.info(
         "PredictAgent | {} {}d | baseline={:.5f} final={:.5f} conf={:.3f} | {:.2f}s",
@@ -121,19 +113,12 @@ def predict_agent_node(
     )
 
     artifact_versions = dict(state.get("artifact_versions", {}))
-    artifact_versions["cmtf_version"] = getattr(
-        ensemble[0],
-        "loaded_checkpoint_version",
-        cfg.cmtf_version,
-    )
+    artifact_versions["cmtf_version"] = cfg.cmtf_version
     artifact_versions["ensemble_seeds"] = str(cfg.ensemble_seeds)
-    artifact_versions["cmtf_checkpoint"] = getattr(
-        ensemble[0],
-        "loaded_checkpoint_name",
-        "override",
-    )
 
     return {
+        "token_ids": token_ids,
+        "attention_mask": attention_mask,
         "baseline_pred": baseline_pred,
         "final_pred": final_pred,
         "seed_preds": seed_preds,
@@ -142,7 +127,6 @@ def predict_agent_node(
         "news_weight": news_weight,
         "predict_confidence": predict_confidence,
         "model_evidence": model_evidence,
-        "model_proposal": model_proposal,
         "artifact_versions": artifact_versions,
         "node_timings": {"predict_agent": elapsed},
     }
