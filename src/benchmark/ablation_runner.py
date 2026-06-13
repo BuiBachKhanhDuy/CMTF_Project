@@ -58,9 +58,9 @@ def _apply_sentiment_weighting(news_embs: np.ndarray, market_windows: np.ndarray
     return news_embs * sent_weight
 
 
-def _build_encoder(cfg: AblationConfig, input_dim: int, device: str, chronos=None):
+def _build_encoder(cfg: AblationConfig, input_dim: int, device: str, chronos=None, hpo_params=None, seed: int = 42):
     """Instantiate the base encoder for this config."""
-    params = get_default_baseline_hpo_params()
+    params = hpo_params if hpo_params is not None else get_default_baseline_hpo_params()
 
     if cfg.model_name == "lstm":
         p = params["lstm"]
@@ -78,6 +78,7 @@ def _build_encoder(cfg: AblationConfig, input_dim: int, device: str, chronos=Non
             max_depth=p["max_depth"],
             min_samples_split=p["min_samples_split"],
             max_features=p["max_features"],
+            random_state=seed,
         )
     elif cfg.model_name == "cnn_lstm":
         p = params.get("cnn_lstm", {"hidden_dim": 64, "num_layers": 2, "dropout": 0.3})
@@ -131,6 +132,7 @@ def run_ablation_cell(
     chronos=None,
     seed: int = 42,
     cache_dir: Path | None = None,
+    hpo_params: dict | None = None,
 ) -> dict[str, float]:
     """Train and evaluate one ablation cell.
 
@@ -151,11 +153,6 @@ def run_ablation_cell(
     mw_test = splits["test"]["market_windows"].copy()
     cols = list(market_cols)
 
-    if cfg.sentiment_mode == "none":
-        mw_train, cols = _strip_sentiment_features(mw_train, cols)
-        mw_val, _ = _strip_sentiment_features(mw_val, market_cols)
-        mw_test, _ = _strip_sentiment_features(mw_test, market_cols)
-
     ne_train = splits["train"]["news_embs"][:, :, :768].copy()
     ne_val = splits["val"]["news_embs"][:, :, :768].copy()
     ne_test = splits["test"]["news_embs"][:, :, :768].copy()
@@ -173,10 +170,23 @@ def run_ablation_cell(
         nm_val = splits["val"].get("news_masks_all", nm_val)
         nm_test = splits["test"].get("news_masks_all", nm_test)
 
+    # FIX: Handle sentiment data correctly to avoid double-dipping
     if cfg.sentiment_mode == "weighted_emb":
+        # Step 1: Apply sentiment weighting to news embeddings FIRST
         ne_train = _apply_sentiment_weighting(ne_train, splits["train"]["market_windows"], market_cols)
         ne_val = _apply_sentiment_weighting(ne_val, splits["val"]["market_windows"], market_cols)
         ne_test = _apply_sentiment_weighting(ne_test, splits["test"]["market_windows"], market_cols)
+        
+        # Step 2: Strip sentiment features from market_windows immediately after
+        mw_train, cols = _strip_sentiment_features(mw_train, cols)
+        mw_val, _ = _strip_sentiment_features(mw_val, market_cols)
+        mw_test, _ = _strip_sentiment_features(mw_test, market_cols)
+    elif cfg.sentiment_mode == "none":
+        # Strip sentiment if not using it
+        mw_train, cols = _strip_sentiment_features(mw_train, cols)
+        mw_val, _ = _strip_sentiment_features(mw_val, market_cols)
+        mw_test, _ = _strip_sentiment_features(mw_test, market_cols)
+    # else: sentiment_mode == "scalars" → keep sentiment in market_windows
 
     y_train = splits["train"]["targets"]
     y_val = splits["val"]["targets"]
@@ -186,7 +196,7 @@ def run_ablation_cell(
 
     # --- Train encoder once (reused by none/late/hybrid) ---
     if cfg.fusion_type != "early":
-        encoder = _build_encoder(cfg, input_dim, device, chronos)
+        encoder = _build_encoder(cfg, input_dim, device, chronos, hpo_params, seed)
         _train_encoder(encoder, cfg, mw_train, y_train, mw_val, y_val, splits, horizon=horizon)
 
     # --- Dispatch by fusion type ---
@@ -195,19 +205,31 @@ def run_ablation_cell(
 
     elif cfg.fusion_type == "early":
         wrapper = EarlyFusionWrapper(
-            encoder_cls=type(_build_encoder(cfg, input_dim, device, chronos)),
-            encoder_kwargs=_encoder_init_kwargs(cfg, input_dim, device, chronos),
+            encoder_cls=type(_build_encoder(cfg, input_dim, device, chronos, hpo_params, seed)),
+            encoder_kwargs=_encoder_init_kwargs(cfg, input_dim, device, chronos, hpo_params, seed),
             news_dim=768,
             device=device,
         )
-        wrapper.fit(mw_train, ne_train, y_train, mw_val, ne_val, y_val)
+        # Extract HPO params for early fusion training
+        params = hpo_params if hpo_params is not None else get_default_baseline_hpo_params()
+        p = params.get(cfg.model_name, {})
+        warmup_epochs = min(horizon, 10)
+        
+        wrapper.fit(
+            mw_train, ne_train, y_train, mw_val, ne_val, y_val,
+            epochs=100,
+            batch_size=p.get("batch_size", 32),
+            learning_rate=p.get("lr", 1e-3),
+            warmup_epochs=warmup_epochs,
+        )
         preds = wrapper.predict(mw_test, ne_test)
 
     elif cfg.fusion_type == "late":
         market_preds_train = encoder.predict_market_only(mw_train)
         market_preds_val = encoder.predict_market_only(mw_val)
 
-        wrapper = LateFusionWrapper(encoder=encoder, news_dim=768, device=device, horizon=horizon)
+        freeze_encoder = getattr(cfg, "freeze_encoder", True)
+        wrapper = LateFusionWrapper(encoder=encoder, news_dim=768, device=device, horizon=horizon, freeze_encoder=freeze_encoder)
         wrapper.fit_news_branch(
             ne_train, y_train, ne_val, y_val,
             news_mask_train=nm_train, news_mask_val=nm_val,
@@ -217,6 +239,7 @@ def run_ablation_cell(
         preds = wrapper.predict(mw_test, ne_test, nm_test)
 
     elif cfg.fusion_type == "hybrid":
+        freeze_encoder = getattr(cfg, "freeze_encoder", True)
         wrapper = HybridFusionWrapper(
             encoder=encoder,
             news_dim=768,
@@ -228,6 +251,7 @@ def run_ablation_cell(
             use_two_stage=cfg.use_two_stage,
             use_aux_loss=cfg.use_aux_loss,
             use_variance_reg=cfg.use_variance_reg,
+            freeze_encoder=freeze_encoder,
         )
         wrapper.fit(
             mw_train, ne_train, y_train,
@@ -263,9 +287,9 @@ def run_ablation_cell(
     return metrics
 
 
-def _encoder_init_kwargs(cfg: AblationConfig, input_dim: int, device: str, chronos=None) -> dict:
+def _encoder_init_kwargs(cfg: AblationConfig, input_dim: int, device: str, chronos=None, hpo_params=None, seed: int = 42) -> dict:
     """Return the kwargs needed to re-instantiate the encoder class (for EarlyFusionWrapper)."""
-    params = get_default_baseline_hpo_params()
+    params = hpo_params if hpo_params is not None else get_default_baseline_hpo_params()
 
     if cfg.model_name == "lstm":
         p = params["lstm"]
@@ -275,6 +299,6 @@ def _encoder_init_kwargs(cfg: AblationConfig, input_dim: int, device: str, chron
         return dict(input_dim=input_dim, hidden_dim=p.get("hidden_dim", 64), num_layers=p.get("num_layers", 2), dropout=p.get("dropout", 0.3), device=device)
     elif cfg.model_name == "rf":
         p = params["rf"]
-        return dict(n_estimators=p["n_estimators"], max_depth=p["max_depth"], min_samples_split=p["min_samples_split"], max_features=p["max_features"])
+        return dict(n_estimators=p["n_estimators"], max_depth=p["max_depth"], min_samples_split=p["min_samples_split"], max_features=p["max_features"], random_state=seed)
     else:
         raise ValueError(f"Early fusion not supported for {cfg.model_name}")

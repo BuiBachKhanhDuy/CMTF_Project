@@ -28,7 +28,6 @@ class AblationConfig:
     use_positional_encoding: bool = True
     recency_gate_k: int = 5
     use_news_gate: bool = True
-    freeze_encoder: bool = True
     # CMTF flags (only meaningful for hybrid)
     use_two_stage: bool = True
     use_aux_loss: bool = True

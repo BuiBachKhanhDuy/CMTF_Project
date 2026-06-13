@@ -112,11 +112,20 @@ def extract_per_symbol_data(
         # Raw close prices from cached fetcher
         raw_df = raw_ohlcv[sym][["close"]].rename(columns={"close": "raw_close"})
         sym_df = sym_df.merge(
-            raw_df, left_on="time", right_index=True, how="left",
+            raw_df,
+            left_on="time",
+            right_index=True,
+            how="left",
         )
 
-        # Drop rows where raw_close is missing (shouldn't happen)
-        sym_df = sym_df.dropna(subset=["raw_close"]).reset_index(drop=True)
+        missing = sym_df["raw_close"].isna().sum()
+
+        assert missing == 0, (
+            f"{sym}: {missing} timestamps "
+            f"missing after merge with raw OHLCV"
+        )
+
+        sym_df = sym_df.reset_index(drop=True)
         n = len(sym_df)
 
         raw_c = sym_df["raw_close"].values.astype(np.float64)
@@ -175,13 +184,35 @@ def extract_per_symbol_data(
             news_masks.append(news_mask_window)
             targets.append(target_val)
             times.append(sym_df.iloc[i]["time"])
+        
+        n_samples = len(targets)
+        
+        assert len(close_windows) == n_samples
+        assert len(market_windows) == n_samples
+        assert len(last_closes) == n_samples
+        assert len(market_tabs) == n_samples
+        assert len(news_embs) == n_samples
+        assert len(news_masks) == n_samples
+        assert len(times) == n_samples        
+        
+        close_windows_arr = np.array(close_windows)
+        market_windows_arr = np.array(market_windows)
+        news_embs_arr = np.array(news_embs)
+
+        assert close_windows_arr.ndim == 2
+        assert market_windows_arr.ndim == 3
+        assert news_embs_arr.ndim == 3
+
+        assert close_windows_arr.shape[1] == seq_len
+        assert market_windows_arr.shape[1] == seq_len
+        assert news_embs_arr.shape[1] == seq_len
 
         result[sym] = {
-            "close_windows": np.array(close_windows),
-            "market_windows": np.array(market_windows),
+            "close_windows": close_windows_arr,
+            "market_windows": market_windows_arr,
+            "news_embs": news_embs_arr,
             "last_close": np.array(last_closes),
             "market_tabular": np.array(market_tabs),
-            "news_embs": np.array(news_embs),
             "news_masks": np.array(news_masks, dtype=bool),
             "targets": np.array(targets),
             "times": np.array(times),

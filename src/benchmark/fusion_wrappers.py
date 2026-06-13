@@ -196,6 +196,7 @@ class NewsBranchPredictor(nn.Module):
     """Lightweight MLP that predicts return from horizon-windowed news embeddings.
 
     Architecture: mean(news_seq[-news_window:], dim=1) → Linear → ReLU → Linear(1)
+    With learned alpha parameter to control news contribution to final prediction.
     """
 
     def __init__(self, news_dim: int = 768, hidden_dim: int = 128, device: str = "cpu",
@@ -209,6 +210,8 @@ class NewsBranchPredictor(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1),
         )
+        # Learned alpha parameter controls news contribution strength
+        self.learned_alpha = nn.Parameter(torch.tensor(0.3))
         self.to(device)
 
     def forward(self, news_embs: torch.Tensor, news_mask: torch.Tensor | None = None) -> torch.Tensor:
@@ -217,7 +220,7 @@ class NewsBranchPredictor(nn.Module):
             news_embs: (B, seq_len, news_dim)
             news_mask: (B, seq_len) bool, True = no news.
 
-        Returns: (B,) predicted log return contribution.
+        Returns: (B,) predicted log return contribution scaled by learned_alpha.
         """
         # Horizon-aware windowing: only use last news_window bars
         if self.news_window is not None and news_embs.shape[1] > self.news_window:
@@ -234,7 +237,8 @@ class NewsBranchPredictor(nn.Module):
         else:
             pooled = news_embs.mean(dim=1)
             has_any_news = (news_embs.abs().sum(dim=(1, 2)) > 0).float()
-        return self.mlp(pooled).squeeze(-1) * has_any_news
+        # Output is scaled by learned_alpha (optimized during training)
+        return self.mlp(pooled).squeeze(-1) * has_any_news * self.learned_alpha
 
 
 # ======================================================================
@@ -434,9 +438,10 @@ class LateFusionWrapper:
         N = torch.as_tensor(news_embs, dtype=torch.float32, device=self.device)
         NM = torch.as_tensor(news_mask, dtype=torch.bool, device=self.device) if news_mask is not None else None
         with torch.no_grad():
+            # News branch output already includes learned_alpha scaling
             pred_news = self.news_branch(N, NM).cpu().numpy() / _TARGET_SCALE
 
-        return pred_market + self.alpha * pred_news
+        return pred_market + pred_news
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.encoder.predict_market_only(market_windows)
