@@ -208,7 +208,6 @@ def run_ablation_cell(
             encoder_cls=type(_build_encoder(cfg, input_dim, device, chronos, hpo_params, seed)),
             encoder_kwargs=_encoder_init_kwargs(cfg, input_dim, device, chronos, hpo_params, seed),
             news_dim=768,
-            device=device,
         )
         # Extract HPO params for early fusion training
         params = hpo_params if hpo_params is not None else get_default_baseline_hpo_params()
@@ -225,16 +224,18 @@ def run_ablation_cell(
         preds = wrapper.predict(mw_test, ne_test)
 
     elif cfg.fusion_type == "late":
-        market_preds_train = encoder.predict_market_only(mw_train)
-        market_preds_val = encoder.predict_market_only(mw_val)
-
         freeze_encoder = getattr(cfg, "freeze_encoder", True)
         wrapper = LateFusionWrapper(encoder=encoder, news_dim=768, device=device, horizon=horizon, freeze_encoder=freeze_encoder)
-        wrapper.fit_news_branch(
-            ne_train, y_train, ne_val, y_val,
+        # Extract HPO params for news training
+        params = hpo_params if hpo_params is not None else get_default_baseline_hpo_params()
+        p_news = params.get("news", {}) if "news" in params else {}
+        wrapper.fit(
+            mw_train, ne_train, y_train, mw_val, ne_val, y_val,
             news_mask_train=nm_train, news_mask_val=nm_val,
-            market_preds_train=market_preds_train,
-            market_preds_val=market_preds_val,
+            epochs_news=p_news.get("epochs", 30),
+            batch_size_news=p_news.get("batch_size", 32),
+            lr_news=p_news.get("lr", 1e-3),
+            patience_news=p_news.get("patience", 8),
         )
         preds = wrapper.predict(mw_test, ne_test, nm_test)
 

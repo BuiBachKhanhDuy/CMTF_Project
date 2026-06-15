@@ -139,6 +139,8 @@ def _build_cross_symbol_news(
     # Audit counters
     date_symbol_counts = defaultdict(int)
     date_unique_symbols = defaultdict(set)
+    date_embs_by_sym: dict[str, dict[str, np.ndarray]] = defaultdict(dict)  # {date_key: {sym: emb}}
+    
     for sym, data in all_data.items():
         times = data["times"]  # (N_samples,) — timestamp of last bar in each window
         news_embs = data["news_embs"]  # (N_samples, seq_len, 768)
@@ -147,7 +149,9 @@ def _build_cross_symbol_news(
         sym_timeline = np.sort(np.unique(times))
         sym_time_to_idx = {str(t): idx for idx, t in enumerate(sym_timeline)}
         
-        # For each window, extract per-bar embeddings with their actual timestamps
+        # Collect unique embeddings per bar for this symbol (one embedding per date, not per window)
+        sym_embeddings = {}  # {bar_time_str: emb} — captures latest non-zero embedding
+        
         for i, last_bar_time in enumerate(times):
             last_bar_idx = sym_time_to_idx[str(last_bar_time)]
             
@@ -162,12 +166,20 @@ def _build_cross_symbol_news(
                     
                     if np.any(emb != 0):
                         date_key = str(bar_time)
-                        
-                        date_embs_list[date_key].append(emb)
-                        
-                        # Audit duplicate counting
-                        date_symbol_counts[date_key] += 1
-                        date_unique_symbols[date_key].add(sym)
+                        # Store only one embedding per symbol per date (use latest if appears in multiple windows)
+                        sym_embeddings[date_key] = emb
+        
+        # Add this symbol's embeddings to the per-date aggregation
+        for date_key, emb in sym_embeddings.items():
+            date_embs_by_sym[date_key][sym] = emb
+            date_symbol_counts[date_key] += 1
+            date_unique_symbols[date_key].add(sym)
+    
+    # Convert to list format for pooling
+    date_embs_list: dict[str, list[np.ndarray]] = {
+        date_key: list(sym_dict.values())
+        for date_key, sym_dict in date_embs_by_sym.items()
+    }
     
     # ==========================================================
     # Audit duplicate counting
