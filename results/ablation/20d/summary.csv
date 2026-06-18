@@ -1,5 +1,0 @@
-table,horizon,best_model,best_setting,DA%,Sharpe,IC,RMSE,F1
-fusion,20,rf,late,71.92,0.892,0.4626,0.09861,0.622
-news_scope,20,rf,all,72.97,0.989,0.47,0.09851,0.643
-sentiment,20,rf,weighted_emb,72.68,0.965,0.4662,0.09861,0.63
-component,20,lstm,True,71.04,1.562,0.5489,0.10048,0.696

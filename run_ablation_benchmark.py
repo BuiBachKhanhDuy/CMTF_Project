@@ -33,6 +33,18 @@ from src.benchmark.ablation_plots import plot_table_charts
 
 _ABLATION_ROOT = Path("results/ablation")
 
+_CONFIG_KEY_COLS = [
+    "model_name",
+    "fusion_type",
+    "news_scope",
+    "sentiment_mode",
+    "use_positional_encoding",
+    "use_news_gate",
+    "recency_gate_k",
+    "use_two_stage",
+    "use_aux_loss",
+    "use_variance_reg",
+]
 
 def _horizon_dir(horizon: int) -> Path:
     return _ABLATION_ROOT / f"{horizon}d"
@@ -50,6 +62,10 @@ def set_global_seed(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        pass
 
 
 def _configure_logging(verbose: bool = False) -> None:
@@ -146,14 +162,13 @@ def _build_cross_symbol_news(
         news_embs = data["news_embs"]  # (N_samples, seq_len, 768)
         
         # Build per-symbol ordered timeline
-        sym_timeline = np.sort(np.unique(times))
-        sym_time_to_idx = {str(t): idx for idx, t in enumerate(sym_timeline)}
-        
+        sym_timeline = pd.to_datetime(np.sort(np.unique(times)))
+        sym_time_to_idx = {pd.Timestamp(t): idx for idx, t in enumerate(sym_timeline)}
         # Collect unique embeddings per bar for this symbol (one embedding per date, not per window)
         sym_embeddings = {}  # {bar_time_str: emb} — captures latest non-zero embedding
         
         for i, last_bar_time in enumerate(times):
-            last_bar_idx = sym_time_to_idx[str(last_bar_time)]
+            last_bar_idx = sym_time_to_idx[pd.Timestamp(last_bar_time)]
             
             for j in range(seq_len):
                 # Bar j in window i corresponds to bar at index (last_bar_idx - (seq_len - 1 - j))
@@ -165,7 +180,7 @@ def _build_cross_symbol_news(
                     emb = news_embs[i, j, :768]
                     
                     if np.any(emb != 0):
-                        date_key = str(bar_time)
+                        date_key = pd.Timestamp(bar_time)
                         # Store only one embedding per symbol per date (use latest if appears in multiple windows)
                         sym_embeddings[date_key] = emb
         
@@ -253,13 +268,13 @@ def _build_cross_symbol_news(
         pooled_masks = np.ones((N, S), dtype=bool)  # True = no news
 
         # Build per-symbol timeline for explicit lookups
-        sym_timeline = np.sort(np.unique(times))
-        sym_time_to_idx = {str(t): idx for idx, t in enumerate(sym_timeline)}
+        sym_timeline = pd.to_datetime(np.sort(np.unique(times)))
+        sym_time_to_idx = {pd.Timestamp(t): idx for idx, t in enumerate(sym_timeline)}
 
         # For each window, populate pooled embeddings via timestamp-based lookups
         for i in range(N):
             last_bar_time = times[i]
-            last_bar_idx = sym_time_to_idx[str(last_bar_time)]
+            last_bar_idx = sym_time_to_idx[pd.Timestamp(last_bar_time)]
             
             for j in range(S):
                 # Bar j in window i is at index (last_bar_idx - (S - 1 - j)) in the timeline
@@ -267,18 +282,32 @@ def _build_cross_symbol_news(
                 
                 if 0 <= bar_idx_in_timeline < len(sym_timeline):
                     bar_time = sym_timeline[bar_idx_in_timeline]
-                    bar_time_str = str(bar_time)
-                    
-                    # Lookup the attention-pooled embedding for this date
-                    if bar_time_str in pooled:
-                        pooled_windows[i, j, :] = pooled[bar_time_str]
+                    bar_time_key = pd.Timestamp(bar_time)
+                    if bar_time_key in pooled:
+                        pooled_windows[i, j, :] = pooled[bar_time_key]
                         pooled_masks[i, j] = False
 
-        result[sym] = (pooled_windows, pooled_masks)
 
+        result[sym] = (pooled_windows, pooled_masks)
+        covered = np.sum(~pooled_masks)
+        total = pooled_masks.size
+        coverage = covered / max(total, 1)
+
+        logger.warning(
+            "Cross-symbol coverage | sym={} covered_bars={} total_bars={} coverage={:.3f}",
+            sym, covered, total, coverage
+        )
     return result
 
-
+def _log_news_stats(tag: str, news_embs: np.ndarray, news_masks: np.ndarray) -> None:
+    zero_bar_ratio = float(np.mean(np.all(np.isclose(news_embs, 0.0), axis=-1)))
+    all_mask_ratio = float(np.mean(news_masks))
+    all_zero_window_ratio = float(np.mean(np.all(np.isclose(news_embs, 0.0), axis=(1, 2))))
+    logger.warning(
+        "{} | zero_bar_ratio={:.3f} all_mask_ratio={:.3f} all_zero_window_ratio={:.3f} shape={}",
+        tag, zero_bar_ratio, all_mask_ratio, all_zero_window_ratio, news_embs.shape,
+    )
+    
 def _extract_and_split(config: dict):
     """Run pipeline, extract per-symbol data, split by date, return combined splits."""
     from run_model_benchmark import (
@@ -316,6 +345,8 @@ def _extract_and_split(config: dict):
         # Inject cross-symbol news arrays into splits
         # Use the same purge-aware masks that split_by_date uses
         pooled_embs, pooled_masks = cross_symbol_news[sym]
+        _log_news_stats(f"{sym} pooled_all", pooled_embs, pooled_masks)
+        _log_news_stats(f"{sym} original_matched", sym_data["news_embs"][:, :, :768], sym_data["news_masks"])
         times = sym_data["times"]
         times_pd = pd.to_datetime(times)
         sorted_times = np.sort(np.unique(times_pd.values))  # datetime64[ns] array
@@ -336,13 +367,11 @@ def _extract_and_split(config: dict):
 
         for split_name, mask in [("train", train_mask), ("val", val_mask), ("test", test_mask)]:
             n_split = splits[split_name]["targets"].shape[0]
-            mask_indices = np.where(mask)[0][:n_split]
-            if len(mask_indices) != n_split:
-                raise RuntimeError(
-                    f"{sym} {split_name}: "
-                    f"alignment failure "
-                    f"(mask={len(mask_indices)}, split={n_split})"
-                )
+            logger.warning(
+                "{} {} | raw_mask_count={} split_count={}",
+                sym, split_name, int(mask.sum()), n_split
+            )
+            mask_indices = _assert_split_alignment(sym, split_name, times_pd, mask, n_split)
 
             splits[split_name]["news_embs_all"] = pooled_embs[mask_indices]
             splits[split_name]["news_masks_all"] = pooled_masks[mask_indices]
@@ -368,6 +397,20 @@ def _extract_and_split(config: dict):
     market_cols = list(getattr(dataset, "market_cols", []))
     return combined, market_cols
 
+def _assert_split_alignment(
+    sym: str,
+    split_name: str,
+    source_times: pd.Series | np.ndarray,
+    mask: np.ndarray,
+    n_split: int,
+) -> np.ndarray:
+    idx = np.where(mask)[0]
+    if len(idx) != n_split:
+        raise RuntimeError(
+            f"{sym} {split_name}: raw mask count {len(idx)} != split count {n_split}. "
+            "This indicates split alignment mismatch."
+        )
+    return idx
 
 def _run_table(
     table: str,
@@ -381,8 +424,10 @@ def _run_table(
 ) -> pd.DataFrame:
     """Run all cells for one table and return results DataFrame."""
     configs = generate_grid(table=table)
-    
+
     rows = []
+    failures = []
+
     with tqdm(
         total=len(configs),
         desc=f"  Cells ({table})",
@@ -411,13 +456,36 @@ def _run_table(
                     **metrics,
                 }
                 rows.append(row)
-                pbar.update(1)
             except Exception as e:
-                logger.error("FAILED {}: {}", cfg.cell_id, e)
+                failures.append({
+                    "cell_id": getattr(cfg, "cell_id", "unknown"),
+                    "model_name": cfg.model_name,
+                    "fusion_type": cfg.fusion_type,
+                    "news_scope": cfg.news_scope,
+                    "sentiment_mode": cfg.sentiment_mode,
+                    "use_positional_encoding": cfg.use_positional_encoding,
+                    "use_news_gate": cfg.use_news_gate,
+                    "recency_gate_k": cfg.recency_gate_k,
+                    "use_two_stage": cfg.use_two_stage,
+                    "use_aux_loss": cfg.use_aux_loss,
+                    "use_variance_reg": cfg.use_variance_reg,
+                    "seed": seed,
+                    "error": repr(e),
+                })
+                logger.error("FAILED {}: {}", getattr(cfg, "cell_id", "unknown"), e)
+            finally:
                 pbar.update(1)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if failures:
+        fail_df = pd.DataFrame(failures)
+        fail_dir = Path("results/ablation_failures")
+        fail_dir.mkdir(parents=True, exist_ok=True)
+        fail_path = fail_dir / f"{table}__{horizon}d__seed{seed}.csv"
+        fail_df.to_csv(fail_path, index=False)
+        logger.warning("Saved {} failed cells to {}", len(failures), fail_path)
 
+    return df
 
 def _make_summary_row(table: str, df: pd.DataFrame, horizon: int) -> dict:
     """Return summary row with forecast winner and trading winner."""
@@ -489,53 +557,94 @@ def _make_summary_row(table: str, df: pd.DataFrame, horizon: int) -> dict:
         "best_trading_f1":
             round(float(best_trading.get("F1", 0)), 3),
     }
-def _average_seed_dfs(dfs: list[pd.DataFrame]) -> pd.DataFrame:
+def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -> pd.DataFrame:
     """
-    Average metrics across seeds and store std columns.
+    Average metrics across seeds by config key, not by row order.
+    Adds std columns and a seed_count column for auditability.
     """
+
+    if not dfs:
+        return pd.DataFrame()
 
     if len(dfs) == 1:
-        return dfs[0]
-
-    ref = dfs[0].copy()
+        out = dfs[0].copy()
+        out["seed_count"] = 1
+        return out
 
     metric_cols = [
+        "MAE",
+        "RMSE",
         "DA%",
         "Sharpe",
         "IC",
-        "RMSE",
-        "MAE",
+        "Prec",
+        "Rec",
         "F1",
-        "DA_skill%",
-        "base_rate_DA%",
         "ESS",
+        "base_rate_DA%",
+        "DA_skill%",
     ]
 
-    for col in metric_cols:
-
-        if col not in ref.columns:
+    work = []
+    for i, df in enumerate(dfs):
+        if df.empty:
             continue
 
-        arrays = np.stack([
-            df[col].values
-            for df in dfs
-            if col in df.columns
-        ])
+        missing_keys = [c for c in _CONFIG_KEY_COLS if c not in df.columns]
+        if missing_keys:
+            raise ValueError(f"Seed DataFrame missing key columns: {missing_keys}")
 
-        ref[col] = arrays.mean(axis=0)
+        df_i = df.copy()
+        seed_label = seeds[i] if seeds is not None and i < len(seeds) else i
+        df_i["__seed__"] = seed_label
+        work.append(df_i)
 
-        ref[f"{col}_std"] = arrays.std(
-            axis=0,
-            ddof=1
+    if not work:
+        return pd.DataFrame()
+
+    long_df = pd.concat(work, axis=0, ignore_index=True)
+
+    # Audit duplicate rows within same seed/config
+    dup_mask = long_df.duplicated(subset=_CONFIG_KEY_COLS + ["__seed__"], keep=False)
+    if dup_mask.any():
+        dup_rows = long_df.loc[dup_mask, _CONFIG_KEY_COLS + ["__seed__"]]
+        raise ValueError(
+            "Duplicate config rows found within the same seed.\n"
+            f"{dup_rows.to_string(index=False)}"
         )
 
-    if "degenerate" in ref.columns:
-        ref["degenerate"] = np.any(
-            [df["degenerate"].values for df in dfs],
-            axis=0,
+    group = long_df.groupby(_CONFIG_KEY_COLS, dropna=False, as_index=False)
+
+    # Start with one row per config
+    out = group.size().rename(columns={"size": "seed_count"})
+
+    # Mean/std for metric columns that actually exist
+    for col in metric_cols:
+        if col not in long_df.columns:
+            continue
+
+        stats = group[col].agg(["mean", "std"]).reset_index()
+        stats = stats.rename(columns={
+            "mean": col,
+            "std": f"{col}_std",
+        })
+        out = out.merge(stats, on=_CONFIG_KEY_COLS, how="left")
+
+    # Degenerate: True if any contributing seed was degenerate
+    if "degenerate" in long_df.columns:
+        deg = group["degenerate"].agg(lambda x: bool(np.any(x.astype(bool)))).reset_index()
+        out = out.merge(deg, on=_CONFIG_KEY_COLS, how="left")
+
+    # Optional audit: warn on incomplete seed coverage
+    expected = len(work)
+    incomplete = out[out["seed_count"] < expected]
+    if not incomplete.empty:
+        logger.warning(
+            "Some configs are missing in one or more seeds: {} incomplete rows",
+            len(incomplete),
         )
 
-    return ref
+    return out
 
 def _average_seed_predictions(cache_dir: Path, seeds: list[int], horizons: list[int]) -> None:
     """Merge per-seed pr    ediction .npy files into canonical files for bootstrap CI / DM test."""
@@ -657,13 +766,17 @@ def main() -> None:
                 ncols=100,
                 position=2,
             ):
+                set_global_seed(seed)
+                logger.warning("    ▶ Running seed {}", seed)
+
                 df_seed = _run_table(
                     table, splits, market_cols, horizon, device, chronos,
                     hpo_params=hpo_params, seed=seed
                 )
+                df_seed["run_seed"] = seed
                 seed_dfs.append(df_seed)
             
-            df = _average_seed_dfs(seed_dfs)
+            df = _average_seed_dfs(seed_dfs, seeds=args.seeds)
             csv_path = hdir / f"{table}.csv"
             df.to_csv(csv_path, index=False)
             logger.warning(f"  ✓ {table:15} → {csv_path.name}")

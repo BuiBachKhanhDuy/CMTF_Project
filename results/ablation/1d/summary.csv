@@ -1,5 +1,5 @@
-table,horizon,best_model,best_setting,DA%,Sharpe,IC,RMSE,F1
-fusion,1,cnn_lstm,late,56.35,1.622,0.0775,0.01905,0.532
-news_scope,1,cnn_lstm,matched,56.35,1.622,0.0775,0.01905,0.532
-sentiment,1,cnn_lstm,scalars,56.35,1.622,0.0775,0.01905,0.532
-component,1,cnn_lstm,False,56.65,1.907,0.0943,0.01903,0.515
+table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1
+fusion,1,cnn_lstm,hybrid,53.79,0.0806,0.01908,cnn_lstm,hybrid,0.846,0.363
+news_scope,1,rf,all,54.03,0.0709,0.01946,rf,all,0.665,0.45
+sentiment,1,rf,none,53.91,0.0973,0.01958,rf,scalars,0.593,0.452
+component,1,cnn_lstm,True,53.79,0.0806,0.01908,cnn_lstm,True,1.074,0.523

@@ -31,7 +31,6 @@ from loguru import logger
 
 from .training_utils import compute_huber_delta, train_with_early_stopping
 
-
 def sign_aware_huber_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -39,16 +38,16 @@ def sign_aware_huber_loss(
     sign_penalty_weight: float = 0.05,
     direction_epsilon: float = 1e-4,
     weights: torch.Tensor | None = None,
+    margin: float = 0.0,
 ) -> torch.Tensor:
-    """Huber regression loss with an additional smooth wrong-direction penalty."""
     loss_fn = nn.HuberLoss(delta=huber_delta, reduction="none")
     loss_huber = loss_fn(pred, target)
 
     active_direction = torch.abs(target) > direction_epsilon
-    wrong_sign_mask = (pred * target < 0) & active_direction
-    
-    # Quadratic penalty for wrong direction avoids the "zero-prediction trap"
-    loss_wrong_dir = (pred ** 2) * wrong_sign_mask.float()
+
+    # Positive if sign is wrong or confidence is too weak
+    direction_term = torch.relu(margin - pred * torch.sign(target))
+    loss_wrong_dir = direction_term * active_direction.float()
 
     if weights is not None:
         norm_weights = weights / weights.mean().clamp_min(1e-8)
@@ -244,7 +243,7 @@ class LSTMPredictor(BaseTorchMarketPredictor):
 
         self.fc = nn.Sequential(
             nn.Linear(self.d_model, hidden_dim // 2),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(hidden_dim // 2, 1),
         )
         self.to(self.device)
@@ -345,7 +344,7 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Sequential(
             nn.Linear(self.d_model, hidden_dim // 2),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(hidden_dim // 2, 1),
         )
         self.to(self.device)
@@ -444,7 +443,14 @@ class RandomForestRegressor_Wrapper:
         )
         return features.astype(np.float32)
     
-    def fit(self, market_windows_train: np.ndarray, targets_train: np.ndarray) -> None:
+    def fit(
+        self,
+        market_windows_train: np.ndarray,
+        targets_train: np.ndarray,
+        market_windows_val: np.ndarray | None = None,
+        targets_val: np.ndarray | None = None,
+        **kwargs,
+    ) -> None:
         X_train = self._extract_features(market_windows_train)
         X_train_scaled = self.scaler.fit_transform(X_train)
         self.model.fit(X_train_scaled, targets_train)
@@ -559,6 +565,7 @@ class FineTunedChronosPredictor:
         batch_size: int = 32,
         learning_rate: float = 1e-4,
         patience: int = 5,
+        **kwargs,
     ) -> dict:
         import torch.optim as optim
         
