@@ -22,24 +22,17 @@ class CMTFDataset(Dataset):
 
     Each sample is a dict with:
         - ``'market'``:  ``Tensor[seq_len, n_market_features]``  (float32)
-        - ``'news'``:    ``Tensor[seq_len, 768]``                (float32)
+        - ``'news'``:    ``Tensor[seq_len, news_dim]``           (float32)
         - ``'mask'``:    ``Tensor[seq_len]``                     (bool, True = no news)
         - ``'target'``:  ``Tensor[horizon]``                     (float32)
 
-    Args:
-        df_featured: DataFrame containing OHLCV features, technical
-            indicators, ``news_emb`` (np.ndarray 768-dim per row),
-            ``has_news`` (bool), and forward-return target columns.
-        sequence_len: Number of look-back bars per sample.
-        horizon: Forward prediction horizon (default 1).
-        target_horizon_days: Which forward-return label to learn,
-            e.g. 1 -> ``fwd_ret_1d``, 5 -> ``fwd_ret_5d``.
+    Notes:
+        - We preserve the ``time`` column in ``self.df`` so benchmark code can
+          later reconstruct chronological splits and align raw OHLCV.
+        - Market features are true market-only features: no sentiment trace
+          columns, no news-derived columns, no forward-return target columns.
     """
 
-    # Columns that are NOT market input features.
-    # NOTE: SENTIMENT_TRACE_COLUMNS (sentiment_mean, sentiment_max_abs, etc.)
-    # are intentionally NOT excluded so they flow into market_cols as additional
-    # predictive features alongside OHLCV + technical indicators.
     _EXCLUDE_COLS = {
         "news_emb",
         NEWS_HYBRID_COLUMN,
@@ -49,6 +42,10 @@ class CMTFDataset(Dataset):
         "news_content",
         "news_missing_flag",
         "symbol",
+        "index",
+        "level_0",
+        "Unnamed: 0",
+        *set(SENTIMENT_TRACE_COLUMNS),
     }
 
     def __init__(
@@ -58,51 +55,75 @@ class CMTFDataset(Dataset):
         horizon: int = 1,
         target_horizon_days: int = 1,
     ) -> None:
-        self.sequence_len = sequence_len
-        self.horizon = horizon
+        self.sequence_len = int(sequence_len)
+        self.horizon = int(horizon)
         self.target_horizon_days = int(target_horizon_days)
         self.target_col = f"fwd_ret_{self.target_horizon_days}d"
-        self.df = df_featured.reset_index(drop=False)
 
-        if self.target_col not in self.df.columns:
+        df = df_featured.copy()
+
+        # Preserve time as a column.
+        # If it exists only in the index, restore it.
+        if "time" not in df.columns:
+            if df.index.name == "time":
+                df = df.reset_index()
+            elif isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index().rename(columns={df.index.name or "index": "time"})
+            else:
+                # Keep existing row order, but make the schema failure explicit
+                raise ValueError("df_featured must contain a 'time' column or DatetimeIndex")
+
+        # Clean stray index-like columns except preserved "time"
+        stray_cols = [c for c in ("index", "level_0", "Unnamed: 0") if c in df.columns]
+        if stray_cols:
+            df = df.drop(columns=stray_cols)
+
+        if "symbol" not in df.columns:
+            raise ValueError("df_featured must contain a 'symbol' column")
+        if self.target_col not in df.columns:
             raise ValueError(f"Missing target column: {self.target_col}")
+        if "has_news" not in df.columns:
+            raise ValueError("Missing required column: has_news")
+
+        # Keep canonical order and clean index only after preserving time
+        self.df = df.reset_index(drop=True).copy()
 
         fwd_cols = [c for c in self.df.columns if re.match(r"^fwd_ret_\d+d$", str(c))]
 
-        # Identify column groups
+        # Pure market-only features
         self.market_cols = [
             c
             for c in self.df.columns
             if c not in self._EXCLUDE_COLS
             and c not in fwd_cols
             and c != "time"
-            and self.df[c].dtype in (np.float64, np.float32, np.int64, np.int32, float, int)
+            and pd.api.types.is_numeric_dtype(self.df[c])
         ]
+
+        if not self.market_cols:
+            raise ValueError("No valid market feature columns found after exclusion rules")
+
         logger.info(
-            "CMTFDataset | {} market features | seq_len={} | horizon={} | target={}",
+            "CMTFDataset | {} pure market features | seq_len={} | horizon={} | target={}",
             len(self.market_cols),
-            sequence_len,
-            horizon,
+            self.sequence_len,
+            self.horizon,
             self.target_col,
         )
 
-        # Pre-compute numpy arrays for speed
-        self._market = self.df[self.market_cols].values.astype(np.float32)
+        self._market = self.df[self.market_cols].astype(np.float32).to_numpy(copy=True)
 
-        # News embeddings → (N, 768) array
         news_column = NEWS_HYBRID_COLUMN if NEWS_HYBRID_COLUMN in self.df.columns else "news_emb"
+        if news_column not in self.df.columns:
+            raise ValueError(f"Missing news embedding column: {news_column}")
+
         news_emb_list = self.df[news_column].tolist()
-        self._news = np.stack(news_emb_list).astype(np.float32)  # (N, 768)
+        self._news = np.stack(news_emb_list).astype(np.float32)
 
-        # Mask: True where there is NO news (inverted has_news)
-        self._mask = (~self.df["has_news"].astype(bool)).values  # True = no news
+        self._mask = (~self.df["has_news"].astype(bool)).to_numpy(copy=True)
+        self._target = self.df[self.target_col].astype(np.float32).to_numpy(copy=True)
 
-        # Target
-        self._target = self.df[self.target_col].values.astype(np.float32)
-
-        # Valid indices (need seq_len history and horizon forward target)
         self._valid_start = self.sequence_len - 1
-        # Last valid index: need target at i + horizon - 1, so i + horizon - 1 < len
         self._valid_end = len(self.df) - self.horizon
 
     def __len__(self) -> int:
@@ -112,15 +133,14 @@ class CMTFDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         actual_idx = self._valid_start + idx
         start = actual_idx - self.sequence_len + 1
-        end = actual_idx + 1  # exclusive
+        end = actual_idx + 1
 
-        market = torch.from_numpy(self._market[start:end].copy())        # (seq_len, F)
-        news = torch.from_numpy(self._news[start:end].copy())            # (seq_len, 768)
-        mask = torch.from_numpy(self._mask[start:end].copy())            # (seq_len,)
+        market = torch.from_numpy(self._market[start:end].copy())
+        news = torch.from_numpy(self._news[start:end].copy())
+        mask = torch.from_numpy(self._mask[start:end].copy())
 
-        # Target: forward returns for `horizon` steps starting at actual_idx
         target_vals = self._target[actual_idx : actual_idx + self.horizon]
-        target = torch.from_numpy(target_vals.copy())                     # (horizon,)
+        target = torch.from_numpy(target_vals.copy())
 
         return {
             "market": market,

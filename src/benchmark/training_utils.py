@@ -40,9 +40,9 @@ def train_with_early_stopping(
 
     Args:
         model: nn.Module to train.
-        X_train, y_train: Training tensors (already on device, y already scaled).
-        X_val, y_val: Validation tensors (already on device, y already scaled).
-        loss_fn: Callable(pred, target) → scalar loss tensor.
+        X_train, y_train: Training tensors (CPU or device tensors, y already scaled).
+        X_val, y_val: Validation tensors (CPU or device tensors, y already scaled).
+        loss_fn: Callable(pred, target, epoch=...) -> scalar loss tensor.
         optimizer: Pre-configured optimizer.
         scheduler: Optional LR scheduler (must have .step(val_loss)).
         epochs: Max epochs.
@@ -51,12 +51,10 @@ def train_with_early_stopping(
         max_grad_norm: Gradient clipping norm.
         model_name: For logging.
         warmup_epochs: Linear LR warmup from 10%→100% of base LR over this many epochs.
-            Helps avoid early convergence to degenerate constant prediction on long horizons.
 
     Returns:
         {"train_losses": [...], "val_losses": [...], "best_val_loss": float}
     """
-    # Save base LRs before warmup manipulation
     base_lrs = [pg["lr"] for pg in optimizer.param_groups]
 
     n_train = len(X_train)
@@ -66,8 +64,9 @@ def train_with_early_stopping(
     best_state: dict | None = None
     patience_counter = 0
 
+    device = getattr(model, "device", "cpu")
+
     for epoch in range(epochs):
-        # --- LR warmup: linearly ramp from 10% → 100% of base LR ---
         if warmup_epochs > 0 and epoch < warmup_epochs:
             scale = 0.1 + 0.9 * (epoch + 1) / warmup_epochs
             for pg, base_lr in zip(optimizer.param_groups, base_lrs):
@@ -83,24 +82,28 @@ def train_with_early_stopping(
 
         for i in range(0, n_train, batch_size):
             batch_idx = indices[i : i + batch_size]
+
+            X_batch = X_train[batch_idx].to(device)
+            y_batch = y_train[batch_idx].to(device)
+
             optimizer.zero_grad()
-            pred = model.forward(X_train[batch_idx])
-            loss = loss_fn(pred, y_train[batch_idx])
+            pred = model(X_batch)
+            loss = loss_fn(pred, y_batch, epoch=epoch)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             optimizer.step()
+
             epoch_loss += loss.item()
             n_batches += 1
 
-        train_losses.append(epoch_loss / n_batches)
+        train_losses.append(epoch_loss / max(n_batches, 1))
 
         model.eval()
         with torch.no_grad():
-            pred_val = model.forward(X_val)
-            val_loss = loss_fn(pred_val, y_val).item()
+            pred_val = model(X_val.to(device))
+            val_loss = loss_fn(pred_val, y_val.to(device), epoch=epoch).item()
         val_losses.append(val_loss)
 
-        # Skip scheduler step during warmup to prevent LR from being cut before it settles
         if scheduler is not None and epoch >= warmup_epochs:
             scheduler.step(val_loss)
 

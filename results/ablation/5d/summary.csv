@@ -1,5 +1,2 @@
 table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1
-fusion,5,lstm,late,56.48,0.1818,0.04629,lstm,late,1.132,0.511
-news_scope,5,lstm,matched,56.48,0.1818,0.04629,lstm,matched,1.132,0.511
-sentiment,5,lstm,none,57.15,0.1858,0.04637,lstm,none,1.224,0.586
-component,5,lstm,True,53.66,0.2036,0.04657,cnn_lstm,False,0.464,0.549
+fusion,5,lstm,late,50.98,0.1435,0.0468,rf,late,0.257,0.48

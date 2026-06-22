@@ -6,12 +6,10 @@ Invalid cells are never generated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import product
-from typing import Literal
 
-
-MODELS = ("lstm", "rf", "cnn_lstm")
+MODELS = ("lstm", "lstm_hybrid", "rf", "cnn_lstm", "cnn_lstm_hybrid")
 FUSION_TYPES = ("none", "early", "late", "hybrid")
 NEWS_SCOPES = ("none", "matched", "all")
 SENTIMENT_MODES = ("none", "scalars", "weighted_emb")
@@ -28,32 +26,37 @@ class AblationConfig:
     use_positional_encoding: bool = True
     recency_gate_k: int = 5
     use_news_gate: bool = True
-    # CMTF flags (only meaningful for hybrid)
     use_two_stage: bool = True
     use_aux_loss: bool = True
     use_variance_reg: bool = True
 
     def is_valid(self) -> bool:
         """Check hard constraints for this config."""
+        hybrid_backbones = {"lstm_hybrid", "cnn_lstm_hybrid"}
+
         # Fusion requires news
         if self.fusion_type != "none" and self.news_scope == "none":
             return False
-        # No-fusion + sentiment still needs news context (sentiment comes from news)
+
+        # Sentiment requires news context
         if self.sentiment_mode != "none" and self.news_scope == "none":
             return False
-        # Hybrid requires latent space (not RF)
-        if self.fusion_type == "hybrid" and self.model_name == "rf":
+
+        # RF does not support early/hybrid fusion
+        if self.model_name == "rf" and self.fusion_type in ("early", "hybrid"):
             return False
-        # Early fusion requires input_dim expansion (not RF)
-        if self.fusion_type == "early" and self.model_name == "rf":
+
+        # Best-state hybrid backbones do not support current EarlyFusionWrapper
+        if self.model_name in hybrid_backbones and self.fusion_type == "early":
             return False
-        # Toggle flags only meaningful for hybrid
+
+        # Toggle flags only meaningful for hybrid fusion
         if self.fusion_type != "hybrid":
             if not self.use_positional_encoding or not self.use_news_gate or self.recency_gate_k != 5:
                 return False
             if not self.use_two_stage or not self.use_aux_loss or not self.use_variance_reg:
                 return False
-        # No-fusion + no-news + no-sentiment = market-only baseline (valid)
+
         return True
 
     @property
@@ -83,50 +86,67 @@ def generate_grid(table: str = "all") -> list[AblationConfig]:
     configs: list[AblationConfig] = []
 
     if table in ("fusion", "all"):
-        # Table 1: Model × Fusion, fixed news=matched, sentiment=scalars
         for model, fusion in product(MODELS, FUSION_TYPES):
             if fusion == "none":
-                cfg = AblationConfig(model_name=model, fusion_type=fusion, news_scope="none", sentiment_mode="none")
+                cfg = AblationConfig(
+                    model_name=model,
+                    fusion_type=fusion,
+                    news_scope="none",
+                    sentiment_mode="none",
+                )
             else:
-                cfg = AblationConfig(model_name=model, fusion_type=fusion, news_scope="matched", sentiment_mode="scalars")
+                cfg = AblationConfig(
+                    model_name=model,
+                    fusion_type=fusion,
+                    news_scope="matched",
+                    sentiment_mode="scalars",
+                )
             if cfg.is_valid():
                 configs.append(cfg)
 
     if table in ("news_scope", "all"):
-        # Table 2: Model × NewsScope, fixed fusion=late (universal), sentiment=scalars
         for model, scope in product(MODELS, NEWS_SCOPES):
             if scope == "none":
-                cfg = AblationConfig(model_name=model, fusion_type="none", news_scope="none", sentiment_mode="none")
+                cfg = AblationConfig(
+                    model_name=model,
+                    fusion_type="none",
+                    news_scope="none",
+                    sentiment_mode="none",
+                )
             else:
-                cfg = AblationConfig(model_name=model, fusion_type="late", news_scope=scope, sentiment_mode="scalars")
+                cfg = AblationConfig(
+                    model_name=model,
+                    fusion_type="hybrid",
+                    news_scope=scope,
+                    sentiment_mode="scalars",
+                )
             if cfg.is_valid():
                 configs.append(cfg)
 
     if table in ("sentiment", "all"):
-        # Table 3: Model × Sentiment, fixed fusion=late, news=matched
         for model, sent in product(MODELS, SENTIMENT_MODES):
-            if sent == "none":
-                cfg = AblationConfig(model_name=model, fusion_type="late", news_scope="matched", sentiment_mode=sent)
-            else:
-                cfg = AblationConfig(model_name=model, fusion_type="late", news_scope="matched", sentiment_mode=sent)
+            cfg = AblationConfig(
+                model_name=model,
+                fusion_type="hybrid",
+                news_scope="matched",
+                sentiment_mode=sent,
+            )
             if cfg.is_valid():
                 configs.append(cfg)
 
     if table in ("component", "all"):
-        # Table 4: Component ablation (hybrid only, models with d_model > 0)
         hybrid_models = [m for m in MODELS if m != "rf"]
         toggle_combos = [
-            # (pe, gate, k, two_stage, aux_loss, var_reg) — description
-            (True,  True,  5, True,  True,  True),   # full CMTF (baseline)
-            (False, True,  5, True,  True,  True),   # no positional encoding
-            (True,  False, 5, True,  True,  True),   # no news gate
-            (True,  True,  3, True,  True,  True),   # smaller recency window
-            (True,  True, 10, True,  True,  True),   # larger recency window
-            (False, False, 5, True,  True,  True),   # no PE + no gate
-            (False, True,  5, False, True,  True),   # pruned CMTF: PE=N + single-stage
-            (True,  True,  5, False, True,  True),   # single-stage only
-            (True,  True,  5, True,  False, True),   # no aux loss
-            (True,  True,  5, True,  True,  False),  # no variance reg
+            (True, True, 5, True, True, True),
+            (False, True, 5, True, True, True),
+            (True, False, 5, True, True, True),
+            (True, True, 3, True, True, True),
+            (True, True, 10, True, True, True),
+            (False, False, 5, True, True, True),
+            (False, True, 5, False, True, True),
+            (True, True, 5, False, True, True),
+            (True, True, 5, True, False, True),
+            (True, True, 5, True, True, False),
         ]
         for model, (pe, gate, k, ts, aux, vreg) in product(hybrid_models, toggle_combos):
             cfg = AblationConfig(
@@ -144,5 +164,4 @@ def generate_grid(table: str = "all") -> list[AblationConfig]:
             if cfg.is_valid():
                 configs.append(cfg)
 
-    # Deduplicate (frozen dataclass is hashable)
     return list(dict.fromkeys(configs))

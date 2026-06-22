@@ -40,100 +40,126 @@ class ChronosMarketPredictor:
         self.d_model = emb.shape[-1]
         logger.info("Chronos d_model = {}", self.d_model)
 
-    # ------------------------------------------------------------------
-    # Zero-shot prediction
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Zero-shot prediction
+        # ------------------------------------------------------------------
     def zero_shot_predict(
-        self,
-        close_windows: np.ndarray,
-        last_close: np.ndarray,
-        seed: int = 42,
-        horizon: int = 1,
-        num_samples: int = 64,
-        aggregation: str = "median",
-        return_diagnostics: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
-        """Predict H-step-ahead log-return using Chronos zero-shot on log-returns.
+            self,
+            close_windows: np.ndarray,
+            last_close: np.ndarray,
+            seed: int = 42,
+            horizon: int = 1,
+            num_samples: int = 20,
+            aggregation: str = "median",
+            return_diagnostics: bool = False,
+        ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
+            """Predict H-step-ahead log-return using Chronos zero-shot on log-returns."""
+            if aggregation not in {"median", "mean"}:
+                raise ValueError("aggregation must be one of {'median', 'mean'}")
 
-        Feeds log-returns (not absolute prices) to Chronos for better token
-        diversity. The model forecasts future log-returns; cumulative sum gives
-        the H-day return.
+            all_preds: list[np.ndarray] = []
+            all_std: list[np.ndarray] = []
+            all_q10: list[np.ndarray] = []
+            all_q90: list[np.ndarray] = []
+            n = len(close_windows)
 
-        Args:
-            close_windows: (N, seq_len) raw close prices per sample.
-            last_close: (N,) the last close price in each window (kept for API
-                compatibility but unused in log-return mode).
-            seed: RNG seed for reproducible Chronos sampling.
-            horizon: Number of steps ahead to forecast (prediction_length).
-            num_samples: Number of probabilistic samples drawn from Chronos.
-            aggregation: Point estimate aggregation ("median" or "mean").
-            return_diagnostics: If True, also return sample-dispersion metrics.
+            if n == 0:
+                out = np.empty((0,), dtype=np.float32)
+                if not return_diagnostics:
+                    return out
+                return out, {
+                    "pred_std": out.copy(),
+                    "pred_q10": out.copy(),
+                    "pred_q90": out.copy(),
+                    "pred_iqr80": out.copy(),
+                }
 
-        Returns:
-            (N,) predicted cumulative log-returns over *horizon* steps.
-        """
-        if aggregation not in {"median", "mean"}:
-            raise ValueError("aggregation must be one of {'median', 'mean'}")
-
-        all_preds: list[np.ndarray] = []
-        all_std: list[np.ndarray] = []
-        all_q10: list[np.ndarray] = []
-        all_q90: list[np.ndarray] = []
-        n = len(close_windows)
-
-        # Convert absolute prices → log-returns for token diversity
-        prices = np.clip(close_windows, 1e-12, None)
-        log_returns_input = np.diff(np.log(prices), axis=1)  # (N, seq_len-1)
-        log_returns_input = np.concatenate(
-            [np.zeros((log_returns_input.shape[0], 1), dtype=log_returns_input.dtype),
-             log_returns_input],
-            axis=1,
-        )  # (N, seq_len)
-
-        for start in range(0, n, self.batch_size):
-            end = min(start + self.batch_size, n)
-            batch = torch.tensor(
-                log_returns_input[start:end], dtype=torch.float32
+            prices = np.clip(np.asarray(close_windows, dtype=np.float32), 1e-12, None)
+            log_returns_input = np.diff(np.log(prices), axis=1)
+            log_returns_input = np.concatenate(
+                [
+                    np.zeros((log_returns_input.shape[0], 1), dtype=log_returns_input.dtype),
+                    log_returns_input,
+                ],
+                axis=1,
             )
-            # Seed before each batch for deterministic sampling
-            torch.manual_seed(seed + start)
-            forecast = self.pipeline.predict(
-                batch, prediction_length=horizon, num_samples=num_samples,
+
+            logger.info(
+                "Chronos zero-shot start | N={} | seq_len={} | horizon={} | batch_size={} | num_samples={}",
+                n,
+                log_returns_input.shape[1],
+                horizon,
+                self.batch_size,
+                num_samples,
             )
-            # forecast shape: (batch, num_samples, horizon)
-            # Output is in log-return space; sum across horizon for cumulative return
-            sampled_returns = forecast.sum(dim=-1).cpu().numpy()  # (batch, num_samples)
 
-            if aggregation == "median":
-                point_estimate = np.median(sampled_returns, axis=1)
-            else:
-                point_estimate = np.mean(sampled_returns, axis=1)
+            for start in range(0, n, self.batch_size):
+                end = min(start + self.batch_size, n)
 
-            all_preds.append(point_estimate)
-            all_std.append(np.std(sampled_returns, axis=1))
-            all_q10.append(np.quantile(sampled_returns, 0.10, axis=1))
-            all_q90.append(np.quantile(sampled_returns, 0.90, axis=1))
+                logger.info(
+                    "Chronos zero-shot batch {}/{} | rows {}:{}",
+                    (start // self.batch_size) + 1,
+                    (n + self.batch_size - 1) // self.batch_size,
+                    start,
+                    end,
+                )
 
-        pred_returns = np.concatenate(all_preds)  # (N,)
+                batch = torch.tensor(
+                    log_returns_input[start:end],
+                    dtype=torch.float32,
+                )
 
-        if not return_diagnostics:
-            return pred_returns
+                # Explicit device placement
+                if self.device != "cpu":
+                    batch = batch.to(self.device)
 
-        pred_std = np.concatenate(all_std)
-        pred_q10 = np.concatenate(all_q10)
-        pred_q90 = np.concatenate(all_q90)
-        diagnostics = {
-            "pred_std": pred_std,
-            "pred_q10": pred_q10,
-            "pred_q90": pred_q90,
-            "pred_iqr80": pred_q90 - pred_q10,
-        }
-        logger.info(
-            "Zero-shot uncertainty | mean std={:.6f} | mean iqr80={:.6f}",
-            float(np.mean(pred_std)) if len(pred_std) else 0.0,
-            float(np.mean(diagnostics["pred_iqr80"])) if len(pred_std) else 0.0,
-        )
-        return pred_returns, diagnostics
+                torch.manual_seed(seed + start)
+
+                with torch.no_grad():
+                    forecast = self.pipeline.predict(
+                        batch,
+                        prediction_length=horizon,
+                        num_samples=num_samples,
+                    )
+
+                # Expected shape: (batch, num_samples, horizon)
+                if not isinstance(forecast, torch.Tensor):
+                    forecast = torch.as_tensor(forecast)
+
+                sampled_returns = forecast.sum(dim=-1).cpu().numpy()
+
+                if aggregation == "median":
+                    point_estimate = np.median(sampled_returns, axis=1)
+                else:
+                    point_estimate = np.mean(sampled_returns, axis=1)
+
+                all_preds.append(point_estimate.astype(np.float32))
+                all_std.append(np.std(sampled_returns, axis=1).astype(np.float32))
+                all_q10.append(np.quantile(sampled_returns, 0.10, axis=1).astype(np.float32))
+                all_q90.append(np.quantile(sampled_returns, 0.90, axis=1).astype(np.float32))
+
+            pred_returns = np.concatenate(all_preds, axis=0).astype(np.float32)
+
+            if not return_diagnostics:
+                return pred_returns
+
+            pred_std = np.concatenate(all_std, axis=0).astype(np.float32)
+            pred_q10 = np.concatenate(all_q10, axis=0).astype(np.float32)
+            pred_q90 = np.concatenate(all_q90, axis=0).astype(np.float32)
+
+            diagnostics = {
+                "pred_std": pred_std,
+                "pred_q10": pred_q10,
+                "pred_q90": pred_q90,
+                "pred_iqr80": (pred_q90 - pred_q10).astype(np.float32),
+            }
+
+            logger.info(
+                "Zero-shot uncertainty | mean std={:.6f} | mean iqr80={:.6f}",
+                float(np.mean(pred_std)) if len(pred_std) else 0.0,
+                float(np.mean(diagnostics["pred_iqr80"])) if len(pred_std) else 0.0,
+            )
+            return pred_returns, diagnostics
 
     # ------------------------------------------------------------------
     # Embeddings extraction
