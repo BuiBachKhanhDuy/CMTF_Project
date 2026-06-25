@@ -1,10 +1,19 @@
-"""Run ablation benchmark: model-agnostic grid over fusion × news × sentiment × components.
+"""
+Run ablation benchmark: model-agnostic grid over the final ablation study axes.
+
+Tables:
+    data_ablation
+        market-only baseline vs early fusion baseline vs late fusion baseline vs CMTF
+    architecture_ablation
+        CMTF with cross-attention ON vs OFF
+    feature_extractor_ablation
+        varying market backbone / encoder where supported
 
 Usage:
-    python run_ablation_benchmark.py                           # full run
-    python run_ablation_benchmark.py --table fusion            # Table 1 only
-    python run_ablation_benchmark.py --table component --horizons 1 5
-    python run_ablation_benchmark.py --stage plot              # regenerate plots from CSVs
+    python run_ablation_benchmark.py
+    python run_ablation_benchmark.py --table data_ablation
+    python run_ablation_benchmark.py --table architecture_ablation --horizons 1 5
+    python run_ablation_benchmark.py --stage plot
 """
 
 from __future__ import annotations
@@ -13,10 +22,12 @@ import argparse
 import os
 import random
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
+
 import numpy as np
 import pandas as pd
 import torch
@@ -37,14 +48,32 @@ _CONFIG_KEY_COLS = [
     "fusion_type",
     "news_scope",
     "sentiment_mode",
+    "market_encoder_name",
+    "use_cross_attention",
     "use_positional_encoding",
     "use_news_gate",
     "recency_gate_k",
     "use_two_stage",
     "use_aux_loss",
     "use_variance_reg",
-]
 
+    # CMTF tuning fields
+    "fusion_market_dim",
+    "fusion_hidden_dim",
+    "projected_news_dim",
+    "n_heads",
+    "dropout",
+    "encoder_lr_scale",
+    "sign_penalty_weight",
+    "aux_loss_weight",
+    "stage1_ratio",
+    "market_epochs",
+    "fusion_epochs",
+    "market_patience",
+    "fusion_patience",
+    "news_gate_alpha",
+    "variance_reg_coeff",
+]
 
 def _horizon_dir(horizon: int) -> Path:
     return _ABLATION_ROOT / f"{horizon}d"
@@ -54,22 +83,28 @@ def _figures_dir(horizon: int) -> Path:
     return _horizon_dir(horizon) / "figures"
 
 
-def set_global_seed(seed: int) -> None:
+def configure_determinism() -> None:
+    """Set process-wide deterministic flags once."""
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    try:
+        torch.use_deterministic_algorithms(True)
+        logger.warning("Deterministic algorithms: enabled")
+    except Exception as e:
+        logger.warning("Deterministic algorithms not fully enabled: {}", e)
+
+
+def reseed_everything(seed: int) -> None:
+    """Reseed RNGs for one run/seed; does not reset process-global backend flags."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    try:
-        torch.use_deterministic_algorithms(True)
-    except Exception:
-        pass
 
 
 def _configure_logging(verbose: bool = False) -> None:
-    """Configure loguru for clean CLI output."""
+    """Configure loguru for clean CLI output without duplicate ERROR logs."""
     logger.remove()
 
     if verbose:
@@ -86,16 +121,9 @@ def _configure_logging(verbose: bool = False) -> None:
             format="<level>{level: <8}</level> {message}",
             colorize=True,
         )
-        logger.add(
-            sys.stderr,
-            level="ERROR",
-            format="<level>[{level}]</level> <red>{name}:{function}:{line}</red> — {message}",
-            colorize=True,
-        )
 
 
-def _build_pipeline_config(horizon: int) -> dict:
-    """Standard pipeline config for ablation."""
+def _build_pipeline_config(horizon: int, pipeline_sentiment: bool = False) -> dict:
     return {
         "seed": 42,
         "rebuild_data": False,
@@ -108,7 +136,7 @@ def _build_pipeline_config(horizon: int) -> dict:
         "news_sources": ("vnexpress", "cafef_banking", "vietstock", "google_news"),
         "news_use_cache": True,
         "news_export_trace": False,
-        "news_sentiment_enabled": True,
+        "news_sentiment_enabled": pipeline_sentiment,
         "news_sentiment_device": "cpu",
         "news_sentiment_export_trace": False,
         "phase2_output_dir": "outputs/phase2/latest",
@@ -126,53 +154,55 @@ def _build_pipeline_config(horizon: int) -> dict:
     }
 
 
+def _normalize_ts_array(values) -> pd.DatetimeIndex:
+    """Normalize timestamps to tz-naive DatetimeIndex with ns precision."""
+    dt = pd.to_datetime(values, utc=False)
+    if isinstance(dt, pd.DatetimeIndex):
+        if dt.tz is not None:
+            dt = dt.tz_convert(None)
+        return pd.DatetimeIndex(dt.values.astype("datetime64[ns]"))
+    idx = pd.DatetimeIndex(dt)
+    if idx.tz is not None:
+        idx = idx.tz_convert(None)
+    return pd.DatetimeIndex(idx.values.astype("datetime64[ns]"))
+
+
 def _build_cross_symbol_news(
     all_data: dict[str, dict[str, np.ndarray]],
     seq_len: int,
 ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Build cross-symbol pooled news embeddings for the 'all' news_scope."""
     import torch.nn.functional as F
-    from collections import defaultdict
 
-    date_symbol_counts = defaultdict(int)
-    date_unique_symbols = defaultdict(set)
     date_embs_by_sym: dict[pd.Timestamp, dict[str, np.ndarray]] = defaultdict(dict)
 
     for sym, data in all_data.items():
-        times = data["times"]
+        times = _normalize_ts_array(data["times"])
         news_embs = data["news_embs"]
 
-        sym_timeline = pd.to_datetime(np.sort(np.unique(times)))
-        sym_time_to_idx = {pd.Timestamp(t): idx for idx, t in enumerate(sym_timeline)}
+        sym_timeline = _normalize_ts_array(np.sort(np.unique(times.values)))
+        sym_time_to_idx = {ts: idx for idx, ts in enumerate(sym_timeline)}
 
         sym_embeddings: dict[pd.Timestamp, np.ndarray] = {}
 
         for i, last_bar_time in enumerate(times):
-            last_bar_idx = sym_time_to_idx[pd.Timestamp(last_bar_time)]
+            last_bar_idx = sym_time_to_idx[last_bar_time]
 
             for j in range(seq_len):
                 bar_idx_in_timeline = last_bar_idx - (seq_len - 1 - j)
                 if 0 <= bar_idx_in_timeline < len(sym_timeline):
                     bar_time = sym_timeline[bar_idx_in_timeline]
-                    emb = news_embs[i, j, :768]
+                    emb = news_embs[i, j]
                     if np.any(emb != 0):
-                        date_key = pd.Timestamp(bar_time)
-                        sym_embeddings[date_key] = emb
+                        sym_embeddings[bar_time] = emb
 
         for date_key, emb in sym_embeddings.items():
             date_embs_by_sym[date_key][sym] = emb
-            date_symbol_counts[date_key] += 1
-            date_unique_symbols[date_key].add(sym)
-
-    date_embs_list: dict[pd.Timestamp, list[np.ndarray]] = {
-        date_key: list(sym_dict.values())
-        for date_key, sym_dict in date_embs_by_sym.items()
-    }
 
     duplicate_dates = []
-    for date_key in date_embs_list:
-        total_embs = date_symbol_counts[date_key]
-        unique_symbols = len(date_unique_symbols[date_key])
+    for date_key, sym_dict in date_embs_by_sym.items():
+        total_embs = len(sym_dict.values())
+        unique_symbols = len(sym_dict.keys())
         if total_embs > unique_symbols:
             duplicate_dates.append((date_key, total_embs, unique_symbols))
 
@@ -181,17 +211,10 @@ def _build_cross_symbol_news(
             "Cross-symbol news audit: {} dates contain duplicated embeddings",
             len(duplicate_dates),
         )
-        for date_key, total_embs, unique_symbols in duplicate_dates[:10]:
-            logger.warning(
-                "Date={} total_embeddings={} unique_symbols={} duplication_factor={:.2f}",
-                date_key,
-                total_embs,
-                unique_symbols,
-                total_embs / max(unique_symbols, 1),
-            )
 
     pooled: dict[pd.Timestamp, np.ndarray] = {}
-    for date_key, embs_list in date_embs_list.items():
+    for date_key, sym_dict in date_embs_by_sym.items():
+        embs_list = list(sym_dict.values())
         if len(embs_list) == 1:
             pooled[date_key] = embs_list[0].astype(np.float32)
         else:
@@ -204,33 +227,32 @@ def _build_cross_symbol_news(
 
     result: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     for sym, data in all_data.items():
-        times = data["times"]
+        times = _normalize_ts_array(data["times"])
         news_embs_orig = data["news_embs"]
         N, S, D = news_embs_orig.shape
-        D = min(D, 768)
 
         pooled_windows = np.zeros((N, S, D), dtype=np.float32)
         pooled_masks = np.ones((N, S), dtype=bool)
 
-        sym_timeline = pd.to_datetime(np.sort(np.unique(times)))
-        sym_time_to_idx = {pd.Timestamp(t): idx for idx, t in enumerate(sym_timeline)}
+        sym_timeline = _normalize_ts_array(np.sort(np.unique(times.values)))
+        sym_time_to_idx = {ts: idx for idx, ts in enumerate(sym_timeline)}
 
         for i in range(N):
             last_bar_time = times[i]
-            last_bar_idx = sym_time_to_idx[pd.Timestamp(last_bar_time)]
+            last_bar_idx = sym_time_to_idx[last_bar_time]
 
             for j in range(S):
                 bar_idx_in_timeline = last_bar_idx - (S - 1 - j)
                 if 0 <= bar_idx_in_timeline < len(sym_timeline):
                     bar_time = sym_timeline[bar_idx_in_timeline]
-                    bar_time_key = pd.Timestamp(bar_time)
-                    if bar_time_key in pooled:
-                        pooled_windows[i, j, :] = pooled[bar_time_key]
+                    if bar_time in pooled:
+                        pooled_windows[i, j, :] = pooled[bar_time]
                         pooled_masks[i, j] = False
 
         result[sym] = (pooled_windows, pooled_masks)
-        covered = np.sum(~pooled_masks)
-        total = pooled_masks.size
+
+        covered = int(np.sum(~pooled_masks))
+        total = int(pooled_masks.size)
         coverage = covered / max(total, 1)
 
         logger.warning(
@@ -251,13 +273,7 @@ def _log_news_stats(tag: str, news_embs: np.ndarray, news_masks: np.ndarray) -> 
     )
 
 
-def _assert_split_alignment(
-    sym: str,
-    split_name: str,
-    source_times: pd.Series | np.ndarray,
-    mask: np.ndarray,
-    n_split: int,
-) -> np.ndarray:
+def _assert_split_alignment(sym: str, split_name: str, mask: np.ndarray, n_split: int) -> np.ndarray:
     idx = np.where(mask)[0]
     if len(idx) != n_split:
         raise RuntimeError(
@@ -267,8 +283,18 @@ def _assert_split_alignment(
     return idx
 
 
+def _trading_day_offset(sorted_times_ns: np.ndarray, boundary: pd.Timestamp, n: int) -> pd.Timestamp:
+    boundary_ns = np.datetime64(pd.Timestamp(boundary).to_datetime64(), "ns")
+    idx = np.searchsorted(sorted_times_ns, boundary_ns, side="right") - 1
+    idx = max(idx - n, 0)
+    return pd.Timestamp(sorted_times_ns[idx])
+
+
 def _extract_and_split(config: dict):
-    """Run pipeline, extract per-symbol data, split by date, return combined splits."""
+    """
+    Run pipeline once, extract per-symbol data, split by date, and return combined splits.
+    This should be called once per horizon, not once per seed.
+    """
     from run_model_benchmark import (
         extract_per_symbol_data,
         split_by_date,
@@ -308,21 +334,16 @@ def _extract_and_split(config: dict):
 
         pooled_embs, pooled_masks = cross_symbol_news[sym]
         _log_news_stats(f"{sym} pooled_all", pooled_embs, pooled_masks)
-        _log_news_stats(f"{sym} original_matched", sym_data["news_embs"][:, :, :768], sym_data["news_masks"])
+        _log_news_stats(f"{sym} original_matched", sym_data["news_embs"], sym_data["news_masks"])
 
-        times = sym_data["times"]
-        times_pd = pd.to_datetime(times)
-        sorted_times = np.sort(np.unique(times_pd.values))
+        times_pd = _normalize_ts_array(sym_data["times"])
+        sorted_times = np.sort(np.unique(times_pd.values.astype("datetime64[ns]")))
+
         train_end_ts = pd.Timestamp(config["train_end"])
         val_end_ts = pd.Timestamp(config["val_end"])
 
-        def _trading_day_offset(boundary, n):
-            idx = np.searchsorted(sorted_times, np.datetime64(boundary), side="right") - 1
-            idx = max(idx - n, 0)
-            return pd.Timestamp(sorted_times[idx])
-
-        train_end_purged = _trading_day_offset(train_end_ts, horizon)
-        val_end_purged = _trading_day_offset(val_end_ts, horizon)
+        train_end_purged = _trading_day_offset(sorted_times, train_end_ts, horizon)
+        val_end_purged = _trading_day_offset(sorted_times, val_end_ts, horizon)
 
         train_mask = times_pd <= train_end_purged
         val_mask = (times_pd > train_end_ts) & (times_pd <= val_end_purged)
@@ -334,7 +355,12 @@ def _extract_and_split(config: dict):
                 "{} {} | raw_mask_count={} split_count={}",
                 sym, split_name, int(mask.sum()), n_split
             )
-            mask_indices = _assert_split_alignment(sym, split_name, times_pd, mask, n_split)
+            mask_indices = _assert_split_alignment(
+                sym,
+                split_name,
+                mask.to_numpy() if hasattr(mask, "to_numpy") else np.asarray(mask),
+                n_split,
+            )
             splits[split_name]["news_embs_all"] = pooled_embs[mask_indices]
             splits[split_name]["news_masks_all"] = pooled_masks[mask_indices]
 
@@ -343,14 +369,12 @@ def _extract_and_split(config: dict):
         else:
             for split_name in ("train", "val", "test"):
                 for key in splits[split_name]:
-                    assert (
-                        combined[split_name][key].shape[1:]
-                        == splits[split_name][key].shape[1:]
-                    ), (
-                        f"Shape mismatch for {key}: "
-                        f"{combined[split_name][key].shape} vs "
-                        f"{splits[split_name][key].shape}"
-                    )
+                    if combined[split_name][key].shape[1:] != splits[split_name][key].shape[1:]:
+                        raise RuntimeError(
+                            f"Shape mismatch for {key}: "
+                            f"{combined[split_name][key].shape} vs "
+                            f"{splits[split_name][key].shape}"
+                        )
                     combined[split_name][key] = np.concatenate(
                         [combined[split_name][key], splits[split_name][key]], axis=0
                     )
@@ -381,7 +405,7 @@ def _run_table(
         unit="cell",
         leave=False,
         ncols=100,
-        position=1,
+        position=2,
     ) as pbar:
         for cfg in configs:
             try:
@@ -401,15 +425,38 @@ def _run_table(
                     "fusion_type": cfg.fusion_type,
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
+                    "market_encoder_name": cfg.market_encoder_name,
+                    "use_cross_attention": cfg.use_cross_attention,
                     "use_positional_encoding": cfg.use_positional_encoding,
                     "use_news_gate": cfg.use_news_gate,
                     "recency_gate_k": cfg.recency_gate_k,
                     "use_two_stage": cfg.use_two_stage,
                     "use_aux_loss": cfg.use_aux_loss,
                     "use_variance_reg": cfg.use_variance_reg,
+                
+                    # CMTF tuning fields
+                    "fusion_market_dim": cfg.fusion_market_dim,
+                    "fusion_hidden_dim": cfg.fusion_hidden_dim,
+                    "projected_news_dim": cfg.projected_news_dim,
+                    "n_heads": cfg.n_heads,
+                    "dropout": cfg.dropout,
+                    "sign_penalty_weight": cfg.sign_penalty_weight,
+                    "encoder_lr_scale": cfg.encoder_lr_scale,
+                    "aux_loss_weight": cfg.aux_loss_weight,
+                    "stage1_ratio": cfg.stage1_ratio,
+                    "market_epochs": cfg.market_epochs,
+                    "fusion_epochs": cfg.fusion_epochs,
+                    "market_patience": cfg.market_patience,
+                    "fusion_patience": cfg.fusion_patience,
+
+                    "news_gate_alpha": cfg.news_gate_alpha,
+                    "variance_reg_coeff": cfg.variance_reg_coeff,
+                    
                     **metrics,
                 }
                 rows.append(row)
+            except KeyboardInterrupt:
+                raise
             except Exception as e:
                 failures.append({
                     "cell_id": getattr(cfg, "cell_id", "unknown"),
@@ -417,12 +464,31 @@ def _run_table(
                     "fusion_type": cfg.fusion_type,
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
+                    "market_encoder_name": cfg.market_encoder_name,
+                    "use_cross_attention": cfg.use_cross_attention,
                     "use_positional_encoding": cfg.use_positional_encoding,
                     "use_news_gate": cfg.use_news_gate,
                     "recency_gate_k": cfg.recency_gate_k,
                     "use_two_stage": cfg.use_two_stage,
                     "use_aux_loss": cfg.use_aux_loss,
                     "use_variance_reg": cfg.use_variance_reg,
+
+                    # CMTF tuning fields
+                    "fusion_market_dim": cfg.fusion_market_dim,
+                    "fusion_hidden_dim": cfg.fusion_hidden_dim,
+                    "projected_news_dim": cfg.projected_news_dim,
+                    "n_heads": cfg.n_heads,
+                    "dropout": cfg.dropout,
+                    "encoder_lr_scale": cfg.encoder_lr_scale,
+                    "aux_loss_weight": cfg.aux_loss_weight,
+                    "stage1_ratio": cfg.stage1_ratio,
+                    "market_epochs": cfg.market_epochs,
+                    "fusion_epochs": cfg.fusion_epochs,
+                    "market_patience": cfg.market_patience,
+                    "fusion_patience": cfg.fusion_patience,
+                    "news_gate_alpha": cfg.news_gate_alpha,
+                    "variance_reg_coeff": cfg.variance_reg_coeff,
+
                     "seed": seed,
                     "error": repr(e),
                 })
@@ -431,6 +497,7 @@ def _run_table(
                 pbar.update(1)
 
     df = pd.DataFrame(rows)
+
     if failures:
         fail_df = pd.DataFrame(failures)
         fail_dir = Path("results/ablation_failures")
@@ -439,57 +506,85 @@ def _run_table(
         fail_df.to_csv(fail_path, index=False)
         logger.warning("Saved {} failed cells to {}", len(failures), fail_path)
 
+    total = max(len(configs), 1)
+    fail_rate = len(failures) / total
+    if fail_rate >= 0.5:
+        logger.warning(
+            "Table {} {}D seed {} has high failure rate: {}/{} ({:.1%}). Results may be unreliable.",
+            table, horizon, seed, len(failures), total, fail_rate
+        )
+
     return df
 
 
+def _format_setting(row: pd.Series, table: str) -> str:
+    if table == "data_ablation":
+        if row.get("fusion_type") == "cmtf":
+            return f"cmtf({row.get('market_encoder_name', 'na')})"
+        return f"{row.get('model_name')}::{row.get('fusion_type')}"
+
+    if table == "architecture_ablation":
+        return f"cmtf({row.get('market_encoder_name', 'na')}), xattn={row.get('use_cross_attention')}"
+
+    if table == "feature_extractor_ablation":
+        if row.get("fusion_type") == "cmtf":
+            return f"cmtf::{row.get('market_encoder_name')}"
+        return f"{row.get('model_name')}::{row.get('fusion_type')}"
+
+    return str(row.get("fusion_type", ""))
+
+
 def _make_summary_row(table: str, df: pd.DataFrame, horizon: int) -> dict:
-    """Return summary row with forecast winner and trading winner."""
+    """Return summary row using lexicographic primary metrics."""
     if df.empty:
         return {}
+
+    rank_df = df.copy()
+    degenerate_count = 0
+
+    if "degenerate" in rank_df.columns:
+        rank_df["degenerate"] = rank_df["degenerate"].fillna(False).astype(bool)
+        degenerate_count = int(rank_df["degenerate"].sum())
+        non_deg = rank_df[~rank_df["degenerate"]].copy()
+        if not non_deg.empty:
+            rank_df = non_deg
 
     required_forecast = {"DA%", "IC", "RMSE"}
     required_trading = {"Sharpe", "F1"}
 
-    if not required_forecast.issubset(df.columns):
+    if not required_forecast.issubset(rank_df.columns):
         return {}
 
-    forecast_score = (
-        0.5 * df["DA%"]
-        + 0.3 * df["IC"]
-        - 0.2 * df["RMSE"]
+    forecast_rank = rank_df.sort_values(
+        by=["IC", "DA%", "RMSE"],
+        ascending=[False, False, True],
+        kind="mergesort",
     )
-    best_forecast_idx = forecast_score.idxmax()
-    best_forecast = df.loc[best_forecast_idx]
+    best_forecast = forecast_rank.iloc[0]
 
-    if required_trading.issubset(df.columns):
-        trading_score = (
-            0.7 * df["Sharpe"]
-            + 0.3 * df["F1"]
+    if required_trading.issubset(rank_df.columns):
+        trading_rank = rank_df.sort_values(
+            by=["Sharpe", "F1"],
+            ascending=[False, False],
+            kind="mergesort",
         )
-        best_trading_idx = trading_score.idxmax()
-        best_trading = df.loc[best_trading_idx]
+        best_trading = trading_rank.iloc[0]
     else:
         best_trading = best_forecast
-
-    setting_col = {
-        "fusion": "fusion_type",
-        "news_scope": "news_scope",
-        "sentiment": "sentiment_mode",
-        "component": "use_positional_encoding",
-    }.get(table, "fusion_type")
 
     return {
         "table": table,
         "horizon": horizon,
         "best_forecast_model": best_forecast.get("model_name", ""),
-        "best_forecast_setting": best_forecast.get(setting_col, ""),
+        "best_forecast_setting": _format_setting(best_forecast, table),
         "best_forecast_DA": round(float(best_forecast.get("DA%", 0)), 2),
         "best_forecast_IC": round(float(best_forecast.get("IC", 0)), 4),
         "best_forecast_RMSE": round(float(best_forecast.get("RMSE", 0)), 5),
         "best_trading_model": best_trading.get("model_name", ""),
-        "best_trading_setting": best_trading.get(setting_col, ""),
+        "best_trading_setting": _format_setting(best_trading, table),
         "best_trading_sharpe": round(float(best_trading.get("Sharpe", 0)), 3),
         "best_trading_f1": round(float(best_trading.get("F1", 0)), 3),
+        "degenerate_rows_excluded": degenerate_count,
     }
 
 
@@ -498,8 +593,12 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
     if not dfs:
         return pd.DataFrame()
 
-    if len(dfs) == 1:
-        out = dfs[0].copy()
+    non_empty = [df for df in dfs if not df.empty]
+    if not non_empty:
+        return pd.DataFrame()
+
+    if len(non_empty) == 1:
+        out = non_empty[0].copy()
         drop_cols = [c for c in ("index", "level_0", "Unnamed: 0") if c in out.columns]
         if drop_cols:
             out = out.drop(columns=drop_cols)
@@ -536,6 +635,8 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
 
         seed_label = seeds[i] if seeds is not None and i < len(seeds) else i
         df_i["__seed__"] = seed_label
+        df_i = df_i.drop_duplicates(subset=_CONFIG_KEY_COLS + ["__seed__"], keep="last")
+
         work.append(df_i)
 
     if not work:
@@ -543,26 +644,13 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
 
     long_df = pd.concat(work, axis=0, ignore_index=True)
 
-    drop_cols = [c for c in ("index", "level_0", "Unnamed: 0") if c in long_df.columns]
-    if drop_cols:
-        long_df = long_df.drop(columns=drop_cols)
-
-    dup_mask = long_df.duplicated(subset=_CONFIG_KEY_COLS + ["__seed__"], keep=False)
-    if dup_mask.any():
-        dup_rows = long_df.loc[dup_mask, _CONFIG_KEY_COLS + ["__seed__"]]
-        raise ValueError(
-            "Duplicate config rows found within the same seed.\n"
-            f"{dup_rows.to_string(index=False)}"
-        )
-
     agg_dict: dict[str, object] = {}
-
     for col in metric_cols:
         if col in long_df.columns:
             agg_dict[col] = ["mean", "std"]
 
     if "degenerate" in long_df.columns:
-        agg_dict["degenerate"] = lambda x: bool(np.any(x.astype(bool)))
+        agg_dict["degenerate"] = lambda x: bool(np.any(pd.Series(x).astype(bool)))
 
     grouped = long_df.groupby(_CONFIG_KEY_COLS, dropna=False).agg(agg_dict)
 
@@ -579,7 +667,6 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
         else:
             flat_cols.append(str(col))
     grouped.columns = flat_cols
-
     out = grouped.reset_index()
 
     seed_count = (
@@ -601,10 +688,13 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
     return out
 
 
-def _average_seed_predictions(cache_dir: Path, seeds: list[int], horizons: list[int]) -> None:
-    """Merge per-seed prediction .npy files into canonical files for bootstrap CI / DM test."""
-    from collections import defaultdict
+def _average_seed_predictions(cache_dir: Path, horizons: list[int]) -> None:
+    """
+    Create ensemble prediction files from available per-seed outputs.
 
+    Note: this function does not know per-seed degeneracy unless stored externally.
+    If you want strict filtering, persist a manifest from _run_table and join it here.
+    """
     pred_dir = cache_dir / "predictions"
     if not pred_dir.exists():
         return
@@ -612,6 +702,7 @@ def _average_seed_predictions(cache_dir: Path, seeds: list[int], horizons: list[
     for horizon in horizons:
         seed_files = list(pred_dir.glob(f"*__seed*__{horizon}d.npy"))
         groups: dict[str, list[Path]] = defaultdict(list)
+
         for f in seed_files:
             cell_id = f.stem.rsplit("__seed", 1)[0]
             groups[cell_id].append(f)
@@ -625,39 +716,54 @@ def _average_seed_predictions(cache_dir: Path, seeds: list[int], horizons: list[
         ) as pbar:
             for cell_id, files in groups.items():
                 arrays = [np.load(str(f)) for f in sorted(files)]
+                shapes = {arr.shape for arr in arrays}
+
+                if len(shapes) != 1:
+                    logger.error(
+                        "Prediction shape mismatch for {} {}D: {}",
+                        cell_id, horizon, shapes
+                    )
+                    pbar.update(1)
+                    continue
+
                 avg = np.mean(arrays, axis=0).astype(np.float32)
-                out_path = pred_dir / f"{cell_id}__{horizon}d.npy"
+                out_path = pred_dir / f"{cell_id}__ensemble__{horizon}d.npy"
                 np.save(str(out_path), avg)
                 pbar.update(1)
 
 
 def _plot_table(table: str, df: pd.DataFrame, horizon: int) -> None:
-    """Generate heatmap + delta charts for a single table."""
     if not df.empty:
-        plot_table_charts(df, table, horizon, _figures_dir(horizon))
+        plot_df = df.copy()
+        if "degenerate" in plot_df.columns:
+            plot_df["degenerate"] = plot_df["degenerate"].fillna(False).astype(bool)
+        plot_table_charts(plot_df, table, horizon, _figures_dir(horizon))
 
 
 def _regenerate_plots(horizon: int) -> None:
-    """Regenerate plots from existing CSVs in the horizon-scoped directory."""
     hdir = _horizon_dir(horizon)
-    for table in ("fusion", "news_scope", "sentiment", "component"):
+    for table in ("data_ablation", "architecture_ablation", "feature_extractor_ablation"):
         csv_path = hdir / f"{table}.csv"
-        if not csv_path.exists():
-            csv_path = _ABLATION_ROOT / f"ablation_{table}_{horizon}d.csv"
         if not csv_path.exists():
             logger.warning("⚠️  No CSV for {} {}D — skipping", table, horizon)
             continue
         df = pd.read_csv(csv_path)
         _figures_dir(horizon).mkdir(parents=True, exist_ok=True)
         _plot_table(table, df, horizon)
-        logger.warning("  ✓ Regenerated {:15} for {}D", table, horizon)
+        logger.warning("  ✓ Regenerated {:25} for {}D", table, horizon)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ablation benchmark")
     parser.add_argument(
         "--table",
-        choices=["fusion", "news_scope", "sentiment", "component", "all"],
+        choices=[
+            "data_ablation",
+            "architecture_ablation",
+            "feature_extractor_ablation",
+            "cmtf_search",
+            "all",
+        ],
         default="all",
     )
     parser.add_argument("--horizons", nargs="+", type=int, default=[1, 5, 20])
@@ -665,19 +771,26 @@ def main() -> None:
     parser.add_argument("--stage", choices=["run", "plot"], default="run")
     parser.add_argument("--verbose", action="store_true", help="Show debug logs")
     parser.add_argument("--skip-chronos", action="store_true", help="Skip Chronos init for debug")
+    parser.add_argument(
+        "--pipeline-sentiment",
+        action="store_true",
+        help="Enable upstream sentiment features during pipeline build",
+    )
     args = parser.parse_args()
 
     _configure_logging(verbose=args.verbose)
     _ABLATION_ROOT.mkdir(parents=True, exist_ok=True)
 
     if args.stage == "plot":
-        logger.info("Regenerating plots...")
+        logger.warning("Regenerating plots...")
         for h in args.horizons:
             _regenerate_plots(h)
-        logger.info("✓ Plot regeneration complete")
+        logger.warning("✓ Plot regeneration complete")
         return
 
-    set_global_seed(42)
+    reseed_everything(42)
+    configure_determinism()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     logger.warning("═════════════════════════════════════════════")
@@ -696,6 +809,11 @@ def main() -> None:
     else:
         chronos = ChronosMarketPredictor(device=device)
 
+    tables_to_run_global = (
+        [args.table] if args.table != "all"
+        else ["data_ablation", "architecture_ablation", "feature_extractor_ablation"]
+    )
+
     for horizon in tqdm(
         args.horizons,
         desc="Horizons",
@@ -705,15 +823,44 @@ def main() -> None:
         leave=True,
     ):
         logger.warning("\n📊 Processing horizon: {}D", horizon)
-        config = _build_pipeline_config(horizon)
+        base_config = _build_pipeline_config(
+            horizon,
+            pipeline_sentiment=args.pipeline_sentiment,
+        )
+        hdir = _horizon_dir(horizon)
+        hdir.mkdir(parents=True, exist_ok=True)
+        _figures_dir(horizon).mkdir(parents=True, exist_ok=True)
 
-        logger.warning("  ⏳ Extracting and splitting data...")
-        splits, market_cols = _extract_and_split(config)
-        logger.warning("  ✓ Data ready")
+        logger.warning("  ⏳ Loading baseline HPO params...")
+        from src.benchmark.baseline_hpo import get_default_baseline_hpo_params
+        hpo_params = get_default_baseline_hpo_params()
+        hpo_params.setdefault("mlp_summary", {
+            "hidden_dim": 64,
+            "dropout": 0.2,
+            "lr": 1e-3,
+            "batch_size": 32,
+        })
+        logger.warning("  ✓ HPO params loaded")
+
+        logger.warning("  ⏳ Extracting and splitting data once for {}D...", horizon)
+        try:
+            splits, market_cols = _extract_and_split(base_config)
+            for split_name in ("train", "val", "test"):
+                if "news_embs" in splits[split_name]:
+                    news_dim = int(splits[split_name]["news_embs"].shape[-1])
+                    if news_dim not in (768, 128):
+                        raise ValueError(
+                            f"{split_name} news_embs has unsupported dim={news_dim}. "
+                            "Expected text-only 768 or projected 128."
+                        )
+        except Exception as e:
+            logger.error("Failed to prepare data for horizon {}D: {}", horizon, e)
+            continue
+        logger.warning("  ✓ Data ready for {}D", horizon)
 
         for split_name in ("train", "val", "test"):
             logger.warning(
-                "  Split {} | market_windows={} | targets={} | news_embs={} | news_masks={}",
+                "    Split {} | market_windows={} | targets={} | news_embs={} | news_masks={}",
                 split_name,
                 splits[split_name]["market_windows"].shape if "market_windows" in splits[split_name] else None,
                 splits[split_name]["targets"].shape if "targets" in splits[split_name] else None,
@@ -722,52 +869,16 @@ def main() -> None:
             )
             if "news_embs_all" in splits[split_name]:
                 logger.warning(
-                    "  Split {} all-news | news_embs_all={} | news_masks_all={}",
+                    "    Split {} all-news | news_embs_all={} | news_masks_all={}",
                     split_name,
                     splits[split_name]["news_embs_all"].shape,
                     splits[split_name]["news_masks_all"].shape,
                 )
 
-        tables_to_run = (
-            [args.table] if args.table != "all"
-            else ["fusion", "news_scope", "sentiment", "component"]
-        )
-
-        hdir = _horizon_dir(horizon)
-        hdir.mkdir(parents=True, exist_ok=True)
-        _figures_dir(horizon).mkdir(parents=True, exist_ok=True)
-
-        logger.warning("  ⏳ Loading baseline HPO params...")
-        from src.benchmark.baseline_hpo import get_default_baseline_hpo_params
-        hpo_params = get_default_baseline_hpo_params()
-
-        hpo_params.setdefault("mlp_summary", {
-            "hidden_dim": 64,
-            "dropout": 0.2,
-            "lr": 1e-3,
-            "batch_size": 32,
-        })
-        hpo_params.setdefault("lstm_hybrid", hpo_params.get("lstm", {
-            "hidden_dim": 64,
-            "num_layers": 2,
-            "dropout": 0.3,
-            "lr": 1e-3,
-            "batch_size": 32,
-        }))
-        hpo_params.setdefault("cnn_lstm_hybrid", hpo_params.get("cnn_lstm", {
-            "num_filters": 64,
-            "hidden_dim": 64,
-            "num_layers": 2,
-            "dropout": 0.3,
-            "lr": 1e-3,
-            "batch_size": 32,
-        }))
-        logger.warning("  ✓ HPO params loaded")
-
         summary_rows: list[dict] = []
 
         for table in tqdm(
-            tables_to_run,
+            tables_to_run_global,
             desc=f"  Tables ({horizon}D)",
             unit="table",
             leave=False,
@@ -784,16 +895,16 @@ def main() -> None:
                 ncols=100,
                 position=2,
             ):
-                set_global_seed(seed)
+                reseed_everything(seed)
                 logger.warning("    ▶ Running seed {}", seed)
 
                 df_seed = _run_table(
-                    table,
-                    splits,
-                    market_cols,
-                    horizon,
-                    device,
-                    chronos,
+                    table=table,
+                    splits=splits,
+                    market_cols=market_cols,
+                    horizon=horizon,
+                    device=device,
+                    chronos=chronos,
                     hpo_params=hpo_params,
                     seed=seed,
                 )
@@ -804,20 +915,24 @@ def main() -> None:
             df = _average_seed_dfs(seed_dfs, seeds=args.seeds)
             csv_path = hdir / f"{table}.csv"
             df.to_csv(csv_path, index=False)
-            logger.warning("  ✓ {:15} → {}", table, csv_path.name)
+            logger.warning("  ✓ {:25} → {}", table, csv_path.name)
 
-            summary_rows.append(_make_summary_row(table, df, horizon))
+            if table != "cmtf_search":
+                summary = _make_summary_row(table, df, horizon)
+                if summary:
+                    summary_rows.append(summary)
+
             _plot_table(table, df, horizon)
 
         if summary_rows:
-            summary_df = pd.DataFrame([r for r in summary_rows if r])
+            summary_df = pd.DataFrame(summary_rows)
             summary_path = hdir / "summary.csv"
             summary_df.to_csv(summary_path, index=False)
             logger.warning("  ✓ Summary → {}", summary_path.name)
 
-    logger.warning("\n⏳ Merging per-seed predictions...")
-    _average_seed_predictions(Path("cache"), args.seeds, args.horizons)
-    logger.warning("✓ Predictions merged")
+    logger.warning("\n⏳ Creating optional ensemble prediction files...")
+    _average_seed_predictions(Path("cache"), args.horizons)
+    logger.warning("✓ Ensemble prediction files created")
 
     logger.warning("\n" + "═" * 45)
     logger.warning("  ✅ ABLATION BENCHMARK COMPLETE")

@@ -333,8 +333,8 @@ def compute_composite_metrics(
     # Convert "higher is better" metrics into penalties
     da_penalty = 1.0 - da_value / 100.0
     f1_penalty = 1.0 - f1_value
-    ic_penalty = 1.0 - max(min(ic_value, 1.0), -1.0)
-    ic_penalty = ic_penalty / 2.0  # maps [-1,1] -> [1,0]
+    ic_clipped = max(min(ic_value, 1.0), -1.0)
+    ic_penalty = (1.0 - ic_clipped) / 2.0  # maps IC from [-1, 1] to penalty [1, 0]
 
     # Diagnostic composite: lower is better
     composite_score = (
@@ -515,7 +515,9 @@ def paired_bootstrap_da(
         deltas[i] = da_b - da_a
 
     ci_low, ci_high = np.percentile(deltas, [2.5, 97.5])
-    p_value = float(np.mean(deltas <= 0))
+    p_left = float(np.mean(deltas <= 0))
+    p_right = float(np.mean(deltas >= 0))
+    p_value = min(1.0, 2.0 * min(p_left, p_right))
 
     return {
         "delta_da": float(np.mean(deltas)),

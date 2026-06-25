@@ -116,7 +116,7 @@ def train_with_early_stopping(
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1

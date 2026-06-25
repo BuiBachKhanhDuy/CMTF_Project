@@ -54,6 +54,7 @@ class NewsEncoder:
         sentiment_inferencer: Phase2PhoBERTInferencer | None = None,
         sentiment_batch_size: int = 32,
         use_weighted_pooling: bool = True,
+        export_hybrid_embedding: bool = False,
     ) -> None:
         self.model_name = model_name
         self.batch_size = batch_size
@@ -62,6 +63,7 @@ class NewsEncoder:
         self.sentiment_inferencer = sentiment_inferencer
         self.sentiment_batch_size = int(sentiment_batch_size)
         self.use_weighted_pooling = bool(use_weighted_pooling)
+        self.export_hybrid_embedding = bool(export_hybrid_embedding)
         self.last_sentiment_trace: pd.DataFrame | None = None
 
     @property
@@ -192,7 +194,7 @@ class NewsEncoder:
                 emb_array = cached["embeddings"]
                 has_news_array = cached["has_news"]
                 hybrid_array = cached[NEWS_HYBRID_COLUMN] if NEWS_HYBRID_COLUMN in cached.files else None
-                expected_hybrid = self.sentiment_inferencer is not None
+                expected_hybrid = self.sentiment_inferencer is not None and self.export_hybrid_embedding
                 has_expected_hybrid = (hybrid_array is not None) == expected_hybrid
                 if len(emb_array) == len(df) and has_expected_hybrid:
                     df["news_emb"] = list(emb_array)
@@ -244,7 +246,7 @@ class NewsEncoder:
 
             sentiment_features = aggregate_title_sentiment_scores(sentiment_scores_by_row[pos])
             sentiment_records.append(sentiment_features)
-            if self.sentiment_inferencer is not None:
+            if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
                 hybrid_vec = np.concatenate(
                     [
                         result["embedding"],
@@ -255,13 +257,12 @@ class NewsEncoder:
                     ]
                 ).astype(np.float32)
                 hybrid_embeddings.append(hybrid_vec)
-
         df["news_emb"] = embeddings
         df["has_news"] = has_news_flags
         sentiment_frame = pd.DataFrame(sentiment_records, index=df.index)
         for col in SENTIMENT_TRACE_COLUMNS:
             df[col] = sentiment_frame[col].to_numpy(dtype=np.float32, copy=True)
-        if self.sentiment_inferencer is not None:
+        if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
             df[NEWS_HYBRID_COLUMN] = hybrid_embeddings
         logger.info("News encoding complete")
 
@@ -274,8 +275,8 @@ class NewsEncoder:
             }
             for col in SENTIMENT_TRACE_COLUMNS:
                 payload[col] = df[col].to_numpy(dtype=np.float32, copy=True)
-            if self.sentiment_inferencer is not None:
-                payload[NEWS_HYBRID_COLUMN] = np.stack(hybrid_embeddings)
+            if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
+                df[NEWS_HYBRID_COLUMN] = hybrid_embeddings
             np.savez_compressed(cache_path, **payload)
             logger.info("Embeddings cached → {} ({} rows)", cache_path.name, len(df))
 

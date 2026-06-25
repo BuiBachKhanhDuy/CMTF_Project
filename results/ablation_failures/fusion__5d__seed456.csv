@@ -1,3 +1,0 @@
-cell_id,model_name,fusion_type,news_scope,sentiment_mode,use_positional_encoding,use_news_gate,recency_gate_k,use_two_stage,use_aux_loss,use_variance_reg,seed,error
-lstm_hybrid__early__matched__scalars,lstm_hybrid,early,matched,scalars,True,True,5,True,True,True,456,ValueError('Early fusion not supported for best-state backbone: lstm_hybrid')
-cnn_lstm_hybrid__early__matched__scalars,cnn_lstm_hybrid,early,matched,scalars,True,True,5,True,True,True,456,ValueError('Early fusion not supported for best-state backbone: cnn_lstm_hybrid')

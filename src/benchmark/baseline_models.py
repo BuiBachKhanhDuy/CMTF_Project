@@ -129,11 +129,11 @@ def extract_market_summary_features(market_windows: np.ndarray) -> np.ndarray:
 # =====================================================================
 
 class BaseTorchMarketPredictor(nn.Module):
-    """Common training/inference logic for single-input torch models."""
+    """Common training/inference logic for single-input torch market models."""
 
     def __init__(self, target_scale: float = 100.0, device: str = "cpu"):
         super().__init__()
-        self.target_scale = target_scale
+        self.target_scale = float(target_scale)
         self.device = device
         self.huber_delta = 1.0
         self.sign_penalty_weight = 0.05
@@ -263,7 +263,7 @@ class BaseTorchHybridPredictor(nn.Module):
 
     def __init__(self, target_scale: float = 100.0, device: str = "cpu"):
         super().__init__()
-        self.target_scale = target_scale
+        self.target_scale = float(target_scale)
         self.device = device
         self.huber_delta = 1.0
         self.sign_penalty_weight = 0.05
@@ -419,7 +419,6 @@ class BaseTorchHybridPredictor(nn.Module):
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.predict(market_windows)
-
 
 # =====================================================================
 # LSTM PREDICTOR
@@ -841,6 +840,17 @@ class LinearSummaryRegressor_Wrapper:
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.predict(market_windows)
+    
+    @property
+    def d_model(self) -> int:
+        return 0
+    
+    @property
+    def supports_sequence(self) -> bool:
+        return False
+    
+    def encode(self, market_windows: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("LinearSummaryRegressor has no latent space")
 
 
 # =====================================================================
@@ -1012,6 +1022,7 @@ class FineTunedChronosPredictor:
         tabular_dim: int = 0,
         huber_delta: float = 0.02,
         sign_penalty_weight: float = 0.05,
+        target_scale: float = 100.0,
         device: str = "cpu",
     ):
         self.chronos = chronos_predictor
@@ -1020,6 +1031,7 @@ class FineTunedChronosPredictor:
         self.tabular_dim = int(tabular_dim)
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
+        self.target_scale = float(target_scale)
 
         self._embedding_cache: OrderedDict[tuple[int, str], np.ndarray] = OrderedDict()
         self._embedding_cache_max_entries = 32
@@ -1107,9 +1119,10 @@ class FineTunedChronosPredictor:
         )
 
         X_train = torch.tensor(emb_train, dtype=torch.float32, device=self.device)
-        y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device)
+        y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device) * self.target_scale
         X_val = torch.tensor(emb_val, dtype=torch.float32, device=self.device)
-        y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device)
+        y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * self.target_scale
+
 
         optimizer = optim.AdamW(self.adapter.parameters(), lr=learning_rate, weight_decay=1e-5)
 
@@ -1185,7 +1198,6 @@ class FineTunedChronosPredictor:
     ) -> np.ndarray:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before prediction")
-
         embeddings = self._combine_features(
             self._get_cached_embeddings(close_windows, cache_label="predict"),
             market_tabular,
@@ -1196,4 +1208,4 @@ class FineTunedChronosPredictor:
         with torch.no_grad():
             preds = self.adapter(X).squeeze(-1).cpu().numpy()
 
-        return preds.astype(np.float32)
+        return (preds / self.target_scale).astype(np.float32)

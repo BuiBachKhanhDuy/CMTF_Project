@@ -71,6 +71,8 @@ def set_global_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
     logger.info("Global seed set to {}", seed)
 
+def _use_prediction_cache(stage: str | None) -> bool:
+    return stage is None or stage == "plot"
 
 def _split_hash(splits: dict, sym: str, horizon: int) -> str:
     """Short hash of split sizes for cache key."""
@@ -642,8 +644,9 @@ def main() -> None:
                 target_horizon_days=target_h,
             )
 
-            zs_cache = CACHE_PRED_DIR / f"zs_v2_{sym}_{target_h}d_{sh}.npy"
-            if stage not in ("data", "predict") and (cached_zs := _load_npy(zs_cache)) is not None:
+            zs_sh = _split_hash(zs_splits, sym, target_h)
+            zs_cache = CACHE_PRED_DIR / f"zs_v2_{sym}_{target_h}d_{zs_sh}.npy"
+            if _use_prediction_cache(stage) and (cached_zs := _load_npy(zs_cache)) is not None:
                 logger.info("[{}] Zero-shot loaded from cache", sym)
                 preds_zs = cached_zs
             else:

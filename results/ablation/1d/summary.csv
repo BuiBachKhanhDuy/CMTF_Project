@@ -1,2 +1,2 @@
-table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1
-fusion,1,rf,late,49.51,0.0956,0.01957,rf,late,0.777,0.492
+table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1,degenerate_rows_excluded
+data_ablation,1,lstm,lstm::early,49.26,0.1034,0.01907,lstm,lstm::early,0.577,0.471,0
