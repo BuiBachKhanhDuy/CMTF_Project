@@ -481,6 +481,25 @@ class LSTMPredictor(BaseTorchMarketPredictor):
 
     def fit(self, *args, **kwargs) -> dict:
         kwargs["model_name"] = kwargs.get("model_name", "LSTM")
+        learning_rate = kwargs.get("learning_rate", 1e-3)
+
+        if "optimizer" not in kwargs or kwargs["optimizer"] is None:
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=learning_rate,
+                weight_decay=1e-5,
+            )
+            kwargs["optimizer"] = optimizer
+
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.5,
+                patience=5,
+                min_lr=1e-5,
+            )
+            kwargs["scheduler"] = scheduler
+
         return super().fit(*args, **kwargs)
 
 
@@ -596,10 +615,26 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
         return self.hidden_dim
 
     def fit(self, *args, **kwargs) -> dict:
-        learning_rate = kwargs.get("learning_rate", 1e-3)
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=1e-4)
         kwargs["model_name"] = kwargs.get("model_name", "CNN-LSTM")
-        kwargs["optimizer"] = optimizer
+        learning_rate = kwargs.get("learning_rate", 1e-3)
+    
+        if "optimizer" not in kwargs or kwargs["optimizer"] is None:
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=learning_rate,
+                weight_decay=1e-4,
+            )
+            kwargs["optimizer"] = optimizer
+    
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.5,
+                patience=5,
+                min_lr=1e-5,
+            )
+            kwargs["scheduler"] = scheduler
+    
         return super().fit(*args, **kwargs)
 
 

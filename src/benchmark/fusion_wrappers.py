@@ -662,7 +662,14 @@ class LateFusionWrapper(nn.Module):
 
                 optimizer.zero_grad()
                 pred = self.news_branch(mb_news_proj, mb_mask, market_pred=mb_market)
-                loss = nn.functional.huber_loss(pred, mb_y, delta=1.0)
+                loss = sign_aware_huber_loss(
+                    pred,
+                    mb_y,
+                    huber_delta=1.0,
+                    sign_penalty_weight=0.005,
+                    direction_epsilon=0.5,
+                    enable_direction_loss=True,
+                )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.news_parameters(), 1.0)
                 optimizer.step()
@@ -690,7 +697,14 @@ class LateFusionWrapper(nn.Module):
                         mb_news_proj_v = mb_news_raw_v
 
                     val_pred = self.news_branch(mb_news_proj_v, mb_mask_v, market_pred=mb_market_v)
-                    v_loss = nn.functional.huber_loss(val_pred, mb_y_v, delta=1.0)
+                    v_loss = sign_aware_huber_loss(
+                        val_pred,
+                        mb_y_v,
+                        huber_delta=1.0,
+                        sign_penalty_weight=0.005,
+                        direction_epsilon=0.5,
+                        enable_direction_loss=True,
+                    )
                     val_loss_accum += float(v_loss.item())
                     v_batches += 1
 

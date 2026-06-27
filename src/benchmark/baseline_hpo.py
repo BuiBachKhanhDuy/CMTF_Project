@@ -27,6 +27,7 @@ DEFAULT_BASELINE_PARAMS = {
         "dropout": 0.2,
         "lr": 1e-3,
         "batch_size": 32,
+        "sign_penalty_weight": 0.02,
     },
     "cnn_lstm": {
         "num_filters": 64,
@@ -35,6 +36,7 @@ DEFAULT_BASELINE_PARAMS = {
         "dropout": 0.3,
         "lr": 1e-3,
         "batch_size": 32,
+        "sign_penalty_weight": 0.02,
     },
     "rf": {
         "n_estimators": 200,

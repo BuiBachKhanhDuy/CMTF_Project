@@ -47,6 +47,8 @@ _TABLE_TITLE: dict[str, str] = {
     "data_ablation": "Data Ablation",
     "architecture_ablation": "Architecture Ablation",
     "feature_extractor_ablation": "Feature Extractor Ablation",
+    "feature_construction_ablation": "Feature Construction Ablation",
+    "news_ablation": "News-side Ablation",
     "cmtf_search": "CMTF Search",
 
     # Legacy tables
@@ -54,8 +56,10 @@ _TABLE_TITLE: dict[str, str] = {
     "news_scope": "News Scope",
     "sentiment": "Sentiment Mode",
     "component": "CMTF Component Toggles",
+    "mini_5d_diagnosis": "Mini 5D Diagnosis",
+    
+    "learned_cmtf_ablation": "Learned vs Handcrafted CMTF",
 }
-
 
 def _color_for(model: str) -> str:
     return _MODEL_PALETTE.get(model, "#8C8C8C")
@@ -82,7 +86,6 @@ def _add_toggle_col(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
     return df
-
 
 def _resolve_plot_category(df: pd.DataFrame, table: str) -> tuple[pd.DataFrame, str]:
     """
@@ -126,28 +129,104 @@ def _resolve_plot_category(df: pd.DataFrame, table: str) -> tuple[pd.DataFrame, 
         plot_df["_plot_category"] = plot_df.apply(_feat_label, axis=1)
         return plot_df, "_plot_category"
 
+    if table == "feature_construction_ablation":
+        required_cols = {
+            "use_interaction_prod",
+            "use_interaction_diff",
+            "use_news_context_prod",
+            "use_cosine_sim",
+            "use_pooled_news",
+        }
+        missing = required_cols - set(plot_df.columns)
+        if missing:
+            raise KeyError(f"feature_construction_ablation plotting missing columns: {sorted(missing)}")
+
+        def _feature_label(row):
+            return (
+                f"iprod={int(bool(row['use_interaction_prod']))}|"
+                f"idiff={int(bool(row['use_interaction_diff']))}|"
+                f"nprod={int(bool(row['use_news_context_prod']))}|"
+                f"csim={int(bool(row['use_cosine_sim']))}|"
+                f"pnews={int(bool(row['use_pooled_news']))}"
+            )
+
+        plot_df["_plot_category"] = plot_df.apply(_feature_label, axis=1)
+        return plot_df, "_plot_category"
+
+    if table == "news_ablation":
+        required_cols = {
+            "use_cross_attention",
+            "use_positional_encoding",
+            "use_news_gate",
+            "recency_gate_k",
+        }
+        missing = required_cols - set(plot_df.columns)
+        if missing:
+            raise KeyError(f"news_ablation plotting missing columns: {sorted(missing)}")
+
+        def _news_label(row):
+            return (
+                f"xattn={int(bool(row['use_cross_attention']))}|"
+                f"pe={int(bool(row['use_positional_encoding']))}|"
+                f"gate={int(bool(row['use_news_gate']))}|"
+                f"k={int(row['recency_gate_k'])}"
+            )
+
+        plot_df["_plot_category"] = plot_df.apply(_news_label, axis=1)
+        return plot_df, "_plot_category"
+
     if table == "cmtf_search":
         required_cols = {
+            "fusion_style",
+            "market_query_mode",
+            "use_interaction_prod",
+            "use_interaction_diff",
+            "use_news_context_prod",
+            "use_cross_attention",
+            "use_positional_encoding",
+            "use_news_gate",
             "recency_gate_k",
-            "aux_loss_weight",
-            "encoder_lr_scale",
-            "fusion_market_dim",
-            "fusion_hidden_dim",
         }
         missing = required_cols - set(plot_df.columns)
         if missing:
             raise KeyError(f"cmtf_search plotting missing columns: {sorted(missing)}")
 
-        def _search_label(row):
+        def _cmtf_search_label(row):
             return (
+                f"style={row['fusion_style']}|"
+                f"mq={row['market_query_mode']}|"
+                f"ip={int(bool(row['use_interaction_prod']))}|"
+                f"id={int(bool(row['use_interaction_diff']))}|"
+                f"nc={int(bool(row['use_news_context_prod']))}|"
+                f"x={int(bool(row['use_cross_attention']))}|"
+                f"pe={int(bool(row['use_positional_encoding']))}|"
+                f"g={int(bool(row['use_news_gate']))}|"
                 f"k={int(row['recency_gate_k'])}"
-                f"|auxw={float(row['aux_loss_weight']):.2f}"
-                f"|elr={float(row['encoder_lr_scale']):.2f}"
-                f"|fmd={int(row['fusion_market_dim'])}"
-                f"|fhd={int(row['fusion_hidden_dim'])}"
             )
 
-        plot_df["_plot_category"] = plot_df.apply(_search_label, axis=1)
+        plot_df["_plot_category"] = plot_df.apply(_cmtf_search_label, axis=1)
+        return plot_df, "_plot_category"
+    
+    if table == "mini_5d_diagnosis":
+        required_cols = {
+            "use_cross_attention",
+            "use_positional_encoding",
+            "use_news_gate",
+            "recency_gate_k",
+        }
+        missing = required_cols - set(plot_df.columns)
+        if missing:
+            raise KeyError(f"mini_5d_diagnosis plotting missing columns: {sorted(missing)}")
+
+        def _mini_label(row):
+            return (
+                f"xattn={int(bool(row['use_cross_attention']))}|"
+                f"pe={int(bool(row['use_positional_encoding']))}|"
+                f"gate={int(bool(row['use_news_gate']))}|"
+                f"k={int(row['recency_gate_k'])}"
+            )
+
+        plot_df["_plot_category"] = plot_df.apply(_mini_label, axis=1)
         return plot_df, "_plot_category"
 
     # -------------------------
@@ -168,9 +247,24 @@ def _resolve_plot_category(df: pd.DataFrame, table: str) -> tuple[pd.DataFrame, 
     if table == "component":
         plot_df = _add_toggle_col(plot_df)
         return plot_df, "toggle"
+    
+    if table == "learned_cmtf_ablation":
+        required_cols = {"fusion_style", "market_query_mode", "use_cross_attention"}
+        missing = required_cols - set(plot_df.columns)
+        if missing:
+            raise KeyError(f"learned_cmtf_ablation plotting missing columns: {sorted(missing)}")
+
+        def _learned_label(row):
+            return (
+                f"style={row['fusion_style']}|"
+                f"mq={row['market_query_mode']}|"
+                f"xattn={int(bool(row['use_cross_attention']))}"
+            )
+
+        plot_df["_plot_category"] = plot_df.apply(_learned_label, axis=1)
+        return plot_df, "_plot_category"
 
     raise KeyError(f"Unknown table for plotting: {table}")
-
 
 def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
     """
@@ -196,29 +290,57 @@ def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
             mask = df["fusion_type"].astype(str) == "none"
         return mask
 
+    if table == "feature_construction_ablation":
+        needed = [
+            ("use_interaction_prod", True),
+            ("use_interaction_diff", True),
+            ("use_news_context_prod", True),
+            ("use_cosine_sim", True),
+            ("use_pooled_news", True),
+        ]
+        mask = pd.Series([True] * len(df), index=df.index)
+        for col, val in needed:
+            if col in df.columns:
+                mask &= df[col] == val
+            else:
+                mask &= False
+        return mask
+
+    if table == "news_ablation":
+        needed = [
+            ("use_cross_attention", True),
+            ("use_positional_encoding", True),
+            ("use_news_gate", True),
+            ("recency_gate_k", 3),
+        ]
+        mask = pd.Series([True] * len(df), index=df.index)
+        for col, val in needed:
+            if col in df.columns:
+                mask &= df[col] == val
+            else:
+                mask &= False
+        return mask
+
     if table == "cmtf_search":
-        # Preferred internal baseline:
-        # 1) gate=True, vreg=True, k=5
-        # 2) otherwise k=5
-        # 3) otherwise first row per model
-        if all(col in df.columns for col in ["use_news_gate", "use_variance_reg", "recency_gate_k"]):
-            preferred = (
-                (df["use_news_gate"].astype(bool) == True)
-                & (df["use_variance_reg"].astype(bool) == True)
-                & (df["recency_gate_k"] == 5)
-            )
-            if preferred.any():
-                return preferred
-
-            preferred_k5 = df["recency_gate_k"] == 5
-            if preferred_k5.any():
-                return preferred_k5
-
-        # fallback: first row per model
-        mask = pd.Series([False] * len(df), index=df.index)
-        if "model_name" in df.columns and not df.empty:
-            first_idx = df.groupby("model_name", sort=False).head(1).index
-            mask.loc[first_idx] = True
+        needed = [
+            ("fusion_style", "handcrafted"),
+            ("market_query_mode", "multi"),
+            ("use_cross_attention", True),
+            ("use_positional_encoding", False),
+            ("use_news_gate", True),
+            ("recency_gate_k", 3),
+            ("use_interaction_prod", True),
+            ("use_interaction_diff", True),
+            ("use_news_context_prod", True),
+            ("use_pooled_news", False),
+            ("use_cosine_sim", False),
+        ]
+        mask = pd.Series([True] * len(df), index=df.index)
+        for col, val in needed:
+            if col in df.columns:
+                mask &= df[col] == val
+            else:
+                mask &= False
         return mask
 
     # -------------------------
@@ -255,7 +377,36 @@ def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
             else:
                 mask &= False
         return mask
+    
+    if table == "mini_5d_diagnosis":
+        needed = [
+            ("use_cross_attention", True),
+            ("use_positional_encoding", True),
+            ("use_news_gate", True),
+            ("recency_gate_k", 3),
+        ]
+        mask = pd.Series([True] * len(df), index=df.index)
+        for col, val in needed:
+            if col in df.columns:
+                mask &= df[col] == val
+            else:
+                mask &= False
+        return mask
 
+    if table == "learned_cmtf_ablation":
+        needed = [
+            ("fusion_style", "handcrafted"),
+            ("market_query_mode", "multi"),
+            ("use_cross_attention", True),
+        ]
+        mask = pd.Series([True] * len(df), index=df.index)
+        for col, val in needed:
+            if col in df.columns:
+                mask &= df[col] == val
+            else:
+                mask &= False
+        return mask
+    
     return mask
 
 

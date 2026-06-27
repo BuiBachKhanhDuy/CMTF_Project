@@ -49,6 +49,7 @@ _CONFIG_KEY_COLS = [
     "news_scope",
     "sentiment_mode",
     "market_encoder_name",
+    "output_mode",
     "use_cross_attention",
     "use_positional_encoding",
     "use_news_gate",
@@ -57,14 +58,21 @@ _CONFIG_KEY_COLS = [
     "use_aux_loss",
     "use_variance_reg",
 
+    # CMTF fused-feature construction fields
+    "use_interaction_prod",
+    "use_interaction_diff",
+    "use_news_context_prod",
+    "use_cosine_sim",
+    "use_pooled_news",
+
     # CMTF tuning fields
     "fusion_market_dim",
     "fusion_hidden_dim",
     "projected_news_dim",
     "n_heads",
     "dropout",
-    "encoder_lr_scale",
     "sign_penalty_weight",
+    "encoder_lr_scale",
     "aux_loss_weight",
     "stage1_ratio",
     "market_epochs",
@@ -73,6 +81,9 @@ _CONFIG_KEY_COLS = [
     "fusion_patience",
     "news_gate_alpha",
     "variance_reg_coeff",
+    
+    "fusion_style",
+    "market_query_mode",
 ]
 
 def _horizon_dir(horizon: int) -> Path:
@@ -128,7 +139,7 @@ def _build_pipeline_config(horizon: int, pipeline_sentiment: bool = False) -> di
         "seed": 42,
         "rebuild_data": False,
         "symbols": ["VCB", "BID"],
-        "start": "2022-01-01",
+        "start": "2020-01-01",
         "end": "2026-03-31",
         "interval": "1D",
         "ohlcv_source": "KBS",
@@ -426,6 +437,9 @@ def _run_table(
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
                     "market_encoder_name": cfg.market_encoder_name,
+                    "output_mode": cfg.output_mode,
+                    "fusion_style": cfg.fusion_style,
+                    "market_query_mode": cfg.market_query_mode,
                     "use_cross_attention": cfg.use_cross_attention,
                     "use_positional_encoding": cfg.use_positional_encoding,
                     "use_news_gate": cfg.use_news_gate,
@@ -433,7 +447,14 @@ def _run_table(
                     "use_two_stage": cfg.use_two_stage,
                     "use_aux_loss": cfg.use_aux_loss,
                     "use_variance_reg": cfg.use_variance_reg,
-                
+
+                    # CMTF fused-feature construction fields
+                    "use_interaction_prod": cfg.use_interaction_prod,
+                    "use_interaction_diff": cfg.use_interaction_diff,
+                    "use_news_context_prod": cfg.use_news_context_prod,
+                    "use_cosine_sim": cfg.use_cosine_sim,
+                    "use_pooled_news": cfg.use_pooled_news,
+
                     # CMTF tuning fields
                     "fusion_market_dim": cfg.fusion_market_dim,
                     "fusion_hidden_dim": cfg.fusion_hidden_dim,
@@ -448,10 +469,9 @@ def _run_table(
                     "fusion_epochs": cfg.fusion_epochs,
                     "market_patience": cfg.market_patience,
                     "fusion_patience": cfg.fusion_patience,
-
                     "news_gate_alpha": cfg.news_gate_alpha,
                     "variance_reg_coeff": cfg.variance_reg_coeff,
-                    
+
                     **metrics,
                 }
                 rows.append(row)
@@ -465,6 +485,9 @@ def _run_table(
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
                     "market_encoder_name": cfg.market_encoder_name,
+                    "output_mode": cfg.output_mode,
+                    "fusion_style": cfg.fusion_style,
+                    "market_query_mode": cfg.market_query_mode,
                     "use_cross_attention": cfg.use_cross_attention,
                     "use_positional_encoding": cfg.use_positional_encoding,
                     "use_news_gate": cfg.use_news_gate,
@@ -473,12 +496,20 @@ def _run_table(
                     "use_aux_loss": cfg.use_aux_loss,
                     "use_variance_reg": cfg.use_variance_reg,
 
+                    # CMTF fused-feature construction fields
+                    "use_interaction_prod": cfg.use_interaction_prod,
+                    "use_interaction_diff": cfg.use_interaction_diff,
+                    "use_news_context_prod": cfg.use_news_context_prod,
+                    "use_cosine_sim": cfg.use_cosine_sim,
+                    "use_pooled_news": cfg.use_pooled_news,
+
                     # CMTF tuning fields
                     "fusion_market_dim": cfg.fusion_market_dim,
                     "fusion_hidden_dim": cfg.fusion_hidden_dim,
                     "projected_news_dim": cfg.projected_news_dim,
                     "n_heads": cfg.n_heads,
                     "dropout": cfg.dropout,
+                    "sign_penalty_weight": cfg.sign_penalty_weight,
                     "encoder_lr_scale": cfg.encoder_lr_scale,
                     "aux_loss_weight": cfg.aux_loss_weight,
                     "stage1_ratio": cfg.stage1_ratio,
@@ -530,6 +561,30 @@ def _format_setting(row: pd.Series, table: str) -> str:
         if row.get("fusion_type") == "cmtf":
             return f"cmtf::{row.get('market_encoder_name')}"
         return f"{row.get('model_name')}::{row.get('fusion_type')}"
+
+    if table == "feature_construction_ablation":
+        return (
+            f"cmtf(fc="
+            f"{int(row.get('use_interaction_prod', True))}"
+            f"{int(row.get('use_interaction_diff', True))}"
+            f"{int(row.get('use_news_context_prod', True))}"
+            f"{int(row.get('use_cosine_sim', True))}"
+            f"{int(row.get('use_pooled_news', True))})"
+        )
+
+    if table == "news_ablation":
+        return (
+            f"cmtf(xattn={row.get('use_cross_attention')}, "
+            f"gate={row.get('use_news_gate')}, "
+            f"pe={row.get('use_positional_encoding')}, "
+            f"k={row.get('recency_gate_k')})"
+        )
+
+    if table == "cmtf_search":
+        return (
+            f"cmtf({row.get('market_encoder_name', 'na')}), "
+            f"output_mode={row.get('output_mode', '?')}"
+        )
 
     return str(row.get("fusion_type", ""))
 
@@ -742,7 +797,13 @@ def _plot_table(table: str, df: pd.DataFrame, horizon: int) -> None:
 
 def _regenerate_plots(horizon: int) -> None:
     hdir = _horizon_dir(horizon)
-    for table in ("data_ablation", "architecture_ablation", "feature_extractor_ablation"):
+    for table in (
+    "data_ablation",
+    "architecture_ablation",
+    "feature_extractor_ablation",
+    "feature_construction_ablation",
+    "news_ablation",
+):
         csv_path = hdir / f"{table}.csv"
         if not csv_path.exists():
             logger.warning("⚠️  No CSV for {} {}D — skipping", table, horizon)
@@ -761,7 +822,13 @@ def main() -> None:
             "data_ablation",
             "architecture_ablation",
             "feature_extractor_ablation",
+            "feature_construction_ablation",
+            "news_ablation",
             "cmtf_search",
+            "mini_5d_diagnosis",
+            "learned_cmtf_ablation",
+            "cmtf_20d_candidate_search",
+
             "all",
         ],
         default="all",
@@ -922,7 +989,8 @@ def main() -> None:
                 if summary:
                     summary_rows.append(summary)
 
-            _plot_table(table, df, horizon)
+            if table != "cmtf_search":
+                _plot_table(table, df, horizon)
 
         if summary_rows:
             summary_df = pd.DataFrame(summary_rows)

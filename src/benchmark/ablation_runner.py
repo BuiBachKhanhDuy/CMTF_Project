@@ -6,7 +6,7 @@ Design:
 1. none   -> runner trains a backbone model directly
 2. early  -> EarlyFusionWrapper owns encoder training
 3. late   -> LateFusionWrapper owns encoder training
-4. cmtf -> standalone Cross-Modal Temporal Fusion predictor
+4. cmtf   -> standalone Cross-Modal Temporal Fusion predictor
 """
 
 from __future__ import annotations
@@ -41,8 +41,10 @@ _ALLOWED_WRAPPER_NEWS_DIMS = {768, 128}
 def _config_hash(cfg: AblationConfig) -> str:
     return hashlib.md5(cfg.cell_id.encode()).hexdigest()[:10]
 
+
 def _supports_cmtf_market_encoder(model_name: str) -> bool:
     return model_name in {"lstm", "cnn_lstm"}
+
 
 def _strip_sentiment_features(
     market_windows: np.ndarray,
@@ -200,6 +202,7 @@ def _build_encoder(
             hidden_dim=p["hidden_dim"],
             num_layers=p["num_layers"],
             dropout=p["dropout"],
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
             device=device,
         )
 
@@ -221,6 +224,7 @@ def _build_encoder(
             hidden_dim=p.get("hidden_dim", 64),
             num_layers=p.get("num_layers", 2),
             dropout=p.get("dropout", 0.3),
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
             device=device,
         )
 
@@ -244,6 +248,7 @@ def _encoder_init_kwargs(
             hidden_dim=p["hidden_dim"],
             num_layers=p["num_layers"],
             dropout=p["dropout"],
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
             device=device,
         )
 
@@ -255,6 +260,7 @@ def _encoder_init_kwargs(
             hidden_dim=p.get("hidden_dim", 64),
             num_layers=p.get("num_layers", 2),
             dropout=p.get("dropout", 0.3),
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
             device=device,
         )
 
@@ -487,18 +493,20 @@ def run_ablation_cell(
             raise ValueError(
                 f"Unsupported CMTF market_encoder_name: {hybrid_market_model_name}"
             )
-            
+
+        encoder_hpo = params.get(hybrid_market_model_name, {})
         market_encoder = build_market_encoder(
             model_name=hybrid_market_model_name,
             input_dim=input_dim,
             seq_len=mw_train.shape[1],
             horizon=horizon,
             device=device,
-            **hybrid_params.get("market_encoder_kwargs", {}),
+            hidden_dim=encoder_hpo.get("hidden_dim", 64),
+            num_layers=encoder_hpo.get("num_layers", 2),
+            dropout=encoder_hpo.get("dropout", 0.3),
+            sign_penalty_weight=encoder_hpo.get("sign_penalty_weight", 0.02),
         )
 
-        # Temporary stabilization mode:
-        # keep hybrid minimal until the core pipeline is verified clean.
         hybrid_model = HybridFusionPredictor(
             market_encoder=market_encoder,
             raw_news_dim=raw_news_dim,
@@ -528,7 +536,15 @@ def run_ablation_cell(
             fusion_patience=cfg.fusion_patience,
             news_gate_alpha=cfg.news_gate_alpha,
             variance_reg_coeff=cfg.variance_reg_coeff,
+            output_mode=cfg.output_mode,
             device=device,
+            use_interaction_prod=cfg.use_interaction_prod,
+            use_interaction_diff=cfg.use_interaction_diff,
+            use_news_context_prod=cfg.use_news_context_prod,
+            use_cosine_sim=cfg.use_cosine_sim,
+            use_pooled_news=cfg.use_pooled_news,
+            fusion_style=cfg.fusion_style,
+            market_query_mode=cfg.market_query_mode,
         )
 
         market_encoder_params = params.get(hybrid_market_model_name, {})
@@ -578,7 +594,8 @@ def run_ablation_cell(
     if cache_dir is not None:
         pred_dir = Path(cache_dir) / "predictions"
         pred_dir.mkdir(parents=True, exist_ok=True)
-        pred_file = pred_dir / f"{cfg.cell_id}__seed{seed}__{horizon}d.npy"
+        short_id = _config_hash(cfg)
+        pred_file = pred_dir / f"{short_id}__seed{seed}__{horizon}d.npy"
         np.save(str(pred_file), preds)
 
         truth_file = pred_dir / f"truth__{horizon}d.npy"
