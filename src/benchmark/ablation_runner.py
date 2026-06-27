@@ -25,6 +25,8 @@ from .baseline_models import (
     RandomForestRegressor_Wrapper,
     CNNLSTMPredictor,
 )
+from .gpt4ts_encoder import GPT4TSPredictor
+from .chronos_encoder import ChronosAdapter
 from .fusion_wrappers import EarlyFusionWrapper, LateFusionWrapper
 from .hybrid_fusion import HybridFusionPredictor, build_market_encoder
 from .metrics import compute_all
@@ -43,7 +45,7 @@ def _config_hash(cfg: AblationConfig) -> str:
 
 
 def _supports_cmtf_market_encoder(model_name: str) -> bool:
-    return model_name in {"lstm", "cnn_lstm"}
+    return model_name in {"lstm", "cnn_lstm", "gpt4ts", "chronos"}
 
 
 def _strip_sentiment_features(
@@ -96,11 +98,11 @@ def _validate_wrapper_news_dim(news_embs: np.ndarray) -> np.ndarray:
 
 
 def _supports_early_fusion(model_name: str) -> bool:
-    return model_name in {"lstm", "cnn_lstm"}
+    return model_name in {"lstm", "cnn_lstm", "gpt4ts", "chronos"}
 
 
 def _supports_late_fusion(model_name: str) -> bool:
-    return model_name in {"lstm", "cnn_lstm", "rf"}
+    return model_name in {"lstm", "cnn_lstm", "rf", "gpt4ts", "chronos"}
 
 
 def _get_news_arrays(
@@ -228,6 +230,25 @@ def _build_encoder(
             device=device,
         )
 
+    elif cfg.model_name == "gpt4ts":
+        p = params.get("gpt4ts", {"hidden_dim": 64, "num_layers": 3, "dropout": 0.3})
+        return GPT4TSPredictor(
+            input_dim=input_dim,
+            hidden_dim=p.get("hidden_dim", 64),
+            num_layers=p.get("num_layers", 3),
+            dropout=p.get("dropout", 0.3),
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
+            device=device,
+        )
+
+    elif cfg.model_name == "chronos":
+        return ChronosAdapter(
+            input_dim=input_dim,
+            model_name="amazon/chronos-t5-small",
+            dropout=params.get("chronos", {}).get("dropout", 0.3),
+            device=device,
+        )
+
     raise ValueError(f"Unknown or unsupported backbone model for ablation_runner: {cfg.model_name}")
 
 
@@ -261,6 +282,25 @@ def _encoder_init_kwargs(
             num_layers=p.get("num_layers", 2),
             dropout=p.get("dropout", 0.3),
             sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
+            device=device,
+        )
+
+    elif cfg.model_name == "gpt4ts":
+        p = params.get("gpt4ts", {"hidden_dim": 64, "num_layers": 3, "dropout": 0.3})
+        return dict(
+            input_dim=input_dim,
+            hidden_dim=p.get("hidden_dim", 64),
+            num_layers=p.get("num_layers", 3),
+            dropout=p.get("dropout", 0.3),
+            sign_penalty_weight=p.get("sign_penalty_weight", 0.02),
+            device=device,
+        )
+        
+    elif cfg.model_name == "chronos":
+        return dict(
+            input_dim=input_dim,
+            model_name="amazon/chronos-t5-small",
+            dropout=params.get("chronos", {}).get("dropout", 0.3),
             device=device,
         )
 
@@ -383,7 +423,7 @@ def run_ablation_cell(
             )
 
         wrapper = EarlyFusionWrapper(
-            encoder_cls={"lstm": LSTMPredictor, "cnn_lstm": CNNLSTMPredictor}[cfg.model_name],
+            encoder_cls={"lstm": LSTMPredictor, "cnn_lstm": CNNLSTMPredictor, "gpt4ts": GPT4TSPredictor, "chronos": ChronosAdapter}[cfg.model_name],
             encoder_kwargs=_encoder_init_kwargs(cfg, input_dim, device, chronos, hpo_params, seed),
             raw_news_dim=raw_news_dim,
             projected_news_dim=params.get("news", {}).get("projected_news_dim", 128),
@@ -489,7 +529,7 @@ def run_ablation_cell(
         if hybrid_market_model_name is None:
             raise ValueError("CMTF requires cfg.market_encoder_name to be set")
 
-        if hybrid_market_model_name not in {"lstm", "cnn_lstm"}:
+        if hybrid_market_model_name not in {"lstm", "cnn_lstm", "gpt4ts", "chronos"}:
             raise ValueError(
                 f"Unsupported CMTF market_encoder_name: {hybrid_market_model_name}"
             )

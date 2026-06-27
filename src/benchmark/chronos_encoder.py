@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from loguru import logger
+from torch.utils.data import DataLoader, TensorDataset
+
+from src.benchmark.baseline_models import (
+    BaseTorchMarketPredictor,
+    BaseTorchHybridPredictor,
+)
 
 
 class ChronosMarketPredictor:
@@ -212,4 +219,136 @@ class ChronosMarketPredictor:
             all_embs.append(pooled)
 
         return np.concatenate(all_embs, axis=0)  # (N, d_model)
+
+
+class ChronosAdapter(BaseTorchMarketPredictor):
+    """
+    Apple-to-Apple Chronos Feature Extractor.
+    Takes multivariate market_windows, maps them to T5 embedding space,
+    passes them through the frozen T5 encoder via inputs_embeds,
+    and applies a regression head.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        model_name: str = "amazon/chronos-t5-small",
+        dropout: float = 0.3,
+        device: str = "cpu",
+    ):
+        super().__init__(device=device)
+        from chronos import ChronosPipeline
+
+        logger.info("Loading Chronos model for feature extraction: {} …", model_name)
+        self.pipeline = ChronosPipeline.from_pretrained(
+            model_name,
+            device_map=device,
+            torch_dtype=torch.float32,
+        )
+        self.encoder = self.pipeline.model.model.encoder
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+        self.chronos_d_model = self.encoder.config.d_model
+
+        # Map multivariate input to chronos embed dim
+        self.input_projection = nn.Linear(input_dim, self.chronos_d_model)
+        self.dropout = nn.Dropout(dropout)
+        
+        # Regression head
+        self.regressor = nn.Sequential(
+            nn.Linear(self.chronos_d_model, self.chronos_d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.chronos_d_model // 2, 1)
+        )
+        self.to(self.device)
+
+    def encode_sequence_torch(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        """Return (batch, seq_len, d_model)"""
+        # market_tensors: (batch, seq_len, input_dim)
+        embeds = self.input_projection(market_tensors)
+        
+        with torch.no_grad():
+            outputs = self.encoder(inputs_embeds=embeds)
+            
+        return outputs.last_hidden_state
+
+    def encode_pooled_torch(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        """Return (batch, d_model)"""
+        seq_embs = self.encode_sequence_torch(market_tensors)
+        # Average pooling
+        return seq_embs.mean(dim=1)
+        
+    def _encode_market_tensors(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        return self.encode_pooled_torch(market_tensors)
+
+    def forward(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        embs = self._encode_market_tensors(market_tensors)
+        embs = self.dropout(embs)
+        return self.regressor(embs).squeeze(-1)
+
+
+class ChronosHybridAdapter(BaseTorchHybridPredictor):
+    """
+    Apple-to-Apple Chronos Hybrid Extractor.
+    Extracts market embeddings using the frozen T5 encoder,
+    concatenates with tabular features, and applies a regression head.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        tabular_dim: int,
+        model_name: str = "amazon/chronos-t5-small",
+        dropout: float = 0.3,
+        device: str = "cpu",
+    ):
+        super().__init__(device=device)
+        from chronos import ChronosPipeline
+
+        logger.info("Loading Chronos model for hybrid extraction: {} …", model_name)
+        self.pipeline = ChronosPipeline.from_pretrained(
+            model_name,
+            device_map=device,
+            torch_dtype=torch.float32,
+        )
+        self.encoder = self.pipeline.model.model.encoder
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+        self.chronos_d_model = self.encoder.config.d_model
+
+        # Map multivariate input to chronos embed dim
+        self.input_projection = nn.Linear(input_dim, self.chronos_d_model)
+        self.dropout = nn.Dropout(dropout)
+        
+        # Regression head for concatenated features
+        combined_dim = self.chronos_d_model + tabular_dim
+        self.regressor = nn.Sequential(
+            nn.Linear(combined_dim, combined_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(combined_dim // 2, 1)
+        )
+        self.to(self.device)
+        
+    def encode_sequence_torch(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        embeds = self.input_projection(market_tensors)
+        with torch.no_grad():
+            outputs = self.encoder(inputs_embeds=embeds)
+        return outputs.last_hidden_state
+
+    def encode_pooled_torch(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        seq_embs = self.encode_sequence_torch(market_tensors)
+        return seq_embs.mean(dim=1)
+
+    def _encode_market_tensors(self, market_tensors: torch.Tensor) -> torch.Tensor:
+        return self.encode_pooled_torch(market_tensors)
+
+    def forward(self, market_tensors: torch.Tensor, tabular_tensors: torch.Tensor) -> torch.Tensor:
+        market_embs = self._encode_market_tensors(market_tensors)
+        combined = torch.cat([market_embs, tabular_tensors], dim=-1)
+        combined = self.dropout(combined)
+        return self.regressor(combined).squeeze(-1)
 

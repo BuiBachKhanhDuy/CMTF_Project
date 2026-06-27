@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-BACKBONE_MODELS = ("lstm", "rf", "cnn_lstm")
+BACKBONE_MODELS = (
+    "lstm",
+    "rf",
+    "cnn_lstm",
+    "gpt4ts",
+    "chronos",
+)
 
 # Architecture label for the renamed hybrid model
 CMTF_MODEL = "cmtf"
@@ -114,7 +120,7 @@ class AblationConfig:
 
         # market_encoder_name is meaningful only for CMTF
         if self.fusion_type == "cmtf":
-            if self.market_encoder_name not in {"lstm", "cnn_lstm"}:
+            if self.market_encoder_name not in {"lstm", "cnn_lstm", "gpt4ts", "chronos"}:
                 return False
         else:
             if self.market_encoder_name is not None:
@@ -493,6 +499,113 @@ def generate_grid(table: str = "all") -> list[AblationConfig]:
                 news_scope="matched",
                 sentiment_mode="scalars",
                 market_encoder_name="lstm",
+                output_mode="fusion_plus_news",
+                use_cross_attention=True,
+                use_positional_encoding=True,
+                recency_gate_k=3,
+                use_news_gate=True,
+                use_two_stage=True,
+                use_aux_loss=True,
+                use_variance_reg=True,
+                use_interaction_prod=False,
+                use_interaction_diff=False,
+                use_news_context_prod=False,
+                use_cosine_sim=False,
+                use_pooled_news=False,
+                fusion_market_dim=64,
+                fusion_hidden_dim=32,
+                projected_news_dim=128,
+                n_heads=4,
+                dropout=0.1,
+                sign_penalty_weight=0.005,
+                encoder_lr_scale=0.2,
+                aux_loss_weight=0.0,
+                stage1_ratio=0.33,
+                market_epochs=80,
+                fusion_epochs=80,
+                market_patience=12,
+                fusion_patience=10,
+                news_gate_alpha=0.3,
+                variance_reg_coeff=0.001,
+                fusion_style="learned",
+                market_query_mode="multi",
+            ),
+            AblationConfig(
+                model_name="gpt4ts",
+                fusion_type="none",
+                news_scope="none",
+                sentiment_mode="none",
+            ),
+            AblationConfig(
+                model_name="gpt4ts",
+                fusion_type="early",
+                news_scope="matched",
+                sentiment_mode="scalars",
+            ),
+            AblationConfig(
+                model_name="gpt4ts",
+                fusion_type="late",
+                news_scope="matched",
+                sentiment_mode="scalars",
+            ),
+            AblationConfig(
+                model_name=CMTF_MODEL,
+                fusion_type="cmtf",
+                news_scope="matched",
+                sentiment_mode="scalars",
+                market_encoder_name="gpt4ts",
+                output_mode="fusion_plus_news",
+                use_cross_attention=True,
+                use_positional_encoding=True,
+                recency_gate_k=3,
+                use_news_gate=True,
+                use_two_stage=True,
+                use_aux_loss=True,
+                use_variance_reg=True,
+                use_interaction_prod=False,
+                use_interaction_diff=False,
+                use_news_context_prod=False,
+                use_cosine_sim=False,
+                use_pooled_news=False,
+                fusion_market_dim=64,
+                fusion_hidden_dim=32,
+                projected_news_dim=128,
+                n_heads=4,
+                dropout=0.1,
+                sign_penalty_weight=0.005,
+                encoder_lr_scale=0.2,
+                aux_loss_weight=0.0,
+                stage1_ratio=0.33,
+                market_epochs=80,
+                fusion_epochs=80,
+                variance_reg_coeff=0.001,
+                fusion_style="learned",
+                market_query_mode="multi",
+            ),
+            AblationConfig(
+                model_name="chronos",
+                fusion_type="none",
+                news_scope="none",
+                sentiment_mode="none",
+            ),
+            AblationConfig(
+                model_name="chronos",
+                fusion_type="early",
+                news_scope="matched",
+                sentiment_mode="scalars",
+            ),
+            AblationConfig(
+                model_name="chronos",
+                fusion_type="late",
+                news_scope="matched",
+                sentiment_mode="scalars",
+            ),
+            AblationConfig(
+                model_name=CMTF_MODEL,
+                fusion_type="cmtf",
+                news_scope="matched",
+                sentiment_mode="scalars",
+                market_encoder_name="chronos",
                 output_mode="fusion_plus_news",
                 use_cross_attention=True,
                 use_positional_encoding=True,

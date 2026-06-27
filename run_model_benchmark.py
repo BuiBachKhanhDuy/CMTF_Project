@@ -48,6 +48,7 @@ from src.benchmark.baseline_models import (
     RandomForestRegressor_Wrapper,
     extract_market_summary_features,
 )
+from src.benchmark.gpt4ts_encoder import GPT4TSPredictor, GPT4TSHybridPredictor
 from src.benchmark.baseline_hpo import (
     get_default_baseline_hpo_params,
     load_or_run_baseline_hpo,
@@ -337,6 +338,8 @@ def plot_ablation(results_df: pd.DataFrame, save_path: Path) -> None:
         "MLP Summary Baseline": "MLP+Feat",
         "CNN-LSTM": "CNN-LSTM",
         "CNN-LSTM Hybrid": "CNN-LSTM+Tab",
+        "GPT4TS Baseline": "GPT4TS",
+        "GPT4TS Hybrid": "GPT4TS+Tab",
     }
     short_labels = [label_map.get(exp, exp[:15]) for exp in experiments]
 
@@ -591,6 +594,8 @@ def main() -> None:
             "MLP Summary Baseline": [],
             "CNN-LSTM": [],
             "CNN-LSTM Hybrid": [],
+            "GPT4TS Baseline": [],
+            "GPT4TS Hybrid": [],
         }
         all_y_true: list[np.ndarray] = []
 
@@ -715,6 +720,21 @@ def main() -> None:
             "lr": 1e-3,
             "batch_size": 32,
         }))
+
+        baseline_hpo_params.setdefault("gpt4ts", {
+            "hidden_dim": 64,
+            "num_layers": 3,
+            "dropout": 0.3,
+            "lr": 1e-3,
+            "batch_size": 32,
+        })
+        baseline_hpo_params.setdefault("gpt4ts_hybrid", {
+            "hidden_dim": 64,
+            "num_layers": 3,
+            "dropout": 0.3,
+            "lr": 1e-3,
+            "batch_size": 32,
+        })
 
         for sym in _sym_order:
             splits = _all_splits[sym]
@@ -1037,6 +1057,105 @@ def main() -> None:
             })
             all_results.append(metrics_cnn_lstm_hybrid)
             all_preds["CNN-LSTM Hybrid"].append(preds_cnn_lstm_hybrid)
+
+            # ----------------------------------------------------------
+            # GPT4TS Baseline
+            # ----------------------------------------------------------
+            gpt4ts_params = baseline_hpo_params.get("gpt4ts", {})
+            gpt4ts_param_hash = hashlib.md5(str(sorted(gpt4ts_params.items())).encode()).hexdigest()[:8]
+            gpt4ts_cache = CACHE_PRED_DIR / f"gpt4ts_{sym}_{target_h}d_{gpt4ts_param_hash}_{sh}.npy"
+            gpt4ts_ckpt = CACHE_MODEL_DIR / f"gpt4ts_model_{sym}_{target_h}d_{gpt4ts_param_hash}_{sh}.pt"
+            gpt4ts_ckpt.parent.mkdir(parents=True, exist_ok=True)
+
+            cached_gpt4ts = _load_npy(gpt4ts_cache)
+            if stage not in ("data", "predict") and cached_gpt4ts is not None and gpt4ts_ckpt.exists():
+                logger.info("[{}] GPT4TS Baseline loaded from cache", sym)
+                preds_gpt4ts = cached_gpt4ts
+            else:
+                logger.info("[{}] Training GPT4TS Baseline…", sym)
+                gpt4ts_model = GPT4TSPredictor(
+                    input_dim=splits["train"]["market_windows"].shape[-1],
+                    hidden_dim=gpt4ts_params.get("hidden_dim", 64),
+                    num_layers=gpt4ts_params.get("num_layers", 3),
+                    dropout=gpt4ts_params.get("dropout", 0.3),
+                    device=device,
+                )
+                gpt4ts_model.fit(
+                    splits["train"]["market_windows"],
+                    splits["train"]["targets"],
+                    splits["val"]["market_windows"],
+                    splits["val"]["targets"],
+                    epochs=50,
+                    batch_size=gpt4ts_params.get("batch_size", 32),
+                    learning_rate=gpt4ts_params.get("lr", 1e-3),
+                    patience=10,
+                )
+                preds_gpt4ts = gpt4ts_model.predict(splits["test"]["market_windows"])
+                _save_npy(gpt4ts_cache, preds_gpt4ts)
+                torch.save(gpt4ts_model.state_dict(), gpt4ts_ckpt)
+
+            metrics_gpt4ts = compute_all(y_test, preds_gpt4ts, horizon=target_h)
+            metrics_gpt4ts.update(
+                compute_composite_metrics(y_test, preds_gpt4ts, horizon=target_h, anchor_pred=anchor_pred)
+            )
+            metrics_gpt4ts.update({
+                "Experiment": "GPT4TS Baseline",
+                "ComparisonSet": "fairness",
+                "Symbol": sym,
+                "TargetHorizonD": target_h,
+            })
+            all_results.append(metrics_gpt4ts)
+            all_preds["GPT4TS Baseline"].append(preds_gpt4ts)
+
+            # ----------------------------------------------------------
+            # GPT4TS Hybrid
+            # ----------------------------------------------------------
+            gpt4ts_hybrid_cache = CACHE_PRED_DIR / f"gpt4ts_hybrid_{sym}_{target_h}d_{sh}.npy"
+            gpt4ts_hybrid_params = baseline_hpo_params.get("gpt4ts_hybrid", {})
+
+            if stage not in ("data", "predict") and (cached_gpt4ts_hybrid := _load_npy(gpt4ts_hybrid_cache)) is not None:
+                logger.info("[{}] GPT4TS Hybrid loaded from cache", sym)
+                preds_gpt4ts_hybrid = cached_gpt4ts_hybrid
+            else:
+                logger.info("[{}] Training GPT4TS Hybrid…", sym)
+                gpt4ts_hybrid_model = GPT4TSHybridPredictor(
+                    input_dim=splits["train"]["market_windows"].shape[-1],
+                    tabular_dim=tabular_dim,
+                    hidden_dim=gpt4ts_hybrid_params.get("hidden_dim", 64),
+                    num_layers=gpt4ts_hybrid_params.get("num_layers", 3),
+                    dropout=gpt4ts_hybrid_params.get("dropout", 0.3),
+                    device=device,
+                )
+                gpt4ts_hybrid_model.fit(
+                    splits["train"]["market_windows"],
+                    splits["train"]["targets"],
+                    splits["val"]["market_windows"],
+                    splits["val"]["targets"],
+                    market_tabular_train=train_tab,
+                    market_tabular_val=val_tab,
+                    epochs=50,
+                    batch_size=gpt4ts_hybrid_params.get("batch_size", 32),
+                    learning_rate=gpt4ts_hybrid_params.get("lr", 1e-3),
+                    patience=10,
+                )
+                preds_gpt4ts_hybrid = gpt4ts_hybrid_model.predict(
+                    splits["test"]["market_windows"],
+                    market_tabular=test_tab,
+                )
+                _save_npy(gpt4ts_hybrid_cache, preds_gpt4ts_hybrid)
+
+            metrics_gpt4ts_hybrid = compute_all(y_test, preds_gpt4ts_hybrid, horizon=target_h)
+            metrics_gpt4ts_hybrid.update(
+                compute_composite_metrics(y_test, preds_gpt4ts_hybrid, horizon=target_h, anchor_pred=anchor_pred)
+            )
+            metrics_gpt4ts_hybrid.update({
+                "Experiment": "GPT4TS Hybrid",
+                "ComparisonSet": "fairness",
+                "Symbol": sym,
+                "TargetHorizonD": target_h,
+            })
+            all_results.append(metrics_gpt4ts_hybrid)
+            all_preds["GPT4TS Hybrid"].append(preds_gpt4ts_hybrid)
 
         results_df = pd.DataFrame(all_results)
 

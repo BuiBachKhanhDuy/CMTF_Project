@@ -23,6 +23,8 @@ from .news_module import (
     _as_bool_mask,
 )
 from .training_utils import compute_huber_delta
+from .gpt4ts_encoder import GPT4TSPredictor
+from .chronos_encoder import ChronosAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,7 @@ def build_market_encoder(
     Factory for market-only encoder models used by HybridFusionPredictor.
     """
     name = str(model_name).strip().lower()
+    market_dim = input_dim
 
     if name in {"lstm", "lstm_predictor"}:
         return LSTMPredictor(
@@ -66,9 +69,25 @@ def build_market_encoder(
             **kwargs,
         )
 
+    if name == "gpt4ts":
+        return GPT4TSPredictor(
+            input_dim=market_dim,
+            hidden_dim=kwargs.get("hidden_dim", 64),
+            num_layers=kwargs.get("num_layers", 3),
+            dropout=kwargs.get("dropout", 0.3),
+            device=device,
+        )
+    elif name == "chronos":
+        return ChronosAdapter(
+            input_dim=market_dim,
+            model_name="amazon/chronos-t5-small",
+            dropout=kwargs.get("dropout", 0.3),
+            device=device,
+        )
+
     raise ValueError(
         f"Unsupported market encoder model_name={model_name!r}. "
-        "Expected one of: 'lstm', 'cnn_lstm'."
+        "Expected one of: 'lstm', 'cnn_lstm', 'gpt4ts', 'chronos'."
     )
 
 
