@@ -7,11 +7,8 @@ Two chart types per table × horizon:
 Public API
 ----------
 plot_table_charts(df, table, horizon, figures_dir)
-    Generates both charts for all primary metrics. Called from run_ablation_benchmark.
-
-Backward-compat wrappers kept so existing imports do not break:
-    plot_fusion_comparison, plot_news_scope,
-    plot_sentiment_ablation, plot_component_ablation
+    Generates both charts for all primary metrics. Called from run_ablation_benchmark
+    with the two study tables: 'fusion_comparison' and 'component_ablation'.
 """
 
 from __future__ import annotations
@@ -27,9 +24,9 @@ import pandas as pd
 
 _MODEL_PALETTE = {
     "lstm": "#4C72B0",
-    "chronos_ft": "#DD8452",
+    "chronos": "#DD8452",
     "cnn_lstm": "#55A868",
-    "rf": "#C44E52",
+    "gpt4ts": "#C44E52",
     "cmtf": "#8172B3",
 }
 
@@ -43,26 +40,27 @@ _PRIMARY_METRICS: list[tuple[str, bool, str]] = [
 ]
 
 _TABLE_TITLE: dict[str, str] = {
-    # New tables
-    "data_ablation": "Data Ablation",
-    "architecture_ablation": "Architecture Ablation",
-    "feature_extractor_ablation": "Feature Extractor Ablation",
-    "feature_construction_ablation": "Feature Construction Ablation",
-    "news_ablation": "News-side Ablation",
-    "cmtf_search": "CMTF Search",
-
-    # Legacy tables
-    "fusion": "Fusion Strategy",
-    "news_scope": "News Scope",
-    "sentiment": "Sentiment Mode",
-    "component": "CMTF Component Toggles",
-    "mini_5d_diagnosis": "Mini 5D Diagnosis",
-    
-    "learned_cmtf_ablation": "Learned vs Handcrafted CMTF",
+    "fusion_comparison": "Fusion Comparison",
+    "component_ablation": "CMTF Component Ablation",
 }
 
 def _color_for(model: str) -> str:
     return _MODEL_PALETTE.get(model, "#8C8C8C")
+
+
+def _truthy(value, default: bool = False) -> bool:
+    """Interpret CSV/object values as booleans without treating NaN as True."""
+    if pd.isna(value):
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+
+
+
+
 
 
 def _save(fig: plt.Figure, path: Path) -> None:
@@ -71,333 +69,95 @@ def _save(fig: plt.Figure, path: Path) -> None:
     plt.close(fig)
 
 
-def _add_toggle_col(df: pd.DataFrame) -> pd.DataFrame:
-    """Add a human-readable 'toggle' column for component ablation rows."""
-    df = df.copy()
-    df["toggle"] = df.apply(
-        lambda r: (
-            f"PE={'Y' if bool(r.get('use_positional_encoding', True)) else 'N'} "
-            f"Gate={'Y' if bool(r.get('use_news_gate', True)) else 'N'} "
-            f"K={int(r.get('recency_gate_k', 5))} "
-            f"TS={'Y' if bool(r.get('use_two_stage', True)) else 'N'} "
-            f"Aux={'Y' if bool(r.get('use_aux_loss', True)) else 'N'} "
-            f"VR={'Y' if bool(r.get('use_variance_reg', True)) else 'N'}"
-        ),
-        axis=1,
-    )
-    return df
-
 def _resolve_plot_category(df: pd.DataFrame, table: str) -> tuple[pd.DataFrame, str]:
     """
-    Return (plot_df, category_col) where category_col is guaranteed to exist.
+        Return (plot_df, category_col) where category_col is guaranteed to exist.
     """
     plot_df = df.copy()
 
     # -------------------------
-    # New final-study tables
+    # Final study tables
     # -------------------------
-    if table == "data_ablation":
+    if table == "fusion_comparison":
         if "fusion_type" not in plot_df.columns:
-            raise KeyError("data_ablation plotting requires column 'fusion_type'")
-        plot_df["_plot_category"] = plot_df["fusion_type"].astype(str)
+            raise KeyError("fusion_comparison plotting requires column 'fusion_type'")
+
+        def _fusion_label(row):
+            if str(row.get("fusion_type")) == "cmtf" and _truthy(row.get("shuffle_news", False)):
+                return "cmtf(placebo)"
+            return str(row.get("fusion_type"))
+
+        plot_df["_plot_category"] = plot_df.apply(_fusion_label, axis=1)
+
         return plot_df, "_plot_category"
 
-    if table == "architecture_ablation":
-        if "use_cross_attention" not in plot_df.columns:
-            raise KeyError("architecture_ablation plotting requires column 'use_cross_attention'")
-        plot_df["_plot_category"] = plot_df["use_cross_attention"].map(
-            lambda x: "xattn_on" if bool(x) else "xattn_off"
-        )
-        return plot_df, "_plot_category"
-
-    if table == "feature_extractor_ablation":
-        required_cols = {"model_name", "fusion_type"}
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"feature_extractor_ablation plotting missing columns: {sorted(missing)}")
-
-        def _feat_label(row):
-            fusion = str(row["fusion_type"])
-            model = str(row["model_name"])
-            enc = row["market_encoder_name"] if "market_encoder_name" in plot_df.columns else "na"
-            enc = "na" if pd.isna(enc) else str(enc)
-
-            if fusion == "cmtf":
-                return f"cmtf::{enc}"
-            return f"{model}::{fusion}"
-
-        plot_df["_plot_category"] = plot_df.apply(_feat_label, axis=1)
-        return plot_df, "_plot_category"
-
-    if table == "feature_construction_ablation":
-        required_cols = {
-            "use_interaction_prod",
-            "use_interaction_diff",
-            "use_news_context_prod",
-            "use_cosine_sim",
-            "use_pooled_news",
-        }
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"feature_construction_ablation plotting missing columns: {sorted(missing)}")
-
-        def _feature_label(row):
-            return (
-                f"iprod={int(bool(row['use_interaction_prod']))}|"
-                f"idiff={int(bool(row['use_interaction_diff']))}|"
-                f"nprod={int(bool(row['use_news_context_prod']))}|"
-                f"csim={int(bool(row['use_cosine_sim']))}|"
-                f"pnews={int(bool(row['use_pooled_news']))}"
-            )
-
-        plot_df["_plot_category"] = plot_df.apply(_feature_label, axis=1)
-        return plot_df, "_plot_category"
-
-    if table == "news_ablation":
+    if table == "component_ablation":
         required_cols = {
             "use_cross_attention",
-            "use_positional_encoding",
-            "use_news_gate",
             "recency_gate_k",
-        }
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"news_ablation plotting missing columns: {sorted(missing)}")
-
-        def _news_label(row):
-            return (
-                f"xattn={int(bool(row['use_cross_attention']))}|"
-                f"pe={int(bool(row['use_positional_encoding']))}|"
-                f"gate={int(bool(row['use_news_gate']))}|"
-                f"k={int(row['recency_gate_k'])}"
-            )
-
-        plot_df["_plot_category"] = plot_df.apply(_news_label, axis=1)
-        return plot_df, "_plot_category"
-
-    if table == "cmtf_search":
-        required_cols = {
+            "use_news_gate",
+            "use_positional_encoding",
+            "use_aux_loss",
+            "use_variance_reg",
+            "use_two_stage",
+            "output_mode",
             "fusion_style",
-            "market_query_mode",
-            "use_interaction_prod",
-            "use_interaction_diff",
-            "use_news_context_prod",
-            "use_cross_attention",
-            "use_positional_encoding",
-            "use_news_gate",
-            "recency_gate_k",
+            "news_scope",
+            "sentiment_mode",
         }
         missing = required_cols - set(plot_df.columns)
         if missing:
-            raise KeyError(f"cmtf_search plotting missing columns: {sorted(missing)}")
+            raise KeyError(f"component_ablation plotting missing columns: {sorted(missing)}")
 
-        def _cmtf_search_label(row):
+        def _component_label(row):
             return (
+                f"xattn={int(_truthy(row['use_cross_attention'], True))}|"
+                f"k={int(row['recency_gate_k'])}|"
+                f"gate={int(_truthy(row['use_news_gate'], True))}|"
+                f"pe={int(_truthy(row['use_positional_encoding'], True))}|"
+                f"aux={int(_truthy(row['use_aux_loss'], True))}|"
+                f"vr={int(_truthy(row['use_variance_reg'], True))}|"
+                f"ts={int(_truthy(row['use_two_stage'], True))}|"
+                f"om={row['output_mode']}|"
                 f"style={row['fusion_style']}|"
-                f"mq={row['market_query_mode']}|"
-                f"ip={int(bool(row['use_interaction_prod']))}|"
-                f"id={int(bool(row['use_interaction_diff']))}|"
-                f"nc={int(bool(row['use_news_context_prod']))}|"
-                f"x={int(bool(row['use_cross_attention']))}|"
-                f"pe={int(bool(row['use_positional_encoding']))}|"
-                f"g={int(bool(row['use_news_gate']))}|"
-                f"k={int(row['recency_gate_k'])}"
+                f"ns={row['news_scope']}|"
+                f"sent={row['sentiment_mode']}"
             )
 
-        plot_df["_plot_category"] = plot_df.apply(_cmtf_search_label, axis=1)
-        return plot_df, "_plot_category"
-    
-    if table == "mini_5d_diagnosis":
-        required_cols = {
-            "use_cross_attention",
-            "use_positional_encoding",
-            "use_news_gate",
-            "recency_gate_k",
-        }
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"mini_5d_diagnosis plotting missing columns: {sorted(missing)}")
-
-        def _mini_label(row):
-            return (
-                f"xattn={int(bool(row['use_cross_attention']))}|"
-                f"pe={int(bool(row['use_positional_encoding']))}|"
-                f"gate={int(bool(row['use_news_gate']))}|"
-                f"k={int(row['recency_gate_k'])}"
-            )
-
-        plot_df["_plot_category"] = plot_df.apply(_mini_label, axis=1)
-        return plot_df, "_plot_category"
-
-    # -------------------------
-    # Legacy tables
-    # -------------------------
-    if table == "fusion":
-        plot_df["_plot_category"] = plot_df["fusion_type"].astype(str)
-        return plot_df, "_plot_category"
-
-    if table == "news_scope":
-        plot_df["_plot_category"] = plot_df["news_scope"].astype(str)
-        return plot_df, "_plot_category"
-
-    if table == "sentiment":
-        plot_df["_plot_category"] = plot_df["sentiment_mode"].astype(str)
-        return plot_df, "_plot_category"
-
-    if table == "component":
-        plot_df = _add_toggle_col(plot_df)
-        return plot_df, "toggle"
-    
-    if table == "learned_cmtf_ablation":
-        required_cols = {"fusion_style", "market_query_mode", "use_cross_attention"}
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"learned_cmtf_ablation plotting missing columns: {sorted(missing)}")
-
-        def _learned_label(row):
-            return (
-                f"style={row['fusion_style']}|"
-                f"mq={row['market_query_mode']}|"
-                f"xattn={int(bool(row['use_cross_attention']))}"
-            )
-
-        plot_df["_plot_category"] = plot_df.apply(_learned_label, axis=1)
+        plot_df["_plot_category"] = plot_df.apply(_component_label, axis=1)
         return plot_df, "_plot_category"
 
     raise KeyError(f"Unknown table for plotting: {table}")
 
 def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
     """
-    Return a boolean mask selecting baseline rows for delta plots.
+        Return a boolean mask selecting baseline rows for delta plots.
     """
     mask = pd.Series([False] * len(df), index=df.index)
 
     # -------------------------
-    # New final-study tables
+    # Final study tables
     # -------------------------
-    if table == "data_ablation":
+    if table == "fusion_comparison":
         if "fusion_type" in df.columns:
             mask = df["fusion_type"].astype(str) == "none"
         return mask
 
-    if table == "architecture_ablation":
-        if "use_cross_attention" in df.columns:
-            mask = df["use_cross_attention"].astype(bool) == True
-        return mask
-
-    if table == "feature_extractor_ablation":
-        if "fusion_type" in df.columns:
-            mask = df["fusion_type"].astype(str) == "none"
-        return mask
-
-    if table == "feature_construction_ablation":
-        needed = [
-            ("use_interaction_prod", True),
-            ("use_interaction_diff", True),
-            ("use_news_context_prod", True),
-            ("use_cosine_sim", True),
-            ("use_pooled_news", True),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-        return mask
-
-    if table == "news_ablation":
+    if table == "component_ablation":
+        # Baseline = the canonical CMTF_CORE row (single change per ablation row).
         needed = [
             ("use_cross_attention", True),
-            ("use_positional_encoding", True),
-            ("use_news_gate", True),
             ("recency_gate_k", 3),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-        return mask
-
-    if table == "cmtf_search":
-        needed = [
-            ("fusion_style", "handcrafted"),
-            ("market_query_mode", "multi"),
-            ("use_cross_attention", True),
-            ("use_positional_encoding", False),
             ("use_news_gate", True),
-            ("recency_gate_k", 3),
-            ("use_interaction_prod", True),
-            ("use_interaction_diff", True),
-            ("use_news_context_prod", True),
-            ("use_pooled_news", False),
-            ("use_cosine_sim", False),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-        return mask
-
-    # -------------------------
-    # Legacy tables
-    # -------------------------
-    if table == "fusion":
-        if "fusion_type" in df.columns:
-            mask = df["fusion_type"].astype(str) == "none"
-        return mask
-
-    if table == "news_scope":
-        if "news_scope" in df.columns:
-            mask = df["news_scope"].astype(str) == "none"
-        return mask
-
-    if table == "sentiment":
-        if "sentiment_mode" in df.columns:
-            mask = df["sentiment_mode"].astype(str) == "none"
-        return mask
-
-    if table == "component":
-        needed = [
             ("use_positional_encoding", True),
-            ("use_news_gate", True),
-            ("recency_gate_k", 5),
-            ("use_two_stage", True),
-            ("use_aux_loss", True),
+                        ("use_aux_loss", True),
             ("use_variance_reg", True),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-        return mask
-    
-    if table == "mini_5d_diagnosis":
-        needed = [
-            ("use_cross_attention", True),
-            ("use_positional_encoding", True),
-            ("use_news_gate", True),
-            ("recency_gate_k", 3),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-        return mask
+            ("use_two_stage", False),
+            ("output_mode", "anchored_fusion"),
 
-    if table == "learned_cmtf_ablation":
-        needed = [
-            ("fusion_style", "handcrafted"),
-            ("market_query_mode", "multi"),
-            ("use_cross_attention", True),
+            ("fusion_style", "learned"),
+            ("news_scope", "matched"),
+            ("sentiment_mode", "scalars"),
         ]
         mask = pd.Series([True] * len(df), index=df.index)
         for col, val in needed:
@@ -405,8 +165,8 @@ def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
                 mask &= df[col] == val
             else:
                 mask &= False
-        return mask
-    
+                return mask
+
     return mask
 
 
@@ -595,23 +355,3 @@ def plot_table_charts(
             title=tbl_title,
             save_path=figures_dir / f"{table}_delta_{metric.replace('%', 'pct')}.png",
         )
-
-
-# ------------------------------------------------------------------
-# Backward-compat wrappers
-# ------------------------------------------------------------------
-
-def plot_fusion_comparison(df: pd.DataFrame, horizon: int, save_path: Path) -> None:
-    plot_table_charts(df, "fusion", horizon, save_path.parent)
-
-
-def plot_news_scope(df: pd.DataFrame, horizon: int, save_path: Path) -> None:
-    plot_table_charts(df, "news_scope", horizon, save_path.parent)
-
-
-def plot_sentiment_ablation(df: pd.DataFrame, horizon: int, save_path: Path) -> None:
-    plot_table_charts(df, "sentiment", horizon, save_path.parent)
-
-
-def plot_component_ablation(df: pd.DataFrame, horizon: int, save_path: Path) -> None:
-    plot_table_charts(df, "component", horizon, save_path.parent)

@@ -1,7 +1,7 @@
 """CMTF Data Pipeline — Web News Scraper module.
 
 Simplified banking-only scraper:
-- Symbols: VCB, BID
+- Symbols: VCB, BID, CTG, TCB, MBB, ACB, VPB
 - Sources: CafeF banking category + VnExpress + Vietstock symbol news
 """
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 _NEWS_CACHE_DIR = Path("./cache/news")
 _NEWS_TRACE_DIR = Path("./artifacts/news_trace")
-_SUPPORTED_BANK_SYMBOLS = ("VCB", "BID")
+_SUPPORTED_BANK_SYMBOLS = ("VCB", "BID", "CTG", "TCB", "MBB", "ACB", "VPB")
 _REQUEST_DELAY = 1.5
 _MAX_ARTICLES_PER_SOURCE = 500
 _MARKET_CLOSE_HOUR = 15
@@ -36,6 +36,11 @@ _MARKET_CLOSE_HOUR = 15
 _VNEXPRESS_KEYWORDS: dict[str, list[str]] = {
     "VCB": ["Vietcombank", "Ngan+hang+Vietcombank", "tin+tuc+Vietcombank", "VCB", "Ngan+hang+Ngoai+thuong"],
     "BID": ["BIDV", "Ngan+hang+BIDV", "tin+tuc+BIDV", "BID", "Ngan+hang+Dau+tu", "Dau+tu+va+Phat+trien", "co+phieu+BIDV", "BIDV+Viet+Nam"],
+    "CTG": ["Vietinbank", "VietinBank", "Ngan+hang+Cong+Thuong", "CTG", "tin+tuc+Vietinbank", "co+phieu+CTG"],
+    "TCB": ["Techcombank", "Ngan+hang+Techcombank", "TCB", "tin+tuc+Techcombank", "co+phieu+TCB"],
+    "MBB": ["MB+Bank", "Quan+doi", "MBBank", "Ngan+hang+Quan+doi", "MBB", "tin+tuc+MB+Bank", "co+phieu+MBB"],
+    "ACB": ["ACB", "Ngan+hang+A+Chau", "Asia+Commercial+Bank", "tin+tuc+ACB", "co+phieu+ACB"],
+    "VPB": ["VPBank", "Viet+Nam+Thinh+Vuong", "VPB", "tin+tuc+VPBank", "co+phieu+VPB"],
 }
 
 # Sector-wide / macro keywords that affect ALL banking stocks
@@ -54,6 +59,11 @@ _VNEXPRESS_SECTOR_KEYWORDS: list[str] = [
 _SYMBOL_BRAND_NAMES: dict[str, list[str]] = {
     "VCB": ["Vietcombank", "VCB", "Ngoại thương", "Ngoai thuong"],
     "BID": ["BIDV", "BID", "Đầu tư", "Dau tu", "Ngân hàng Đầu tư"],
+    "CTG": ["Vietinbank", "VietinBank", "CTG", "Công Thương", "Cong Thuong"],
+    "TCB": ["Techcombank", "TCB", "Kỹ Thương", "Ky Thuong"],
+    "MBB": ["MB Bank", "MBBank", "MBB", "Quân đội", "Quan doi"],
+    "ACB": ["ACB", "Á Châu", "A Chau", "Asia Commercial"],
+    "VPB": ["VPBank", "VPB", "Thịnh Vượng", "Thinh Vuong"],
 }
 
 # Sector keywords in readable form (for CafeF relevance filtering)
@@ -779,6 +789,11 @@ def _scrape_vnexpress_sector(
 _GOOGLE_NEWS_SYMBOL_KEYWORDS: dict[str, list[str]] = {
     "VCB": ["Vietcombank cổ phiếu", "VCB ngân hàng kết quả"],
     "BID": ["BIDV cổ phiếu", "BID ngân hàng đầu tư kết quả"],
+    "CTG": ["Vietinbank cổ phiếu", "CTG ngân hàng công thương kết quả"],
+    "TCB": ["Techcombank cổ phiếu", "TCB ngân hàng kỹ thương kết quả"],
+    "MBB": ["MB Bank cổ phiếu", "MBB ngân hàng quân đội kết quả"],
+    "ACB": ["ACB cổ phiếu", "ngân hàng Á Châu kết quả"],
+    "VPB": ["VPBank cổ phiếu", "VPB ngân hàng thịnh vượng kết quả"],
 }
 
 # Macro / sector / geopolitical queries shared across all symbols.

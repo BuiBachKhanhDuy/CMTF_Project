@@ -45,6 +45,11 @@ class TemporalAligner:
         ohlcv = df_ohlcv.copy()
         ohlcv.index = pd.to_datetime(ohlcv.index)
 
+        if ohlcv.index.tz is None:
+            ohlcv.index = ohlcv.index.tz_localize("Asia/Ho_Chi_Minh")
+        else:
+            ohlcv.index = ohlcv.index.tz_convert("Asia/Ho_Chi_Minh")
+
         # Initialise output columns
         ohlcv["news_count"] = 0
         ohlcv["news_titles"] = [[] for _ in range(len(ohlcv))]
@@ -56,7 +61,8 @@ class TemporalAligner:
             return ohlcv
 
         news = df_news.copy()
-        news["published_date"] = pd.to_datetime(news["published_date"])
+        news["published_date"] = pd.to_datetime(news["published_date"], utc=True)
+        news["published_date"] = news["published_date"].dt.tz_convert("Asia/Ho_Chi_Minh")
         news = news.sort_values("published_date")
 
         bar_times = ohlcv.index.sort_values()

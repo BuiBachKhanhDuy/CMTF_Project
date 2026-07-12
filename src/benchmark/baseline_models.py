@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 from collections import OrderedDict
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -16,6 +17,45 @@ from .training_utils import compute_huber_delta, train_with_early_stopping
 
 
 # =====================================================================
+# GLOBAL LOSS CONFIG — single source of truth for all torch models
+# =====================================================================
+
+@dataclass(frozen=True)
+class GlobalLossConfig:
+    """Shared loss hyperparameters inherited by every trainable torch model.
+
+    Safer defaults for unit-scaled targets:
+      sign_penalty_weight       — direction remains secondary to regression
+      direction_epsilon         — ignore tiny/noisy targets
+      direction_margin_fraction — require modest correct-direction confidence
+      direction_min_margin      — minimum directional confidence floor
+      direction_ramp_epochs     — smooth ramp after warmup to avoid loss discontinuity
+      debug_logging             — whether to emit validation diagnostics during fit
+    """
+    sign_penalty_weight: float = 0.3
+    direction_epsilon: float = 0.1
+    direction_margin_fraction: float = 0.1
+    direction_min_margin: float = 0.1
+    direction_ramp_epochs: int = 3
+    debug_logging: bool = True
+    # Anti-collapse variance regulariser. DEFAULT OFF (0.0) after a controlled
+    # A/B: a global 0.5 activated on ordinary low-variance cells (any model whose
+    # pred_std < 10%% of target std, which is common for noisy daily returns), and
+    # did NOT improve DA/IC on a real signal-bearing 5D cell (it nudged them
+    # slightly worse) — anti-collapse is not the same as skill. The opt-in,
+    # horizon-scaled values already tuned in run_model_benchmark.py
+    # ({1D:0.0, 5D:0.02, 20D:0.05}) remain the supported way to enable it; those
+    # are 10-25x smaller than the un-validated 0.5. Set >0 explicitly per model
+    # (model.variance_reg_weight = ...) only for cells that actually collapse.
+    variance_reg_weight: float = 0.0
+    # Balance direction-loss gradient per class to prevent majority-class collapse.
+    class_balance_dir: bool = True
+
+
+GLOBAL_LOSS_CONFIG = GlobalLossConfig()
+
+
+# =====================================================================
 # LOSSES
 # =====================================================================
 
@@ -23,37 +63,162 @@ def sign_aware_huber_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     huber_delta: float = 0.02,
-    sign_penalty_weight: float = 0.005,
-    direction_epsilon: float = 0.5,
+    sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
+    direction_epsilon: float = GLOBAL_LOSS_CONFIG.direction_epsilon,
     weights: torch.Tensor | None = None,
-    margin: float = 0.0,
+    margin: float | None = None,
+    direction_margin_fraction: float = GLOBAL_LOSS_CONFIG.direction_margin_fraction,
+    direction_min_margin: float = GLOBAL_LOSS_CONFIG.direction_min_margin,
     enable_direction_loss: bool = True,
-) -> torch.Tensor:
+    variance_reg_weight: float = 0.0,
+    class_balance_dir: bool = False,
+    return_debug: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
     loss_fn = nn.HuberLoss(delta=huber_delta, reduction="none")
     loss_huber = loss_fn(pred, target)
 
     if weights is not None:
         norm_weights = weights / weights.mean().clamp_min(1e-8)
         loss_huber = loss_huber * norm_weights
+    else:
+        norm_weights = None
 
-    loss = loss_huber.mean()
-
-    if not enable_direction_loss:
-        return loss
+    huber_mean = loss_huber.mean()
+    loss = huber_mean
 
     active_direction = (torch.abs(target) > direction_epsilon).float()
-    direction_term = torch.relu(margin - pred * torch.sign(target))
-    loss_wrong_dir = direction_term * active_direction
 
-    if weights is not None:
-        loss_wrong_dir = loss_wrong_dir * norm_weights
-
-    if active_direction.sum() > 0:
-        loss = loss + sign_penalty_weight * (
-            loss_wrong_dir.sum() / active_direction.sum().clamp_min(1.0)
+    if margin is not None:
+        per_sample_margin = torch.full_like(target, float(margin))
+    else:
+        base_margin = torch.clamp(torch.abs(target), min=float(direction_epsilon))
+        per_sample_margin = torch.clamp(
+            direction_margin_fraction * base_margin,
+            min=float(direction_min_margin),
         )
 
-    return loss
+    signed_alignment = pred * torch.sign(target)
+    direction_term = torch.relu(per_sample_margin - signed_alignment)
+    loss_wrong_dir = direction_term * active_direction
+
+    if norm_weights is not None:
+        loss_wrong_dir = loss_wrong_dir * norm_weights
+
+    direction_mean = torch.tensor(0.0, device=pred.device)
+    if enable_direction_loss and active_direction.sum().item() > 0:
+        if class_balance_dir:
+            # Inverse-frequency class weighting: upscale minority-class direction
+            # loss to prevent the majority direction dominating training.
+            active_mask = active_direction.bool()
+            n_active = float(active_mask.sum().clamp(min=1).item())
+            n_pos_a = float((target[active_mask] > 0).sum().clamp(min=1).item())
+            n_neg_a = float((target[active_mask] <= 0).sum().clamp(min=1).item())
+            pos_w = min(n_active / (2.0 * n_pos_a), 5.0)
+            neg_w = min(n_active / (2.0 * n_neg_a), 5.0)
+            class_w = torch.where(
+                target > 0,
+                torch.full_like(target, pos_w),
+                torch.full_like(target, neg_w),
+            )
+            direction_mean = (loss_wrong_dir * class_w).sum() / active_direction.sum().clamp_min(1.0)
+        else:
+            direction_mean = loss_wrong_dir.sum() / active_direction.sum().clamp_min(1.0)
+        loss = loss + sign_penalty_weight * direction_mean
+
+    # Variance regulariser: penalise near-constant predictions (anti-collapse).
+    # Active only when variance_reg_weight > 0 (long-horizon curriculum).
+    # Requires pred_std >= 10% of target_std; penalises shortfall linearly.
+    variance_reg = torch.tensor(0.0, device=pred.device)
+    if variance_reg_weight > 0.0 and pred.numel() > 1:
+        pred_std = pred.std(unbiased=False)
+        target_std_est = target.std(unbiased=False).detach()
+        shortfall = torch.relu(0.1 * target_std_est - pred_std)
+        variance_reg = shortfall
+        loss = loss + variance_reg_weight * variance_reg
+
+    if not return_debug:
+        return loss
+
+    debug = {
+        "loss_total": float(loss.detach().cpu().item()),
+        "loss_huber": float(huber_mean.detach().cpu().item()),
+        "loss_direction": float(direction_mean.detach().cpu().item()),
+        "active_ratio": float(active_direction.mean().detach().cpu().item()),
+        "margin_mean": float(per_sample_margin.mean().detach().cpu().item()),
+        "signed_alignment_mean": float(signed_alignment.mean().detach().cpu().item()),
+        "pred_mean": float(pred.mean().detach().cpu().item()),
+        "pred_std": float(pred.std(unbiased=False).detach().cpu().item()),
+        "target_mean": float(target.mean().detach().cpu().item()),
+        "target_std": float(target.std(unbiased=False).detach().cpu().item()),
+        "pct_pred_pos": float((pred > 0).float().mean().detach().cpu().item()),
+        "pct_pred_neg": float((pred < 0).float().mean().detach().cpu().item()),
+        "pct_pred_near_zero_1e4": float((torch.abs(pred) < 1e-4).float().mean().detach().cpu().item()),
+        "pct_pred_near_zero_1e3": float((torch.abs(pred) < 1e-3).float().mean().detach().cpu().item()),
+        "variance_reg": float(variance_reg.detach().cpu().item()),
+    }
+    return loss, debug
+
+
+def _direction_ramp_factor(
+    epoch: int,
+    warmup_epochs: int,
+    ramp_epochs: int,
+) -> float:
+    """Smoothly increase direction-loss influence after warmup."""
+    if epoch < warmup_epochs:
+        return 0.0
+    if ramp_epochs <= 0:
+        return 1.0
+    progress = (epoch - warmup_epochs + 1) / float(ramp_epochs)
+    return float(max(0.0, min(1.0, progress)))
+
+
+def _scheduled_sign_aware_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    epoch: int,
+    warmup_epochs: int,
+    huber_delta: float,
+    sign_penalty_weight: float,
+    direction_epsilon: float,
+    direction_margin_fraction: float,
+    direction_min_margin: float,
+    direction_ramp_epochs: int = GLOBAL_LOSS_CONFIG.direction_ramp_epochs,
+    weights: torch.Tensor | None = None,
+    margin: float | None = None,
+    variance_reg_weight: float = 0.0,
+    class_balance_dir: bool = False,
+    return_debug: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+    """Shared scheduled loss with smooth direction ramp for all torch models."""
+    ramp = _direction_ramp_factor(epoch, warmup_epochs, direction_ramp_epochs)
+    effective_sign_penalty_weight = sign_penalty_weight * ramp
+    enable_direction_loss = effective_sign_penalty_weight > 0.0
+
+    result = sign_aware_huber_loss(
+        pred,
+        target,
+        huber_delta=huber_delta,
+        sign_penalty_weight=effective_sign_penalty_weight,
+        direction_epsilon=direction_epsilon,
+        weights=weights,
+        margin=margin,
+        direction_margin_fraction=direction_margin_fraction,
+        direction_min_margin=direction_min_margin,
+        enable_direction_loss=enable_direction_loss,
+        variance_reg_weight=variance_reg_weight,
+        class_balance_dir=class_balance_dir,
+        return_debug=return_debug,
+    )
+
+    if not return_debug:
+        return result
+
+    loss, debug = result
+    debug["direction_ramp"] = float(ramp)
+    debug["effective_sign_penalty_weight"] = float(effective_sign_penalty_weight)
+    return loss, debug
 
 
 # =====================================================================
@@ -124,6 +289,29 @@ def extract_market_summary_features(market_windows: np.ndarray) -> np.ndarray:
     return features.astype(np.float32)
 
 
+def _log_epoch_debug(model_name: str, epoch: int, stage: str, debug: dict[str, float]) -> None:
+    logger.debug(
+        "{} epoch={} {} | total={:.6f} huber={:.6f} dir={:.6f} "
+        "ramp={:.3f} sign_w={:.3f} active={:.3f} margin={:.3f} "
+        "pred_mean={:.6f} pred_std={:.6f} pos={:.3f} neg={:.3f} near0_1e3={:.3f}",
+        model_name,
+        epoch,
+        stage,
+        debug.get("loss_total", float("nan")),
+        debug.get("loss_huber", float("nan")),
+        debug.get("loss_direction", float("nan")),
+        debug.get("direction_ramp", float("nan")),
+        debug.get("effective_sign_penalty_weight", float("nan")),
+        debug.get("active_ratio", float("nan")),
+        debug.get("margin_mean", float("nan")),
+        debug.get("pred_mean", float("nan")),
+        debug.get("pred_std", float("nan")),
+        debug.get("pct_pred_pos", float("nan")),
+        debug.get("pct_pred_neg", float("nan")),
+        debug.get("pct_pred_near_zero_1e3", float("nan")),
+    )
+
+
 # =====================================================================
 # BASE CLASS FOR TORCH MARKET MODELS
 # =====================================================================
@@ -131,12 +319,20 @@ def extract_market_summary_features(market_windows: np.ndarray) -> np.ndarray:
 class BaseTorchMarketPredictor(nn.Module):
     """Common training/inference logic for single-input torch market models."""
 
-    def __init__(self, target_scale: float = 100.0, device: str = "cpu"):
+    def __init__(self, target_scale: float = 1.0, device: str = "cpu"):
         super().__init__()
         self.target_scale = float(target_scale)
         self.device = device
         self.huber_delta = 1.0
-        self.sign_penalty_weight = 0.05
+        self.sign_penalty_weight = GLOBAL_LOSS_CONFIG.sign_penalty_weight
+
+        self.direction_epsilon = GLOBAL_LOSS_CONFIG.direction_epsilon
+        self.direction_margin_fraction = GLOBAL_LOSS_CONFIG.direction_margin_fraction
+        self.direction_min_margin = GLOBAL_LOSS_CONFIG.direction_min_margin
+        self.direction_ramp_epochs = GLOBAL_LOSS_CONFIG.direction_ramp_epochs
+        self.debug_logging = GLOBAL_LOSS_CONFIG.debug_logging
+        self.variance_reg_weight = GLOBAL_LOSS_CONFIG.variance_reg_weight
+        self.class_balance_dir = GLOBAL_LOSS_CONFIG.class_balance_dir
 
     def _encode_tensor(self, market_windows: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -146,6 +342,31 @@ class BaseTorchMarketPredictor(nn.Module):
 
     def forward(self, market_windows: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
+
+    def _compute_scheduled_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        *,
+        epoch: int,
+        warmup_epochs: int,
+        return_debug: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+        return _scheduled_sign_aware_loss(
+            pred,
+            target,
+            epoch=epoch,
+            warmup_epochs=warmup_epochs,
+            huber_delta=self.huber_delta,
+            sign_penalty_weight=self.sign_penalty_weight,
+            direction_epsilon=self.direction_epsilon,
+            direction_margin_fraction=self.direction_margin_fraction,
+            direction_min_margin=self.direction_min_margin,
+            direction_ramp_epochs=self.direction_ramp_epochs,
+            variance_reg_weight=self.variance_reg_weight,
+            class_balance_dir=self.class_balance_dir,
+            return_debug=return_debug,
+        )
 
     def fit(
         self,
@@ -170,21 +391,43 @@ class BaseTorchMarketPredictor(nn.Module):
         X_val = torch.tensor(market_windows_val, dtype=torch.float32)
         y_val = torch.tensor(targets_val, dtype=torch.float32) * self.target_scale
 
+        direction_epsilon = self.direction_epsilon
+        active_ratio_train = float((torch.abs(y_train) > direction_epsilon).float().mean().item())
+        active_ratio_val = float((torch.abs(y_val) > direction_epsilon).float().mean().item())
+
+        logger.debug(
+            "{} direction_epsilon={:.6f} | active_ratio_train={:.4f} | active_ratio_val={:.4f}",
+            model_name,
+            direction_epsilon,
+            active_ratio_train,
+            active_ratio_val,
+        )
+
         self.huber_delta = compute_huber_delta(y_train.numpy())
         logger.debug("{} huber_delta={:.4f}", model_name, self.huber_delta)
 
         def _loss_fn(pred, target, epoch=0):
-            enable_direction_loss = epoch >= warmup_epochs
-            return sign_aware_huber_loss(
+            return self._compute_scheduled_loss(
                 pred,
                 target,
-                huber_delta=self.huber_delta,
-                sign_penalty_weight=self.sign_penalty_weight,
-                direction_epsilon=0.5,
-                enable_direction_loss=enable_direction_loss,
+                epoch=epoch,
+                warmup_epochs=warmup_epochs,
             )
 
-        return train_with_early_stopping(
+        logger.debug(
+            "{} config | sign_penalty_weight={:.4f} | warmup_epochs={} | direction_ramp_epochs={} | "
+            "target_scale={:.4f} | direction_margin_fraction={:.6f} | direction_min_margin={:.6f} | "
+            "early_stopping_policy=scheduled_full_loss",
+            model_name,
+            self.sign_penalty_weight,
+            warmup_epochs,
+            self.direction_ramp_epochs,
+            self.target_scale,
+            self.direction_margin_fraction,
+            self.direction_min_margin,
+        )
+
+        result = train_with_early_stopping(
             self,
             X_train,
             y_train,
@@ -198,7 +441,23 @@ class BaseTorchMarketPredictor(nn.Module):
             patience=patience,
             warmup_epochs=warmup_epochs,
             model_name=model_name,
+            val_loss_fn=_loss_fn,
         )
+
+        if self.debug_logging:
+            self.eval()
+            with torch.no_grad():
+                pred_val = self.forward(X_val.to(self.device))
+                _, val_debug = self._compute_scheduled_loss(
+                    pred_val,
+                    y_val.to(self.device),
+                    epoch=max(0, len(result.get("val_losses", [])) - 1),
+                    warmup_epochs=warmup_epochs,
+                    return_debug=True,
+                )
+            _log_epoch_debug(model_name, len(result.get("val_losses", [])) - 1, "val_final", val_debug)
+
+        return result
 
     def predict(self, market_windows: np.ndarray, batch_size: int = 256) -> np.ndarray:
         self.eval()
@@ -261,18 +520,51 @@ class BaseTorchMarketPredictor(nn.Module):
 class BaseTorchHybridPredictor(nn.Module):
     """Common training/inference logic for dual-input torch models."""
 
-    def __init__(self, target_scale: float = 100.0, device: str = "cpu"):
+    def __init__(self, target_scale: float = 1.0, device: str = "cpu"):
         super().__init__()
         self.target_scale = float(target_scale)
         self.device = device
         self.huber_delta = 1.0
-        self.sign_penalty_weight = 0.05
+        self.sign_penalty_weight = GLOBAL_LOSS_CONFIG.sign_penalty_weight
+
+        self.direction_epsilon = GLOBAL_LOSS_CONFIG.direction_epsilon
+        self.direction_margin_fraction = GLOBAL_LOSS_CONFIG.direction_margin_fraction
+        self.direction_min_margin = GLOBAL_LOSS_CONFIG.direction_min_margin
+        self.direction_ramp_epochs = GLOBAL_LOSS_CONFIG.direction_ramp_epochs
+        self.debug_logging = GLOBAL_LOSS_CONFIG.debug_logging
+        self.variance_reg_weight = GLOBAL_LOSS_CONFIG.variance_reg_weight
+        self.class_balance_dir = GLOBAL_LOSS_CONFIG.class_balance_dir
 
     def forward(self, market_windows: torch.Tensor, market_tabular: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
     def _tabular_from_windows(self, market_windows: np.ndarray) -> np.ndarray:
         return extract_market_summary_features(market_windows)
+
+    def _compute_scheduled_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        *,
+        epoch: int,
+        warmup_epochs: int,
+        return_debug: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+        return _scheduled_sign_aware_loss(
+            pred,
+            target,
+            epoch=epoch,
+            warmup_epochs=warmup_epochs,
+            huber_delta=self.huber_delta,
+            sign_penalty_weight=self.sign_penalty_weight,
+            direction_epsilon=self.direction_epsilon,
+            direction_margin_fraction=self.direction_margin_fraction,
+            direction_min_margin=self.direction_min_margin,
+            direction_ramp_epochs=self.direction_ramp_epochs,
+            variance_reg_weight=self.variance_reg_weight,
+            class_balance_dir=self.class_balance_dir,
+            return_debug=return_debug,
+        )
 
     def fit(
         self,
@@ -289,6 +581,7 @@ class BaseTorchHybridPredictor(nn.Module):
         warmup_epochs: int = 0,
         model_name: str = "HybridTorchModel",
         optimizer: torch.optim.Optimizer | None = None,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
     ) -> dict:
         if market_tabular_train is None:
             market_tabular_train = self._tabular_from_windows(market_windows_train)
@@ -304,14 +597,46 @@ class BaseTorchHybridPredictor(nn.Module):
         y_train = torch.tensor(targets_train, dtype=torch.float32) * self.target_scale
         y_val = torch.tensor(targets_val, dtype=torch.float32) * self.target_scale
 
+        direction_epsilon = self.direction_epsilon
+        active_ratio_train = float((torch.abs(y_train) > direction_epsilon).float().mean().item())
+        active_ratio_val = float((torch.abs(y_val) > direction_epsilon).float().mean().item())
+
+        logger.debug(
+            "{} direction_epsilon={:.6f} | active_ratio_train={:.4f} | active_ratio_val={:.4f}",
+            model_name,
+            direction_epsilon,
+            active_ratio_train,
+            active_ratio_val,
+        )
+
         if optimizer is None:
             optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+        if scheduler is None:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-5,
+            )
 
         self.huber_delta = compute_huber_delta(y_train.numpy())
         logger.debug("{} huber_delta={:.4f}", model_name, self.huber_delta)
+        logger.debug(
+            "{} config | sign_penalty_weight={:.4f} | warmup_epochs={} | direction_ramp_epochs={} | "
+            "target_scale={:.4f} | direction_margin_fraction={:.6f} | direction_min_margin={:.6f} | "
+            "early_stopping_policy=scheduled_full_loss",
+            model_name,
+            self.sign_penalty_weight,
+            warmup_epochs,
+            self.direction_ramp_epochs,
+            self.target_scale,
+            self.direction_margin_fraction,
+            self.direction_min_margin,
+        )
 
         train_losses: list[float] = []
         val_losses: list[float] = []
+        val_losses_clean: list[float] = []
+        pred_means: list[float] = []
+        pred_pct_pos: list[float] = []
+        pred_pct_neg: list[float] = []
         best_val_loss = float("inf")
         best_state = None
         patience_counter = 0
@@ -331,13 +656,11 @@ class BaseTorchHybridPredictor(nn.Module):
 
                 optimizer.zero_grad()
                 pred = self.forward(xb_seq, xb_tab)
-                loss = sign_aware_huber_loss(
+                loss = self._compute_scheduled_loss(
                     pred,
                     yb,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                    direction_epsilon=0.5,
-                    enable_direction_loss=(epoch >= warmup_epochs),
+                    epoch=epoch,
+                    warmup_epochs=warmup_epochs,
                 )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
@@ -355,19 +678,45 @@ class BaseTorchHybridPredictor(nn.Module):
                     X_val_seq.to(self.device),
                     X_val_tab.to(self.device),
                 )
-                val_loss = sign_aware_huber_loss(
+                
+                # Full validation loss (may be gated by warmup ramp for logging/scheduler)
+                val_loss_obj, val_debug = self._compute_scheduled_loss(
                     pred_val,
                     y_val.to(self.device),
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                    direction_epsilon=0.5,
-                    enable_direction_loss=(epoch >= warmup_epochs),
-                ).item()
+                    epoch=epoch,
+                    warmup_epochs=warmup_epochs,
+                    return_debug=True,
+                )
+                val_loss = float(val_loss_obj.item())
+                
+                # Clean validation loss: call with epoch=999 to bypass warmup ramp.
+                # This ensures early stopping compares apples-to-apples across epochs.
+                val_loss_clean_obj = self._compute_scheduled_loss(
+                    pred_val,
+                    y_val.to(self.device),
+                    epoch=999,
+                    warmup_epochs=warmup_epochs,
+                )
+                val_loss_clean = float(val_loss_clean_obj.item())
 
-            val_losses.append(float(val_loss))
+            if self.debug_logging:
+                _log_epoch_debug(model_name, epoch, "val", val_debug)
 
-            if val_loss < best_val_loss:
-                best_val_loss = float(val_loss)
+            val_losses.append(val_loss)
+            val_losses_clean.append(val_loss_clean)
+            
+            # Capture per-epoch prediction statistics
+            pred_val_cpu = pred_val.cpu().numpy()
+            pred_means.append(float(np.mean(pred_val_cpu)))
+            pred_pct_pos.append(float(100.0 * np.mean(pred_val_cpu > 0)))
+            pred_pct_neg.append(float(100.0 * np.mean(pred_val_cpu < 0)))
+
+            if scheduler is not None:
+                scheduler.step(val_loss)
+
+            # Early stopping uses CLEAN validation loss (unbiased by warmup ramp)
+            if val_loss_clean < best_val_loss:
+                best_val_loss = float(val_loss_clean)
                 best_state = {k: v.detach().cpu().clone() for k, v in self.state_dict().items()}
                 patience_counter = 0
             else:
@@ -381,7 +730,11 @@ class BaseTorchHybridPredictor(nn.Module):
         return {
             "train_losses": train_losses,
             "val_losses": val_losses,
+            "val_losses_clean": val_losses_clean,
             "best_val_loss": best_val_loss,
+            "pred_means": pred_means,
+            "pred_pct_pos": pred_pct_pos,
+            "pred_pct_neg": pred_pct_neg,
         }
 
     def predict(
@@ -420,6 +773,7 @@ class BaseTorchHybridPredictor(nn.Module):
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.predict(market_windows)
 
+
 # =====================================================================
 # LSTM PREDICTOR
 # =====================================================================
@@ -432,8 +786,8 @@ class LSTMPredictor(BaseTorchMarketPredictor):
         num_layers: int = 2,
         dropout: float = 0.3,
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.005,
-        target_scale: float = 100.0,
+        sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
+        target_scale: float = 1.0,
         device: str = "cpu",
     ):
         super().__init__(target_scale=target_scale, device=device)
@@ -443,6 +797,7 @@ class LSTMPredictor(BaseTorchMarketPredictor):
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
         self.d_model = num_layers * hidden_dim
+        self.seq_output_dim = hidden_dim
 
         self.lstm = nn.LSTM(
             input_size=input_dim,
@@ -514,25 +869,29 @@ class _CausalDilatedBlock(nn.Module):
         self.conv1 = nn.Conv1d(
             num_filters, num_filters, kernel_size=kernel_size, dilation=dilation, padding=0
         )
-        self.norm1 = nn.BatchNorm1d(num_filters)
+        self.norm1 = nn.GroupNorm(1, num_filters)
         self.conv2 = nn.Conv1d(
             num_filters, num_filters, kernel_size=kernel_size, dilation=dilation, padding=0
         )
-        self.norm2 = nn.BatchNorm1d(num_filters)
+        self.norm2 = nn.GroupNorm(1, num_filters)
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
+
         out = F.pad(x, (self._causal_pad, 0))
         out = self.conv1(out)
         out = self.norm1(out)
         out = self.relu(out)
         out = self.dropout(out)
+
         out = F.pad(out, (self._causal_pad, 0))
         out = self.conv2(out)
         out = self.norm2(out)
-        return self.dropout(self.relu(out + residual))
+        out = self.relu(out)
+
+        return out + residual
 
 
 class CNNLSTMPredictor(BaseTorchMarketPredictor):
@@ -546,8 +905,8 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
         dropout: float = 0.3,
         dilations: tuple[int, ...] = (1, 2, 4),
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.1,
-        target_scale: float = 100.0,
+        sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
+        target_scale: float = 1.0,
         device: str = "cpu",
     ):
         super().__init__(target_scale=target_scale, device=device)
@@ -558,6 +917,7 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
         self.huber_delta = huber_delta
         self.sign_penalty_weight = sign_penalty_weight
         self.d_model = num_layers * hidden_dim
+        self.seq_output_dim = hidden_dim
 
         dropout = max(dropout, 0.15)
         self.input_proj = nn.Linear(input_dim, num_filters)
@@ -617,7 +977,7 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
     def fit(self, *args, **kwargs) -> dict:
         kwargs["model_name"] = kwargs.get("model_name", "CNN-LSTM")
         learning_rate = kwargs.get("learning_rate", 1e-3)
-    
+
         if "optimizer" not in kwargs or kwargs["optimizer"] is None:
             optimizer = torch.optim.AdamW(
                 self.parameters(),
@@ -625,7 +985,7 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
                 weight_decay=1e-4,
             )
             kwargs["optimizer"] = optimizer
-    
+
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
@@ -634,7 +994,7 @@ class CNNLSTMPredictor(BaseTorchMarketPredictor):
                 min_lr=1e-5,
             )
             kwargs["scheduler"] = scheduler
-    
+
         return super().fit(*args, **kwargs)
 
 
@@ -651,8 +1011,8 @@ class LSTMHybridPredictor(BaseTorchHybridPredictor):
         num_layers: int = 2,
         dropout: float = 0.3,
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.005,
-        target_scale: float = 100.0,
+        sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
+        target_scale: float = 1.0,
         device: str = "cpu",
     ):
         super().__init__(target_scale=target_scale, device=device)
@@ -676,13 +1036,16 @@ class LSTMHybridPredictor(BaseTorchHybridPredictor):
         )
 
         self.tabular_mlp = nn.Sequential(
-            nn.Linear(self.tabular_dim, hidden_dim),
+            nn.Linear(self.tabular_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
 
+        self.seq_proj = nn.LayerNorm(self.seq_dim)
+        self.tab_proj = nn.LayerNorm(hidden_dim // 2)
+
         self.head = nn.Sequential(
-            nn.Linear(self.seq_dim + hidden_dim, hidden_dim),
+            nn.Linear(self.seq_dim + hidden_dim // 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1),
@@ -697,6 +1060,8 @@ class LSTMHybridPredictor(BaseTorchHybridPredictor):
     def forward(self, market_windows: torch.Tensor, market_tabular: torch.Tensor) -> torch.Tensor:
         seq_emb = self._encode_sequence_branch(market_windows)
         tab_emb = self.tabular_mlp(market_tabular)
+        seq_emb = self.seq_proj(seq_emb)
+        tab_emb = self.tab_proj(tab_emb)
         pred = self.head(torch.cat([seq_emb, tab_emb], dim=-1))
         return pred.squeeze(-1)
 
@@ -717,8 +1082,8 @@ class CNNLSTMHybridPredictor(BaseTorchHybridPredictor):
         dropout: float = 0.3,
         dilations: tuple[int, ...] = (1, 2, 4),
         huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.1,
-        target_scale: float = 100.0,
+        sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
+        target_scale: float = 1.0,
         device: str = "cpu",
     ):
         super().__init__(target_scale=target_scale, device=device)
@@ -750,13 +1115,16 @@ class CNNLSTMHybridPredictor(BaseTorchHybridPredictor):
         )
 
         self.tabular_mlp = nn.Sequential(
-            nn.Linear(self.tabular_dim, hidden_dim),
+            nn.Linear(self.tabular_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
 
+        self.seq_proj = nn.LayerNorm(self.seq_dim)
+        self.tab_proj = nn.LayerNorm(hidden_dim // 2)
+
         self.head = nn.Sequential(
-            nn.Linear(self.seq_dim + hidden_dim, hidden_dim),
+            nn.Linear(self.seq_dim + hidden_dim // 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1),
@@ -776,6 +1144,8 @@ class CNNLSTMHybridPredictor(BaseTorchHybridPredictor):
     def forward(self, market_windows: torch.Tensor, market_tabular: torch.Tensor) -> torch.Tensor:
         seq_emb = self._encode_sequence_branch(market_windows)
         tab_emb = self.tabular_mlp(market_tabular)
+        seq_emb = self.seq_proj(seq_emb)
+        tab_emb = self.tab_proj(tab_emb)
         pred = self.head(torch.cat([seq_emb, tab_emb], dim=-1))
         return pred.squeeze(-1)
 
@@ -815,11 +1185,28 @@ class RandomForestRegressor_Wrapper:
         market_windows_val: np.ndarray | None = None,
         targets_val: np.ndarray | None = None,
         **kwargs,
-    ) -> None:
+    ) -> dict:
         X_train = self._extract_features(market_windows_train)
         X_train_scaled = self.scaler.fit_transform(X_train)
         self.model.fit(X_train_scaled, targets_train)
         self.is_fitted = True
+        
+        # Return training logs for compatibility with benchmark logging
+        train_preds = self.model.predict(X_train_scaled).astype(np.float32)
+        train_loss = float(np.mean((train_preds - targets_train) ** 2) ** 0.5)
+        
+        val_loss = np.nan
+        if market_windows_val is not None and targets_val is not None:
+            X_val = self._extract_features(market_windows_val)
+            X_val_scaled = self.scaler.transform(X_val)
+            val_preds = self.model.predict(X_val_scaled).astype(np.float32)
+            val_loss = float(np.mean((val_preds - targets_val) ** 2) ** 0.5)
+        
+        return {
+            "train_losses": [train_loss],
+            "val_losses": [val_loss],
+            "best_val_loss": val_loss,
+        }
 
     def predict(self, market_windows: np.ndarray) -> np.ndarray:
         if not self.is_fitted:
@@ -860,11 +1247,28 @@ class LinearSummaryRegressor_Wrapper:
         market_windows_val: np.ndarray | None = None,
         targets_val: np.ndarray | None = None,
         **kwargs,
-    ) -> None:
+    ) -> dict:
         X_train = extract_market_summary_features(market_windows_train)
         X_train = self.scaler.fit_transform(X_train)
         self.model.fit(X_train, targets_train)
         self.is_fitted = True
+        
+        # Return training logs for compatibility with benchmark logging
+        train_preds = self.model.predict(X_train).astype(np.float32)
+        train_loss = float(np.mean((train_preds - targets_train) ** 2) ** 0.5)
+        
+        val_loss = np.nan
+        if market_windows_val is not None and targets_val is not None:
+            X_val = extract_market_summary_features(market_windows_val)
+            X_val = self.scaler.transform(X_val)
+            val_preds = self.model.predict(X_val).astype(np.float32)
+            val_loss = float(np.mean((val_preds - targets_val) ** 2) ** 0.5)
+        
+        return {
+            "train_losses": [train_loss],
+            "val_losses": [val_loss],
+            "best_val_loss": val_loss,
+        }
 
     def predict(self, market_windows: np.ndarray) -> np.ndarray:
         if not self.is_fitted:
@@ -875,15 +1279,15 @@ class LinearSummaryRegressor_Wrapper:
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.predict(market_windows)
-    
+
     @property
     def d_model(self) -> int:
         return 0
-    
+
     @property
     def supports_sequence(self) -> bool:
         return False
-    
+
     def encode(self, market_windows: np.ndarray) -> np.ndarray:
         raise NotImplementedError("LinearSummaryRegressor has no latent space")
 
@@ -897,9 +1301,9 @@ class MLPSummaryPredictor:
         self,
         hidden_dim: int = 64,
         dropout: float = 0.2,
-        target_scale: float = 100.0,
+        target_scale: float = 1.0,
         huber_delta: float = 0.02,
-        sign_penalty_weight: float = 0.01,
+        sign_penalty_weight: float = GLOBAL_LOSS_CONFIG.sign_penalty_weight,
         device: str = "cpu",
     ):
         self.hidden_dim = hidden_dim
@@ -912,6 +1316,14 @@ class MLPSummaryPredictor:
         self.model: nn.Module | None = None
         self.is_fitted = False
 
+        self.direction_epsilon = GLOBAL_LOSS_CONFIG.direction_epsilon
+        self.direction_margin_fraction = GLOBAL_LOSS_CONFIG.direction_margin_fraction
+        self.direction_min_margin = GLOBAL_LOSS_CONFIG.direction_min_margin
+        self.direction_ramp_epochs = GLOBAL_LOSS_CONFIG.direction_ramp_epochs
+        self.debug_logging = GLOBAL_LOSS_CONFIG.debug_logging
+        self.variance_reg_weight = GLOBAL_LOSS_CONFIG.variance_reg_weight
+        self.class_balance_dir = GLOBAL_LOSS_CONFIG.class_balance_dir
+
     def _build_model(self, input_dim: int) -> nn.Module:
         return nn.Sequential(
             nn.Linear(input_dim, self.hidden_dim),
@@ -923,6 +1335,32 @@ class MLPSummaryPredictor:
             nn.Linear(self.hidden_dim // 2, 1),
         ).to(self.device)
 
+    def _compute_scheduled_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        *,
+        epoch: int,
+        warmup_epochs: int,
+        huber_delta: float,
+        return_debug: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+        return _scheduled_sign_aware_loss(
+            pred,
+            target,
+            epoch=epoch,
+            warmup_epochs=warmup_epochs,
+            huber_delta=huber_delta,
+            sign_penalty_weight=self.sign_penalty_weight,
+            direction_epsilon=self.direction_epsilon,
+            direction_margin_fraction=self.direction_margin_fraction,
+            direction_min_margin=self.direction_min_margin,
+            direction_ramp_epochs=self.direction_ramp_epochs,
+            variance_reg_weight=self.variance_reg_weight,
+            class_balance_dir=self.class_balance_dir,
+            return_debug=return_debug,
+        )
+
     def fit(
         self,
         market_windows_train: np.ndarray,
@@ -933,6 +1371,7 @@ class MLPSummaryPredictor:
         batch_size: int = 32,
         learning_rate: float = 1e-3,
         patience: int = 5,
+        warmup_epochs: int = 0,
         **kwargs,
     ) -> dict:
         X_train = extract_market_summary_features(market_windows_train)
@@ -941,8 +1380,8 @@ class MLPSummaryPredictor:
         X_train = self.scaler.fit_transform(X_train).astype(np.float32)
         X_val = self.scaler.transform(X_val).astype(np.float32)
 
-        y_train = (np.asarray(targets_train, dtype=np.float32) * self.target_scale)
-        y_val = (np.asarray(targets_val, dtype=np.float32) * self.target_scale)
+        y_train = np.asarray(targets_train, dtype=np.float32) * self.target_scale
+        y_val = np.asarray(targets_val, dtype=np.float32) * self.target_scale
 
         self.model = self._build_model(X_train.shape[1])
 
@@ -951,7 +1390,32 @@ class MLPSummaryPredictor:
         y_train_t = torch.tensor(y_train, dtype=torch.float32, device=self.device)
         y_val_t = torch.tensor(y_val, dtype=torch.float32, device=self.device)
 
+        direction_epsilon = self.direction_epsilon
+        active_ratio_train = float((torch.abs(y_train_t) > direction_epsilon).float().mean().item())
+        active_ratio_val = float((torch.abs(y_val_t) > direction_epsilon).float().mean().item())
+
+        logger.debug(
+            "MLP-Summary direction_epsilon={:.6f} | active_ratio_train={:.4f} | active_ratio_val={:.4f}",
+            direction_epsilon,
+            active_ratio_train,
+            active_ratio_val,
+        )
+        logger.debug(
+            "MLP-Summary config | sign_penalty_weight={:.4f} | warmup_epochs={} | direction_ramp_epochs={} | "
+            "target_scale={:.4f} | direction_margin_fraction={:.6f} | direction_min_margin={:.6f} | "
+            "early_stopping_policy=scheduled_full_loss",
+            self.sign_penalty_weight,
+            warmup_epochs,
+            self.direction_ramp_epochs,
+            self.target_scale,
+            self.direction_margin_fraction,
+            self.direction_min_margin,
+        )
+
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-5,
+        )
 
         train_losses: list[float] = []
         val_losses: list[float] = []
@@ -971,13 +1435,12 @@ class MLPSummaryPredictor:
             for i in range(0, n_train, batch_size):
                 idx = perm[i : i + batch_size]
                 pred = self.model(X_train_t[idx]).squeeze(-1)
-                loss = sign_aware_huber_loss(
+                loss = self._compute_scheduled_loss(
                     pred,
                     y_train_t[idx],
+                    epoch=epoch,
+                    warmup_epochs=warmup_epochs,
                     huber_delta=huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                    direction_epsilon=0.5,
-                    enable_direction_loss=True,
                 )
                 optimizer.zero_grad()
                 loss.backward()
@@ -992,16 +1455,21 @@ class MLPSummaryPredictor:
             self.model.eval()
             with torch.no_grad():
                 pred_val = self.model(X_val_t).squeeze(-1)
-                val_loss = sign_aware_huber_loss(
+                val_loss_obj, val_debug = self._compute_scheduled_loss(
                     pred_val,
                     y_val_t,
+                    epoch=epoch,
+                    warmup_epochs=warmup_epochs,
                     huber_delta=huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                    direction_epsilon=0.5,
-                    enable_direction_loss=True,
-                ).item()
+                    return_debug=True,
+                )
+                val_loss = float(val_loss_obj.item())
 
-            val_losses.append(float(val_loss))
+            if self.debug_logging:
+                _log_epoch_debug("MLP-Summary", epoch, "val", val_debug)
+
+            val_losses.append(val_loss)
+            scheduler.step(val_loss)
 
             if val_loss < best_val_loss:
                 best_val_loss = float(val_loss)
@@ -1042,205 +1510,3 @@ class MLPSummaryPredictor:
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.predict(market_windows)
-
-
-# =====================================================================
-# FINE-TUNED CHRONOS PREDICTOR
-# =====================================================================
-
-class FineTunedChronosPredictor:
-    def __init__(
-        self,
-        chronos_predictor,
-        hidden_dim: int = 128,
-        dropout: float = 0.2,
-        tabular_dim: int = 0,
-        huber_delta: float = 0.02,
-        sign_penalty_weight: float = 0.05,
-        target_scale: float = 100.0,
-        device: str = "cpu",
-    ):
-        self.chronos = chronos_predictor
-        self.device = device
-        self.d_model = chronos_predictor.d_model
-        self.tabular_dim = int(tabular_dim)
-        self.huber_delta = huber_delta
-        self.sign_penalty_weight = sign_penalty_weight
-        self.target_scale = float(target_scale)
-
-        self._embedding_cache: OrderedDict[tuple[int, str], np.ndarray] = OrderedDict()
-        self._embedding_cache_max_entries = 32
-
-        self.adapter = nn.Sequential(
-            nn.Linear(self.d_model + self.tabular_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        ).to(device)
-
-        self.is_fitted = False
-
-    def _prune_embedding_cache(self) -> None:
-        while len(self._embedding_cache) > self._embedding_cache_max_entries:
-            self._embedding_cache.popitem(last=False)
-
-    def _embedding_cache_key(self, close_windows: np.ndarray) -> tuple[int, str]:
-        close_array = np.ascontiguousarray(close_windows, dtype=np.float32)
-        digest = hashlib.blake2b(digest_size=16)
-        digest.update(str(close_array.shape).encode())
-        digest.update(close_array.dtype.str.encode())
-        digest.update(close_array.view(np.uint8))
-        return id(self.chronos), digest.hexdigest()
-
-    def _get_cached_embeddings(self, close_windows: np.ndarray, *, cache_label: str) -> np.ndarray:
-        cache_key = self._embedding_cache_key(close_windows)
-        cached = self._embedding_cache.get(cache_key)
-        if cached is not None:
-            self._embedding_cache.move_to_end(cache_key)
-            return cached.copy()
-
-        logger.info("Computing Chronos embeddings [{}]", cache_label)
-        embeddings = np.asarray(self.chronos.get_embeddings(close_windows), dtype=np.float32)
-        self._embedding_cache[cache_key] = embeddings.copy()
-        self._prune_embedding_cache()
-        return embeddings
-
-    def _combine_features(
-        self,
-        embeddings: np.ndarray,
-        market_tabular: np.ndarray | None = None,
-    ) -> np.ndarray:
-        if self.tabular_dim == 0:
-            return embeddings.astype(np.float32)
-        if market_tabular is None:
-            raise ValueError("market_tabular is required when tabular_dim > 0")
-        tabular = np.asarray(market_tabular, dtype=np.float32)
-        if tabular.ndim != 2 or tabular.shape[1] != self.tabular_dim:
-            raise ValueError(
-                f"Expected market_tabular shape (N, {self.tabular_dim}), got {tabular.shape}"
-            )
-        if embeddings.shape[0] != tabular.shape[0]:
-            raise ValueError(
-                f"Batch size mismatch: embeddings={embeddings.shape[0]}, tabular={tabular.shape[0]}"
-            )
-        return np.concatenate([embeddings, tabular], axis=1).astype(np.float32)
-
-    def fit(
-        self,
-        close_windows_train: np.ndarray,
-        targets_train: np.ndarray,
-        close_windows_val: np.ndarray,
-        targets_val: np.ndarray,
-        market_tabular_train: np.ndarray | None = None,
-        market_tabular_val: np.ndarray | None = None,
-        epochs: int = 20,
-        batch_size: int = 32,
-        learning_rate: float = 1e-4,
-        patience: int = 5,
-        **kwargs,
-    ) -> dict:
-        import torch.optim as optim
-
-        emb_train = self._combine_features(
-            self._get_cached_embeddings(close_windows_train, cache_label="train"),
-            market_tabular_train,
-        )
-        emb_val = self._combine_features(
-            self._get_cached_embeddings(close_windows_val, cache_label="val"),
-            market_tabular_val,
-        )
-
-        X_train = torch.tensor(emb_train, dtype=torch.float32, device=self.device)
-        y_train = torch.tensor(targets_train, dtype=torch.float32, device=self.device) * self.target_scale
-        X_val = torch.tensor(emb_val, dtype=torch.float32, device=self.device)
-        y_val = torch.tensor(targets_val, dtype=torch.float32, device=self.device) * self.target_scale
-
-
-        optimizer = optim.AdamW(self.adapter.parameters(), lr=learning_rate, weight_decay=1e-5)
-
-        train_losses: list[float] = []
-        val_losses: list[float] = []
-        best_val_loss = float("inf")
-        best_state = None
-        patience_counter = 0
-        n_train = len(X_train)
-
-        for epoch in range(epochs):
-            self.adapter.train()
-            indices = np.random.permutation(n_train)
-            epoch_loss = 0.0
-            n_batches = 0
-
-            for i in range(0, n_train, batch_size):
-                batch_indices = indices[i : i + batch_size]
-                X_batch, y_batch = X_train[batch_indices], y_train[batch_indices]
-
-                optimizer.zero_grad()
-                pred = self.adapter(X_batch).squeeze(-1)
-                loss = sign_aware_huber_loss(
-                    pred,
-                    y_batch,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                )
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.adapter.parameters(), 1.0)
-                optimizer.step()
-
-                epoch_loss += loss.item()
-                n_batches += 1
-
-            train_losses.append(epoch_loss / max(n_batches, 1))
-
-            self.adapter.eval()
-            with torch.no_grad():
-                pred_val = self.adapter(X_val).squeeze(-1)
-                val_loss = sign_aware_huber_loss(
-                    pred_val,
-                    y_val,
-                    huber_delta=self.huber_delta,
-                    sign_penalty_weight=self.sign_penalty_weight,
-                ).item()
-                val_losses.append(val_loss)
-
-            if val_loss < best_val_loss:
-                best_val_loss = float(val_loss)
-                best_state = {k: v.detach().clone() for k, v in self.adapter.state_dict().items()}
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    break
-
-        if best_state is not None:
-            self.adapter.load_state_dict(best_state)
-
-        self.is_fitted = True
-        return {
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "best_val_loss": best_val_loss,
-        }
-
-    def predict(
-        self,
-        close_windows: np.ndarray,
-        market_tabular: np.ndarray | None = None,
-    ) -> np.ndarray:
-        if not self.is_fitted:
-            raise ValueError("Model must be fitted before prediction")
-        embeddings = self._combine_features(
-            self._get_cached_embeddings(close_windows, cache_label="predict"),
-            market_tabular,
-        )
-
-        X = torch.tensor(embeddings, dtype=torch.float32, device=self.device)
-        self.adapter.eval()
-        with torch.no_grad():
-            preds = self.adapter(X).squeeze(-1).cpu().numpy()
-
-        return (preds / self.target_scale).astype(np.float32)

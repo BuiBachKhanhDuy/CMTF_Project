@@ -17,7 +17,7 @@ from src.benchmark.baseline_models import (
     LSTMPredictor,
     RandomForestRegressor_Wrapper,
 )
-from src.benchmark.metrics import compute_composite_metrics
+from src.benchmark.metrics import compute_all
 
 
 DEFAULT_BASELINE_PARAMS = {
@@ -203,16 +203,18 @@ def run_rf_hpo(
             )
             model.fit(market_windows_train, targets_train)
             
-            # Evaluate on validation
+                        # Evaluate on validation.
+            # C2: select on RMSE (a real forecast-error metric), NOT CompositeScore.
+            # CompositeScore is diagnostic-only and must not drive model selection.
             preds_val = model.predict(market_windows_val)
-            score = compute_composite_metrics(
+            score = compute_all(
                 targets_val,
                 preds_val,
                 horizon=target_h,
-            )["CompositeScore"]
+            )["RMSE"]
             
             logger.debug(
-                "RF trial {}: n_trees={}, depth={}, min_split={}, max_feat={} → score={:.6f}",
+                "RF trial {}: n_trees={}, depth={}, min_split={}, max_feat={} → RMSE={:.6f}",
                 trial.number, n_estimators, max_depth, min_samples_split, max_features, score
             )
             

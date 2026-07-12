@@ -1,0 +1,4 @@
+cell,chosen_q_sharpe_cal,deploy_cov,deploy_DA%_full,deploy_DA%_gated,deploy_Sharpe_full,deploy_Sharpe_gated
+cmtf_real,1.183,0.302,44.99,57.48,-0.076,0.435
+cmtf_placebo,1.622,0.182,48.02,49.14,0.334,0.18
+market_only,0.324,0.862,51.04,54.56,0.905,0.892

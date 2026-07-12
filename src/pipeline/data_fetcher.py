@@ -36,6 +36,24 @@ _RATE_LOCK = threading.Lock()
 _REQUEST_TIMESTAMPS: deque[float] = deque()
 _RATE_LIMIT_PER_MIN = max(1, int(os.getenv("VNSTOCK_RATE_LIMIT_PER_MIN", "16")))
 
+def _normalize_datetime_index_to_naive(df: pd.DataFrame, time_col: str = "time") -> pd.DataFrame:
+    """Normalize a dataframe time column/index to timezone-naive datetime index."""
+    out = df.copy()
+
+    if time_col in out.columns:
+        out[time_col] = pd.to_datetime(out[time_col], errors="coerce")
+        if pd.api.types.is_datetime64tz_dtype(out[time_col]):
+            out[time_col] = out[time_col].dt.tz_localize(None)
+        out = out.set_index(time_col)
+    else:
+        if not isinstance(out.index, pd.DatetimeIndex):
+            out.index = pd.to_datetime(out.index, errors="coerce")
+        if out.index.tz is not None:
+            out.index = out.index.tz_localize(None)
+
+    out.index.name = "time"
+    out = out.sort_index()
+    return out
 
 def _throttle_vnstock_requests() -> None:
     """Block until issuing another vnstock request is within minute budget.
@@ -123,13 +141,7 @@ class VnstockDataFetcher:
         df = self._fetch_ohlcv_raw(symbol, start, end, interval, source)
 
         # Ensure datetime index
-        if "time" in df.columns:
-            df["time"] = pd.to_datetime(df["time"])
-            df = df.set_index("time")
-        elif not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
-
-        df.index.name = "time"
+        df = _normalize_datetime_index_to_naive(df, time_col="time")
 
         # Keep only required columns
         expected_cols = ["open", "high", "low", "close", "volume"]

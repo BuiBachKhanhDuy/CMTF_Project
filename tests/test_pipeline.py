@@ -43,12 +43,18 @@ def _make_news(articles: list[tuple[str, str, str]]) -> pd.DataFrame:
     for dt_str, title, content in articles:
         rows.append(
             {
-                "published_date": pd.Timestamp(dt_str),
+                "published_date": pd.Timestamp(dt_str).tz_localize("Asia/Ho_Chi_Minh"),
                 "title": title,
                 "content": content,
             }
         )
     return pd.DataFrame(rows)
+
+
+def _bar_on(aligned: pd.DataFrame, date: str) -> pd.DataFrame:
+    """Return bars on a calendar date, handling the aligner's tz-aware index."""
+    target = pd.Timestamp(date).date()
+    return aligned.loc[aligned.index.date == target]
 
 
 # ======================================================================
@@ -61,84 +67,67 @@ class TestAlignerNoLeakage:
     def test_same_day_intraday_news_stays_in_same_bar(self):
         """News published before market close on day T -> bar T."""
         df_ohlcv = _make_daily_ohlcv(5, start="2024-01-02")
-
-        # News published at 10:00 on 2024-01-02 (before close)
         df_news = _make_news([
             ("2024-01-02 10:00:00", "Midday headline", "Some content"),
         ])
 
         aligned = TemporalAligner.assign_news_to_bars(df_ohlcv, df_news)
 
-        # Bar on 2024-01-02 should have this article
-        jan2 = pd.Timestamp("2024-01-02")
-        bar_jan2 = aligned.loc[aligned.index.normalize() == jan2]
+        bar_jan2 = _bar_on(aligned, "2024-01-02")
         assert bar_jan2["news_count"].iloc[0] == 1
 
     def test_premarket_news_in_same_bar(self):
         """News published before market close on day T -> bar T."""
         df_ohlcv = _make_daily_ohlcv(5, start="2024-01-02")
-
         df_news = _make_news([
             ("2024-01-03 07:30:00", "Early morning headline", "Content"),
         ])
 
         aligned = TemporalAligner.assign_news_to_bars(df_ohlcv, df_news)
 
-        jan3 = pd.Timestamp("2024-01-03")
-        bar_jan3 = aligned.loc[aligned.index.normalize() == jan3]
+        bar_jan3 = _bar_on(aligned, "2024-01-03")
         assert bar_jan3["news_count"].iloc[0] == 1
 
     def test_weekend_news_next_trading_bar(self):
         """Weekend news → next trading day (Monday)."""
-        # 2024-01-06 is Saturday, 2024-01-08 is Monday
         df_ohlcv = _make_daily_ohlcv(10, start="2024-01-02")
-
         df_news = _make_news([
             ("2024-01-06 14:00:00", "Weekend headline", "Weekend content"),
         ])
 
         aligned = TemporalAligner.assign_news_to_bars(df_ohlcv, df_news)
 
-        # Should appear on Monday 2024-01-08
-        jan8 = pd.Timestamp("2024-01-08")
-        bar_jan8 = aligned.loc[aligned.index.normalize() == jan8]
+        bar_jan8 = _bar_on(aligned, "2024-01-08")
         assert bar_jan8["news_count"].iloc[0] == 1
 
     def test_after_hours_news_next_bar(self):
         """News at or after 15:00 on day T -> bar T+1."""
         df_ohlcv = _make_daily_ohlcv(5, start="2024-01-02")
-
         df_news = _make_news([
             ("2024-01-02 17:00:00", "After-hours headline", "Content"),
         ])
 
         aligned = TemporalAligner.assign_news_to_bars(df_ohlcv, df_news)
 
-        jan2 = pd.Timestamp("2024-01-02")
-        bar_jan2 = aligned.loc[aligned.index.normalize() == jan2]
+        bar_jan2 = _bar_on(aligned, "2024-01-02")
         assert bar_jan2["news_count"].iloc[0] == 0
 
-        jan3 = pd.Timestamp("2024-01-03")
-        bar_jan3 = aligned.loc[aligned.index.normalize() == jan3]
+        bar_jan3 = _bar_on(aligned, "2024-01-03")
         assert bar_jan3["news_count"].iloc[0] == 1
 
     def test_date_only_timestamp_shifted_conservatively(self):
         """Date-only timestamps (00:00:00) are shifted to next trading bar."""
         df_ohlcv = _make_daily_ohlcv(5, start="2024-01-02")
-
-        # Simulates scraped source where exact publish time is unknown.
         df_news = _make_news([
             ("2024-01-02", "Date-only headline", "Content"),
         ])
 
         aligned = TemporalAligner.assign_news_to_bars(df_ohlcv, df_news)
 
-        jan2 = pd.Timestamp("2024-01-02")
-        bar_jan2 = aligned.loc[aligned.index.normalize() == jan2]
+        bar_jan2 = _bar_on(aligned, "2024-01-02")
         assert bar_jan2["news_count"].iloc[0] == 0
 
-        jan3 = pd.Timestamp("2024-01-03")
-        bar_jan3 = aligned.loc[aligned.index.normalize() == jan3]
+        bar_jan3 = _bar_on(aligned, "2024-01-03")
         assert bar_jan3["news_count"].iloc[0] == 1
 
 
@@ -203,7 +192,7 @@ class TestEncoderHybridSentiment:
             }
         )
 
-        encoder = NewsEncoder(sentiment_inferencer=FakeInferencer())
+        encoder = NewsEncoder(sentiment_inferencer=FakeInferencer(), export_hybrid_embedding=True)
         encoded = encoder.encode_dataframe(frame, use_cache=False)
 
         assert NEWS_HYBRID_COLUMN in encoded.columns
@@ -263,6 +252,7 @@ class TestDatasetTemporalSplit:
 
         df = pd.DataFrame(
             {
+                "symbol": ["VCB"] * n,
                 "open": rng.normal(100, 5, n),
                 "high": rng.normal(102, 5, n),
                 "low": rng.normal(98, 5, n),
@@ -338,7 +328,7 @@ class TestDatasetTemporalSplit:
         assert sample["market"].shape == (5, len(ds.market_cols))
         assert sample["news"].shape == (5, 768)
         assert sample["mask"].shape == (5,)
-        assert sample["target"].shape == (1,)
+        assert sample["target"].shape == ()
 
 
 # ======================================================================
@@ -357,8 +347,9 @@ class TestNewsScraperHelpers:
     """Verify scraper helper functions (no network calls)."""
 
     def test_supported_bank_symbols(self):
-        """Banking mode supports the 2 target symbols."""
-        assert set(_SUPPORTED_BANK_SYMBOLS) == {"VCB", "BID"}
+        """Banking mode includes the original target symbols and expanded bank universe."""
+        assert {"VCB", "BID"}.issubset(set(_SUPPORTED_BANK_SYMBOLS))
+        assert {"CTG", "TCB", "MBB", "ACB", "VPB"}.issubset(set(_SUPPORTED_BANK_SYMBOLS))
 
     def test_deduplication_removes_identical_titles(self):
         articles = [

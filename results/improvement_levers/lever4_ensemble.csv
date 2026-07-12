@@ -1,0 +1,5 @@
+cell,DA%_seedmean,DA%_ensemble,dDA%,Sharpe_seedmean,Sharpe_ensemble,dSharpe
+cmtf_real,45.8,44.85,-0.95,0.021,-0.099,-0.121
+cmtf_placebo,48.07,48.63,0.56,0.333,0.447,0.114
+market_only,47.93,49.26,1.33,0.487,0.564,0.077
+late,48.62,49.0,0.39,0.507,0.778,0.271

@@ -9,6 +9,69 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+
+# ---------------------------------------------------------------------------
+# Walk-forward fold generator (shared between run_model_benchmark and
+# run_ablation_benchmark — single source of truth).
+# ---------------------------------------------------------------------------
+
+def generate_walkforward_folds(
+    sorted_dates: "pd.DatetimeIndex | np.ndarray",
+    n_folds: int = 4,
+    test_months: int = 6,
+    min_train_months: int = 36,
+) -> list[tuple[str, str]]:
+    """Expanding-train / rolling-test walk-forward split generator.
+
+    Each fold returns a ``(train_end, val_end)`` string pair in YYYY-MM-DD
+    format.  In both benchmark runners the convention is:
+        - train  = times <= train_end  (purged by horizon days)
+        - val    = train_end < times <= val_end  (purged)
+        - test   = times > val_end
+
+    Args:
+        sorted_dates: Sorted DatetimeIndex or array of all available timestamps.
+        n_folds: Target number of folds.
+        test_months: Length of val+test window in months per fold.
+        min_train_months: Minimum training history before first fold.
+
+    Returns:
+        List of (train_end, val_end) pairs, earliest fold first.
+        Falls back to a single pair if the date range is too short.
+    """
+    dates = pd.DatetimeIndex(sorted_dates)
+    start = pd.Timestamp(dates.min())
+    end = pd.Timestamp(dates.max())
+
+    first_train_end = start + pd.DateOffset(months=min_train_months)
+    remaining_months = (
+        (end.year - first_train_end.year) * 12
+        + (end.month - first_train_end.month)
+    )
+
+    # Fallback: not enough data for n_folds — return single fold
+    if remaining_months < test_months * 2:
+        val_end = first_train_end + pd.DateOffset(months=test_months)
+        return [
+            (
+                first_train_end.strftime("%Y-%m-%d"),
+                val_end.strftime("%Y-%m-%d"),
+            )
+        ]
+
+    # Evenly space folds across the remaining window
+    step = max(1, (remaining_months - test_months) // max(1, n_folds - 1))
+    folds: list[tuple[str, str]] = []
+    for i in range(n_folds):
+        te = first_train_end + pd.DateOffset(months=i * step)
+        ve = te + pd.DateOffset(months=test_months)
+        if ve >= end:
+            break
+        folds.append((te.strftime("%Y-%m-%d"), ve.strftime("%Y-%m-%d")))
+
+    return folds if folds else [(first_train_end.strftime("%Y-%m-%d"),
+                                 (first_train_end + pd.DateOffset(months=test_months)).strftime("%Y-%m-%d"))]
+
 # ---------------------------------------------------------------------------
 # Directory constants
 # ---------------------------------------------------------------------------

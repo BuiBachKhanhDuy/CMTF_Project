@@ -2,17 +2,17 @@
 Run ablation benchmark: model-agnostic grid over the final ablation study axes.
 
 Tables:
-    data_ablation
-        market-only baseline vs early fusion baseline vs late fusion baseline vs CMTF
-    architecture_ablation
-        CMTF with cross-attention ON vs OFF
-    feature_extractor_ablation
-        varying market backbone / encoder where supported
+    fusion_comparison
+        Main result. Backbone x fusion strategy (none / early / late / CMTF)
+        across every market backbone, plus a shuffled-news placebo.
+    component_ablation
+        Leave-one-out ablation from the canonical CMTF design (CMTF_CORE) on the
+        LSTM backbone. Each row changes exactly one component / design choice.
 
 Usage:
     python run_ablation_benchmark.py
-    python run_ablation_benchmark.py --table data_ablation
-    python run_ablation_benchmark.py --table architecture_ablation --horizons 1 5
+    python run_ablation_benchmark.py --table fusion_comparison
+    python run_ablation_benchmark.py --table component_ablation --horizons 1 5
     python run_ablation_benchmark.py --stage plot
 """
 
@@ -37,7 +37,7 @@ from tqdm import tqdm
 from src.pipeline import run_pipeline
 from src.pipeline.data_fetcher import VnstockDataFetcher
 from src.benchmark.chronos_encoder import ChronosMarketPredictor
-from src.benchmark.ablation_config import generate_grid
+from src.benchmark.ablation_config import generate_grid, BACKBONE_MODELS, CMTF_MODEL, AblationConfig
 from src.benchmark.ablation_runner import run_ablation_cell
 from src.benchmark.ablation_plots import plot_table_charts
 
@@ -48,6 +48,7 @@ _CONFIG_KEY_COLS = [
     "fusion_type",
     "news_scope",
     "sentiment_mode",
+    "shuffle_news",
     "market_encoder_name",
     "output_mode",
     "use_cross_attention",
@@ -85,6 +86,36 @@ _CONFIG_KEY_COLS = [
     "fusion_style",
     "market_query_mode",
 ]
+
+_KEY_MISSING = "\x00__MISSING__"  # sentinel unifying None/NaN across config vs DataFrame
+
+
+def _norm_key_val(v):
+    """Normalize one config-key value to a canonical, hashable, comparable form.
+
+    A config's optional CMTF fields are raw Python ``None`` on baseline rows,
+    but the same fields become ``NaN`` after ``_average_seed_dfs`` (groupby /
+    float promotion) and after a CSV round-trip. ``NaN != NaN`` and
+    ``NaN != None`` under tuple equality, so ``.isin`` would fail to match a
+    baseline row against its own config and prune it as "stale". Collapse both
+    to a single sentinel, and coerce numpy scalars to native Python so hashing
+    is consistent across sources.
+    """
+    if v is None:
+        return _KEY_MISSING
+    if isinstance(v, np.generic):
+        v = v.item()
+    try:
+        if isinstance(v, float) and np.isnan(v):
+            return _KEY_MISSING
+    except (TypeError, ValueError):
+        pass
+    # Integer-valued floats (e.g. 3.0 from a NaN-promoted int column) and the
+    # original int (3) must hash/compare equal, so canonicalize to int.
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return v
+
 
 def _horizon_dir(horizon: int) -> Path:
     return _ABLATION_ROOT / f"{horizon}d"
@@ -138,7 +169,7 @@ def _build_pipeline_config(horizon: int, pipeline_sentiment: bool = False) -> di
     return {
         "seed": 42,
         "rebuild_data": False,
-        "symbols": ["VCB", "BID"],
+        "symbols": ["VCB", "BID", "CTG", "TCB", "MBB", "ACB", "VPB"],
         "start": "2020-01-01",
         "end": "2026-03-31",
         "interval": "1D",
@@ -394,6 +425,51 @@ def _extract_and_split(config: dict):
     return combined, market_cols
 
 
+def _filter_configs_by_model(configs: list, model: str | None) -> list:
+    """Restrict a generated grid to a single backbone model.
+
+    - For baseline rows (fusion_type in none/early/late), matches ``model_name``.
+    - For CMTF rows, matches ``market_encoder_name`` (the backbone CMTF wraps),
+      since CMTF rows always have ``model_name == "cmtf"``.
+    - ``model == CMTF_MODEL`` keeps every CMTF row regardless of encoder.
+    - ``model == "gpt4ts"`` matches every GPT4TS row (baseline or CMTF-wrapped);
+      GPT4TS now has a single adaptation depth (unfreeze top-1 block).
+    """
+    if model is None:
+        return configs
+    if model == CMTF_MODEL:
+        return [c for c in configs if c.fusion_type == "cmtf"]
+
+    return [
+        c for c in configs
+        if c.model_name == model or (c.fusion_type == "cmtf" and c.market_encoder_name == model)
+    ]
+
+
+def _audit_grid(table: str, configs: list) -> None:
+    """Log a structural summary of the grid about to run.
+
+    Surfaces silent `is_valid()` drops and duplicate (model, fusion_type,
+    market_encoder_name) combinations that carry different hyperparameters
+    (e.g. two distinct CMTF(gpt4ts) variants), so mismatches are visible
+    before spending compute instead of only showing up in the output CSV.
+    """
+    if not configs:
+        logger.warning("  ⚠️  Table {} produced 0 cells after filtering — nothing to run", table)
+        return
+
+    groups: dict[tuple, int] = defaultdict(int)
+    for c in configs:
+        key = (c.model_name, c.fusion_type, c.market_encoder_name)
+        groups[key] += 1
+
+    logger.warning("  Grid audit for {}: {} cell(s)", table, len(configs))
+    for (model_name, fusion_type, encoder), count in sorted(groups.items()):
+        label = f"{model_name}/{fusion_type}" + (f"(enc={encoder})" if encoder else "")
+        flag = "  ⚠️ multiple hyperparameter variants under one label" if count > 1 else ""
+        logger.warning("    {:35} x{}{}", label, count, flag)
+
+
 def _run_table(
     table: str,
     splits: dict,
@@ -403,9 +479,16 @@ def _run_table(
     chronos,
     hpo_params: dict,
     seed: int = 42,
+    model_filter: str | None = None,
+    use_cache: bool = True,
+    gate: bool = False,
 ) -> pd.DataFrame:
     """Run all cells for one table and return results DataFrame."""
     configs = generate_grid(table=table)
+    configs = _filter_configs_by_model(configs, model_filter)
+    if seed == 42:
+        # Audit once per table (seeds share the same grid), not once per seed.
+        _audit_grid(table, configs)
 
     rows = []
     failures = []
@@ -426,16 +509,19 @@ def _run_table(
                     market_cols,
                     horizon=horizon,
                     device=device,
-                    chronos=chronos,
+                    chronos_pipeline=chronos.pipeline if chronos is not None else None,
                     seed=seed,
                     cache_dir=Path("cache"),
+                    use_cache=use_cache,
                     hpo_params=hpo_params,
+                    compute_gate=gate,
                 )
                 row = {
                     "model_name": cfg.model_name,
                     "fusion_type": cfg.fusion_type,
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
+                    "shuffle_news": cfg.shuffle_news,
                     "market_encoder_name": cfg.market_encoder_name,
                     "output_mode": cfg.output_mode,
                     "fusion_style": cfg.fusion_style,
@@ -484,6 +570,7 @@ def _run_table(
                     "fusion_type": cfg.fusion_type,
                     "news_scope": cfg.news_scope,
                     "sentiment_mode": cfg.sentiment_mode,
+                    "shuffle_news": cfg.shuffle_news,
                     "market_encoder_name": cfg.market_encoder_name,
                     "output_mode": cfg.output_mode,
                     "fusion_style": cfg.fusion_style,
@@ -529,13 +616,18 @@ def _run_table(
 
     df = pd.DataFrame(rows)
 
+    fail_dir = Path("results/ablation_failures")
+    fail_path = fail_dir / f"{table}__{horizon}d__seed{seed}.csv"
     if failures:
         fail_df = pd.DataFrame(failures)
-        fail_dir = Path("results/ablation_failures")
         fail_dir.mkdir(parents=True, exist_ok=True)
-        fail_path = fail_dir / f"{table}__{horizon}d__seed{seed}.csv"
         fail_df.to_csv(fail_path, index=False)
         logger.warning("Saved {} failed cells to {}", len(failures), fail_path)
+    elif fail_path.exists():
+        # No failures this run: clear any stale failure file left behind by a
+        # previous (since-fixed) run so it doesn't linger as a false positive.
+        fail_path.unlink()
+        logger.warning("Cleared stale failure file {} (all cells succeeded)", fail_path)
 
     total = max(len(configs), 1)
     fail_rate = len(failures) / total
@@ -549,41 +641,25 @@ def _run_table(
 
 
 def _format_setting(row: pd.Series, table: str) -> str:
-    if table == "data_ablation":
+    if table == "fusion_comparison":
         if row.get("fusion_type") == "cmtf":
-            return f"cmtf({row.get('market_encoder_name', 'na')})"
+            shuffle = row.get("shuffle_news", False)
+            is_placebo = False if pd.isna(shuffle) else bool(shuffle)
+            suffix = ", placebo" if is_placebo else ""
+            return f"cmtf({row.get('market_encoder_name', 'na')}{suffix})"
         return f"{row.get('model_name')}::{row.get('fusion_type')}"
 
-    if table == "architecture_ablation":
-        return f"cmtf({row.get('market_encoder_name', 'na')}), xattn={row.get('use_cross_attention')}"
-
-    if table == "feature_extractor_ablation":
-        if row.get("fusion_type") == "cmtf":
-            return f"cmtf::{row.get('market_encoder_name')}"
-        return f"{row.get('model_name')}::{row.get('fusion_type')}"
-
-    if table == "feature_construction_ablation":
+    if table == "component_ablation":
         return (
-            f"cmtf(fc="
-            f"{int(row.get('use_interaction_prod', True))}"
-            f"{int(row.get('use_interaction_diff', True))}"
-            f"{int(row.get('use_news_context_prod', True))}"
-            f"{int(row.get('use_cosine_sim', True))}"
-            f"{int(row.get('use_pooled_news', True))})"
-        )
-
-    if table == "news_ablation":
-        return (
-            f"cmtf(xattn={row.get('use_cross_attention')}, "
-            f"gate={row.get('use_news_gate')}, "
-            f"pe={row.get('use_positional_encoding')}, "
-            f"k={row.get('recency_gate_k')})"
-        )
-
-    if table == "cmtf_search":
-        return (
-            f"cmtf({row.get('market_encoder_name', 'na')}), "
-            f"output_mode={row.get('output_mode', '?')}"
+            f"cmtf(om={row.get('output_mode')}, "
+            f"ts={int(bool(row.get('use_two_stage', True)))}, "
+            f"xattn={int(bool(row.get('use_cross_attention', True)))}, "
+            f"gate={int(bool(row.get('use_news_gate', True)))}, "
+            f"pe={int(bool(row.get('use_positional_encoding', True)))}, "
+            f"k={row.get('recency_gate_k')}, "
+            f"style={row.get('fusion_style')}, "
+            f"ns={row.get('news_scope')}, "
+            f"sent={row.get('sentiment_mode')})"
         )
 
     return str(row.get("fusion_type", ""))
@@ -672,6 +748,16 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
         "ESS",
         "base_rate_DA%",
         "DA_skill%",
+        "train_time_sec",
+        # Optional validation-calibrated gate/conviction metrics (--gate).
+        # Absent (all-NaN) unless run_ablation_cell was called with
+        # compute_gate=True, in which case pandas .agg(mean/std) on an
+        # all-NaN column is a harmless no-op (produces NaN, not an error).
+        "DA%_gated",
+        "Sharpe_gated",
+        "IC_gated",
+        "gate_coverage",
+        "gate_tau",
     ]
 
     work = []
@@ -706,6 +792,9 @@ def _average_seed_dfs(dfs: list[pd.DataFrame], seeds: list[int] | None = None) -
 
     if "degenerate" in long_df.columns:
         agg_dict["degenerate"] = lambda x: bool(np.any(pd.Series(x).astype(bool)))
+
+    if "gate_conviction" in long_df.columns:
+        agg_dict["gate_conviction"] = lambda x: bool(np.any(pd.Series(x).fillna(False).astype(bool)))
 
     grouped = long_df.groupby(_CONFIG_KEY_COLS, dropna=False).agg(agg_dict)
 
@@ -798,12 +887,9 @@ def _plot_table(table: str, df: pd.DataFrame, horizon: int) -> None:
 def _regenerate_plots(horizon: int) -> None:
     hdir = _horizon_dir(horizon)
     for table in (
-    "data_ablation",
-    "architecture_ablation",
-    "feature_extractor_ablation",
-    "feature_construction_ablation",
-    "news_ablation",
-):
+        "fusion_comparison",
+        "component_ablation",
+    ):
         csv_path = hdir / f"{table}.csv"
         if not csv_path.exists():
             logger.warning("⚠️  No CSV for {} {}D — skipping", table, horizon)
@@ -814,21 +900,122 @@ def _regenerate_plots(horizon: int) -> None:
         logger.warning("  ✓ Regenerated {:25} for {}D", table, horizon)
 
 
+def _prune_stale_rows(table: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows whose config key no longer appears in the current grid for ``table``.
+
+    ``generate_grid`` can change (e.g. the apples-to-apples fix that made the
+    "none" baseline use news_scope="matched"/sentiment_mode="scalars" instead
+    of "none"/"none"). Old rows computed under a since-removed config combo can
+    never be replaced by ``_merge_table_csv``'s key-based upsert — they just sit
+    in the CSV forever as stale duplicates (e.g. two "none" baselines). Prune
+    against the *unfiltered* grid so ``--model``-filtered runs still keep every
+    other model's current rows.
+    """
+    current_configs = generate_grid(table=table)
+    valid_keys = {
+        tuple(_norm_key_val(getattr(c, col)) for col in _CONFIG_KEY_COLS)
+        for c in current_configs
+    }
+    if not valid_keys or not set(_CONFIG_KEY_COLS).issubset(df.columns):
+        return df
+
+    row_keys = df[_CONFIG_KEY_COLS].apply(
+        lambda r: tuple(_norm_key_val(v) for v in r), axis=1
+    )
+    keep_mask = row_keys.isin(valid_keys)
+    dropped = int((~keep_mask).sum())
+    if dropped:
+        logger.warning(
+            "  ⚠️  Pruned {} stale row(s) from {} whose config no longer exists in the "
+            "current grid",
+            dropped, table,
+        )
+    return df[keep_mask].reset_index(drop=True)
+
+
+def _merge_table_csv(csv_path: Path, new_df: pd.DataFrame) -> pd.DataFrame:
+    """Upsert ``new_df`` into any existing CSV at ``csv_path``, keyed by cell identity.
+
+    A ``--model``-filtered run only computes a subset of a table's rows (e.g. just
+    gpt4ts). Without this, writing that subset straight to ``{table}.csv`` would
+    silently delete every other model's previously-computed rows. This merges
+    instead: rows for configs not present in ``new_df`` are preserved untouched;
+    rows whose config key already exists get replaced by the fresh ``new_df`` values.
+    """
+    if not csv_path.exists():
+        return new_df
+
+    try:
+        existing_df = pd.read_csv(csv_path)
+    except Exception as e:
+        logger.warning("Could not read existing {} to merge, overwriting: {}", csv_path, e)
+        return new_df
+
+    if new_df.empty:
+        # e.g. --model filter matched 0 cells for this table (model not defined in it).
+        # Nothing new to merge — leave the existing CSV exactly as-is.
+        logger.warning(
+            "  ⚠️  No new rows to merge for {} — keeping existing {} row(s) untouched",
+            csv_path.name, len(existing_df),
+        )
+        return existing_df
+
+    missing_keys = [c for c in _CONFIG_KEY_COLS if c not in existing_df.columns]
+    if missing_keys:
+        # Schema grew since this CSV was written (e.g. a new ablation toggle field
+        # was added). Backfill with that field's dataclass default instead of
+        # discarding the whole existing file — those old rows implicitly used the
+        # default value for any field that didn't exist yet when they were computed.
+        backfillable = {
+            c: AblationConfig.__dataclass_fields__[c].default
+            for c in missing_keys
+            if c in AblationConfig.__dataclass_fields__
+        }
+        still_missing = [c for c in missing_keys if c not in backfillable]
+        if still_missing:
+            logger.warning(
+                "Existing {} missing key columns {} with no known default — cannot "
+                "safely merge, overwriting.",
+                csv_path, still_missing,
+            )
+            return new_df
+
+        logger.warning(
+            "Existing {} predates columns {} — backfilling with defaults {} instead "
+            "of overwriting.",
+            csv_path.name, list(backfillable.keys()), backfillable,
+        )
+        for col, default in backfillable.items():
+            existing_df[col] = default
+
+    # ESS (effective sample size) is a proxy for "which dataset/test-set produced this
+    # row" (symbol count, date range, horizon purging all shape it). If the incoming
+    # rows have a different ESS than what's already on disk, the merged table would
+    # silently mix results computed on different-sized test sets — not comparable.
+    if "ESS" in existing_df.columns and "ESS" in new_df.columns:
+        existing_ess = set(existing_df["ESS"].dropna().unique())
+        new_ess = set(new_df["ESS"].dropna().unique())
+        if existing_ess and new_ess and not (existing_ess & new_ess):
+            logger.warning(
+                "  ⚠️  ESS mismatch merging into {}: existing rows have ESS={}, new rows "
+                "have ESS={}. This table now mixes results computed on different test "
+                "sets (e.g. different symbol counts) — re-run ALL models before comparing "
+                "rows in this CSV.",
+                csv_path.name, sorted(existing_ess), sorted(new_ess),
+            )
+
+    combined = pd.concat([existing_df, new_df], axis=0, ignore_index=True, sort=False)
+    combined = combined.drop_duplicates(subset=_CONFIG_KEY_COLS, keep="last")
+    return combined
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ablation benchmark")
     parser.add_argument(
         "--table",
         choices=[
-            "data_ablation",
-            "architecture_ablation",
-            "feature_extractor_ablation",
-            "feature_construction_ablation",
-            "news_ablation",
-            "cmtf_search",
-            "mini_5d_diagnosis",
-            "learned_cmtf_ablation",
-            "cmtf_20d_candidate_search",
-
+            "fusion_comparison",
+            "component_ablation",
             "all",
         ],
         default="all",
@@ -839,9 +1026,31 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true", help="Show debug logs")
     parser.add_argument("--skip-chronos", action="store_true", help="Skip Chronos init for debug")
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Ignore cached per-cell predictions and force fresh retraining/inference.",
+    )
+    parser.add_argument(
+        "--model",
+        choices=list(BACKBONE_MODELS) + [CMTF_MODEL],
+        default=None,
+        help="Restrict the grid to a single model backbone. Baseline rows are matched by "
+             "model_name; CMTF rows are matched by market_encoder_name (the backbone CMTF "
+             "wraps). Pass 'cmtf' to keep only CMTF rows regardless of encoder.",
+    )
+    parser.add_argument(
         "--pipeline-sentiment",
         action="store_true",
         help="Enable upstream sentiment features during pipeline build",
+    )
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="Layer the validation-calibrated confidence-gate + conviction-sizing decision "
+             "policy (src/benchmark/decision_policy.py) on top of every cell's predictions "
+             "(no retraining) and add DA%%_gated / Sharpe_gated / IC_gated / gate_coverage "
+             "columns. Forces fresh (non-cached) predictions since the gate needs validation "
+             "predictions that the on-disk cache does not store.",
     )
     args = parser.parse_args()
 
@@ -867,18 +1076,27 @@ def main() -> None:
     logger.warning("Horizons: {}", args.horizons)
     logger.warning("Seeds: {}", args.seeds)
     logger.warning("Table(s): {}", args.table)
+    logger.warning("Model filter: {}", args.model or "(all)")
     logger.warning("Skip Chronos: {}", args.skip_chronos)
+    logger.warning("Prediction cache: {}", "OFF (--no-cache)" if args.no_cache else "ON")
+    logger.warning("Decision-gate layer: {}", "ON (--gate)" if args.gate else "OFF")
     logger.warning("═════════════════════════════════════════════")
 
+    # A model filter that can never select a Chronos-backed cell (baseline
+    # Chronos rows or CMTF(chronos)) makes Chronos init pure overhead.
+    chronos_irrelevant = args.model is not None and args.model not in ("chronos", CMTF_MODEL)
     if args.skip_chronos:
         chronos = None
         logger.warning("⚠️ Chronos disabled via --skip-chronos")
+    elif chronos_irrelevant:
+        chronos = None
+        logger.warning("⚠️ Chronos disabled automatically: --model {} cannot select Chronos cells", args.model)
     else:
         chronos = ChronosMarketPredictor(device=device)
 
     tables_to_run_global = (
         [args.table] if args.table != "all"
-        else ["data_ablation", "architecture_ablation", "feature_extractor_ablation"]
+        else ["fusion_comparison", "component_ablation"]
     )
 
     for horizon in tqdm(
@@ -974,6 +1192,9 @@ def main() -> None:
                     chronos=chronos,
                     hpo_params=hpo_params,
                     seed=seed,
+                    model_filter=args.model,
+                    use_cache=not args.no_cache,
+                    gate=args.gate,
                 )
                 if not df_seed.empty:
                     df_seed["run_seed"] = seed
@@ -981,15 +1202,21 @@ def main() -> None:
 
             df = _average_seed_dfs(seed_dfs, seeds=args.seeds)
             csv_path = hdir / f"{table}.csv"
+            merged_df = _merge_table_csv(csv_path, df)
+            merged_df = _prune_stale_rows(table, merged_df)
+            if len(merged_df) != len(df):
+                logger.warning(
+                    "  Merged {} new/updated row(s) with {} existing row(s) \u2192 {} total",
+                    len(df), len(merged_df) - len(df), len(merged_df),
+                )
+            df = merged_df
             df.to_csv(csv_path, index=False)
             logger.warning("  ✓ {:25} → {}", table, csv_path.name)
 
-            if table != "cmtf_search":
-                summary = _make_summary_row(table, df, horizon)
-                if summary:
-                    summary_rows.append(summary)
+            summary = _make_summary_row(table, df, horizon)
+            if summary:
+                summary_rows.append(summary)
 
-            if table != "cmtf_search":
                 _plot_table(table, df, horizon)
 
         if summary_rows:

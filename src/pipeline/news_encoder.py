@@ -270,17 +270,22 @@ class NewsEncoder:
         if use_cache:
             _EMBEDDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
             payload: dict[str, Any] = {
-                "embeddings": np.stack(embeddings),
-                "has_news": np.array(has_news_flags),
+                "embeddings": np.stack(embeddings).astype(np.float32),
+                "has_news": np.array(has_news_flags, dtype=bool),
             }
+
             for col in SENTIMENT_TRACE_COLUMNS:
                 payload[col] = df[col].to_numpy(dtype=np.float32, copy=True)
+
             if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
+                hybrid_array = np.stack(hybrid_embeddings).astype(np.float32)
                 df[NEWS_HYBRID_COLUMN] = hybrid_embeddings
+                payload[NEWS_HYBRID_COLUMN] = hybrid_array
+
             np.savez_compressed(cache_path, **payload)
             logger.info("Embeddings cached → {} ({} rows)", cache_path.name, len(df))
-
-        return df
+            
+        return df    
 
     def _score_titles(self, df: pd.DataFrame) -> tuple[list[list[float]], pd.DataFrame]:
         if self.sentiment_inferencer is None:
@@ -341,7 +346,7 @@ class NewsEncoder:
     ) -> str:
         """Compute a deterministic cache key from the DataFrame contents."""
         h = hashlib.sha256()
-        h.update(b"news_encoder_cache_v3")
+        h.update(b"news_encoder_cache_v4")
         h.update(str(bool(weighted_pooling)).encode())
         h.update(str(len(df)).encode())
         if model_name:

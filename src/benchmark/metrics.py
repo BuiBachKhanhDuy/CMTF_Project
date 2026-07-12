@@ -5,6 +5,37 @@ Refactored for financial forecasting:
 2. Precision/Recall/F1 are symmetric over {-1, +1}, not biased to only 'up'.
 3. Base-rate DA is computed on the same active directional subset.
 4. Composite metrics use the corrected directional F1.
+
+--- Fix pass (this file) ---
+FIX-1: Every directional function used to size the dead-zone threshold from
+       y_true's distribution and then apply that SAME threshold to y_pred.
+       If a model's predictions are much smaller in magnitude than actual
+       returns (small PredStd), most predictions fell inside the y_true-sized
+       dead zone and were labeled "no direction" (0) -- scored as wrong
+       whenever the true move was active. This deflated DA%/DA_skill% for
+       low-magnitude-but-correctly-signed models, independent of whether they
+       actually had directional skill.
+       Fix: when eps is not explicitly provided, each series gets its own
+       adaptive threshold from its own distribution. When eps IS provided,
+       it's applied identically to both series (deliberate fixed economic
+       threshold, e.g. transaction cost, in the same return units for both).
+FIX-2: sharpe_ratio had the same root-cause bug (thr from y_true, applied to
+       y_pred) which -- combined with the fact that Sharpe assigns 0 return
+       to "no trade" days while DA% scores 0-labeled predictions as wrong --
+       produced cases where Sharpe was strongly positive while DA_skill% was
+       strongly negative (Sharpe computed on a sparse subset of "loud enough"
+       trades, DA% penalizing everything below the y_true-sized threshold).
+       Fix: pred_sign threshold is now derived from y_pred's own distribution.
+FIX-3: modal_disagreement derived its threshold from y_pred alone and applied
+       it to BOTH anchor_pred and y_pred, inconsistent with the rest of the
+       file (which used y_true) and unfair whenever anchor_pred and y_pred
+       have different scales.
+       Fix: anchor_pred and y_pred each get their own adaptive threshold.
+FIX-4: paired_bootstrap_da derived its threshold from y_true alone and
+       applied it to BOTH preds_a and preds_b, which is symmetric between the
+       two models but still penalizes whichever model happens to have smaller
+       output magnitude, independent of directional correctness.
+       Fix: preds_a and preds_b each get their own adaptive threshold.
 """
 
 from __future__ import annotations
@@ -35,76 +66,97 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # Direction helpers
 # ======================================================================
 
-def _direction_threshold(y_true: np.ndarray, eps: float | None = None) -> float:
+def _direction_threshold(values: np.ndarray, eps: float | None = None) -> float:
     """Choose a robust dead-zone threshold for directional metrics.
 
     If eps is provided, use it directly.
-    Otherwise use a small data-adaptive threshold based on target scale.
+    Otherwise use a small data-adaptive threshold based on the scale of
+    the given series (half of its own 20th-percentile absolute magnitude).
+
+    NOTE: this is deliberately generic over "values" (not "y_true") because
+    it is now called separately on y_true, y_pred, preds_a, preds_b, and
+    anchor_pred -- each series gets a threshold sized to ITS OWN scale.
+    See FIX-1..FIX-4 in the module docstring.
     """
-    y_true = np.asarray(y_true, dtype=float)
+    values = np.asarray(values, dtype=float)
     if eps is not None:
         return float(max(eps, 0.0))
 
-    abs_y = np.abs(y_true)
-    if abs_y.size == 0:
+    abs_v = np.abs(values)
+    if abs_v.size == 0:
         return 0.0
 
     # Robust small-move threshold:
     # half of the 20th percentile magnitude, bounded below.
-    q20 = float(np.percentile(abs_y, 20))
+    q20 = float(np.percentile(abs_v, 20))
     return max(0.5 * q20, 1e-6)
+
+
+def _resolve_pair_thresholds(
+    series_a: np.ndarray,
+    series_b: np.ndarray,
+    eps: float | None = None,
+) -> tuple[float, float]:
+    """Return (thr_a, thr_b) for two series being compared directionally.
+
+    If eps is given, both series share that fixed threshold (a deliberate
+    manual dead-zone, valid because both series are in the same return
+    units). If eps is None, each series gets its own adaptive threshold
+    from its own distribution -- this is FIX-1/3/4: don't let one series'
+    scale determine whether the other series' values count as "active".
+    """
+    if eps is not None:
+        thr = float(max(eps, 0.0))
+        return thr, thr
+    return _direction_threshold(series_a), _direction_threshold(series_b)
 
 
 def _signed_labels(values: np.ndarray, eps: float | None = None) -> np.ndarray:
     """Map values to {-1, 0, +1} using a dead-zone threshold."""
     values = np.asarray(values, dtype=float)
-    thr = _direction_threshold(values, eps=eps)
+
+    if eps is None:
+        raise ValueError("eps must be provided as a fixed threshold")
+
+    thr = float(eps)
 
     labels = np.zeros_like(values, dtype=np.int8)
     labels[values > thr] = 1
     labels[values < -thr] = -1
     return labels
 
-
-def _active_direction_mask(y_true: np.ndarray, eps: float | None = None) -> np.ndarray:
-    """Samples where true direction is meaningfully non-neutral."""
-    true_sign = _signed_labels(y_true, eps=eps)
-    return true_sign != 0
-
-
 # ======================================================================
-# Directional metrics
+# Directional metrics (refactored - consistent, per-series threshold)
 # ======================================================================
 
 def directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = None) -> float:
-    """Percentage of correct sign predictions on meaningful moves only.
-
-    Uses a dead-zone threshold so tiny/noisy moves are ignored.
-    """
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
     if len(y_true) == 0:
         return 0.0
 
-    true_sign = _signed_labels(y_true, eps=eps)
-    pred_sign = _signed_labels(y_pred, eps=eps)
+    # FIX-1: separate, per-series thresholds instead of reusing y_true's.
+    thr_true, thr_pred = _resolve_pair_thresholds(y_true, y_pred, eps)
+
+    true_sign = _signed_labels(y_true, eps=thr_true)
+    pred_sign = _signed_labels(y_pred, eps=thr_pred)
     active = true_sign != 0
 
     if not np.any(active):
         return 0.0
 
-    correct = np.sum(true_sign[active] == pred_sign[active])
-    return float(correct / np.sum(active) * 100.0)
+    return float(np.mean(true_sign[active] == pred_sign[active]) * 100.0)
 
 
 def direction_precision(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = None) -> float:
-    """Macro precision over {-1, +1} on meaningful true-direction samples."""
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    true_sign = _signed_labels(y_true, eps=eps)
-    pred_sign = _signed_labels(y_pred, eps=eps)
+    thr_true, thr_pred = _resolve_pair_thresholds(y_true, y_pred, eps)
+
+    true_sign = _signed_labels(y_true, eps=thr_true)
+    pred_sign = _signed_labels(y_pred, eps=thr_pred)
     active = true_sign != 0
 
     if not np.any(active):
@@ -115,9 +167,8 @@ def direction_precision(y_true: np.ndarray, y_pred: np.ndarray, eps: float | Non
 
     precisions = []
     for cls in (-1, 1):
-        pred_cls = pred_active == cls
-        tp = np.sum(pred_cls & (true_active == cls))
-        fp = np.sum(pred_cls & (true_active != cls))
+        tp = np.sum((true_active == cls) & (pred_active == cls))
+        fp = np.sum((true_active != cls) & (pred_active == cls))
         denom = tp + fp
         if denom > 0:
             precisions.append(tp / denom)
@@ -126,12 +177,13 @@ def direction_precision(y_true: np.ndarray, y_pred: np.ndarray, eps: float | Non
 
 
 def direction_recall(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = None) -> float:
-    """Macro recall over {-1, +1} on meaningful true-direction samples."""
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    true_sign = _signed_labels(y_true, eps=eps)
-    pred_sign = _signed_labels(y_pred, eps=eps)
+    thr_true, thr_pred = _resolve_pair_thresholds(y_true, y_pred, eps)
+
+    true_sign = _signed_labels(y_true, eps=thr_true)
+    pred_sign = _signed_labels(y_pred, eps=thr_pred)
     active = true_sign != 0
 
     if not np.any(active):
@@ -142,9 +194,8 @@ def direction_recall(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None =
 
     recalls = []
     for cls in (-1, 1):
-        true_cls = true_active == cls
-        tp = np.sum(true_cls & (pred_active == cls))
-        fn = np.sum(true_cls & (pred_active != cls))
+        tp = np.sum((true_active == cls) & (pred_active == cls))
+        fn = np.sum((true_active == cls) & (pred_active != cls))
         denom = tp + fn
         if denom > 0:
             recalls.append(tp / denom)
@@ -153,12 +204,13 @@ def direction_recall(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None =
 
 
 def direction_f1(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = None) -> float:
-    """Macro F1 over {-1, +1} on meaningful true-direction samples."""
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    true_sign = _signed_labels(y_true, eps=eps)
-    pred_sign = _signed_labels(y_pred, eps=eps)
+    thr_true, thr_pred = _resolve_pair_thresholds(y_true, y_pred, eps)
+
+    true_sign = _signed_labels(y_true, eps=thr_true)
+    pred_sign = _signed_labels(y_pred, eps=thr_pred)
     active = true_sign != 0
 
     if not np.any(active):
@@ -173,16 +225,18 @@ def direction_f1(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = Non
         fp = np.sum((true_active != cls) & (pred_active == cls))
         fn = np.sum((true_active == cls) & (pred_active != cls))
 
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        denom_p = tp + fp
+        denom_r = tp + fn
 
-        if (precision + recall) > 0:
+        precision = tp / denom_p if denom_p > 0 else 0.0
+        recall = tp / denom_r if denom_r > 0 else 0.0
+
+        if precision + recall > 0:
             f1s.append(2.0 * precision * recall / (precision + recall))
         else:
             f1s.append(0.0)
 
     return float(np.mean(f1s))
-
 
 # ======================================================================
 # Trading / rank metrics
@@ -193,11 +247,26 @@ def sharpe_ratio(
     y_pred: np.ndarray,
     horizon: int = 1,
 ) -> float:
-    """Annualised Sharpe ratio of a sign-based long/short strategy."""
+    """Annualised Sharpe ratio of a sign-based long/short strategy.
+
+    FIX-2: the trading threshold is now sized from y_pred's OWN
+    distribution, not y_true's. Previously a model with small-magnitude
+    predictions had most of its signals zeroed out by a threshold sized
+    from the (larger-scale) actual returns, producing a sparse, noisy
+    trade set whose Sharpe could look good or bad almost by chance --
+    and disagreeing with DA_skill%, which penalizes those same zeroed
+    predictions as wrong. Sizing the threshold from y_pred's own scale
+    means "roughly the top ~80% of this model's own signals" get traded,
+    regardless of how that model's output scale compares to actual
+    return magnitude.
+    """
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    strategy_returns = np.sign(y_pred) * y_true
+    thr_pred = _direction_threshold(y_pred)
+
+    pred_sign = _signed_labels(y_pred, thr_pred)
+    strategy_returns = pred_sign * y_true
 
     if horizon <= 1:
         if len(strategy_returns) < 5 or np.std(strategy_returns) == 0:
@@ -234,7 +303,13 @@ def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # ======================================================================
 
 def modal_disagreement(anchor_pred: np.ndarray | None, y_pred: np.ndarray, eps: float | None = None) -> float:
-    """Fraction of sign disagreements versus a shared market-only anchor."""
+    """Fraction of sign disagreements versus a shared market-only anchor.
+
+    FIX-3: anchor_pred and y_pred now each get their own adaptive
+    threshold (previously both were thresholded using y_pred's scale
+    alone, inconsistent with the rest of the file and unfair whenever
+    the anchor and the candidate prediction have different scales).
+    """
     if anchor_pred is None:
         return 0.0
 
@@ -244,8 +319,10 @@ def modal_disagreement(anchor_pred: np.ndarray | None, y_pred: np.ndarray, eps: 
     if len(anchor_pred) == 0 or len(y_pred) == 0:
         return 0.0
 
-    anchor_sign = _signed_labels(anchor_pred, eps=eps)
-    pred_sign = _signed_labels(y_pred, eps=eps)
+    thr_anchor, thr_pred = _resolve_pair_thresholds(anchor_pred, y_pred, eps)
+
+    anchor_sign = _signed_labels(anchor_pred, thr_anchor)
+    pred_sign = _signed_labels(y_pred, thr_pred)
 
     active = (anchor_sign != 0) | (pred_sign != 0)
     if not np.any(active):
@@ -304,6 +381,8 @@ def temporal_lag(y_true: np.ndarray, y_pred: np.ndarray, horizon: int = 1) -> fl
             best_lag = lag
 
     return float(abs(best_lag) / max_lag)
+
+
 def compute_composite_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -316,13 +395,16 @@ def compute_composite_metrics(
     CompositeScore is diagnostic only and should not be used as the sole
     model-selection criterion. It is designed to summarize multiple aspects
     of forecast behavior on roughly normalized scales.
+
+    NOTE: no longer computes a single shared `thr` up front -- each call
+    below resolves its own per-series threshold(s) internally (FIX-1/3).
     """
     rmse_value = rmse(y_true, y_pred)
     mae_value = mae(y_true, y_pred)
     da_value = directional_accuracy(y_true, y_pred)
+    f1_value = direction_f1(y_true, y_pred)
     disagreement = modal_disagreement(anchor_pred, y_pred)
     lag_penalty = temporal_lag(y_true, y_pred, horizon=horizon)
-    f1_value = direction_f1(y_true, y_pred)
     ic_value = information_coefficient(y_true, y_pred)
 
     # Scale-normalized error terms
@@ -388,21 +470,28 @@ def compute_all(
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
+    # thr_true is still needed here (unchanged) to define base_rate_DA on
+    # the true-return active subset; directional_accuracy/precision/recall/f1
+    # now resolve their own per-series thresholds internally (FIX-1).
+    thr_true = _direction_threshold(y_true)
+
     da_val = directional_accuracy(y_true, y_pred)
 
-    # ESS from rough AR(1)-style approximation on target autocorrelation.
-    if len(y_true) > 2:
-        ac1 = float(np.corrcoef(y_true[:-1], y_true[1:])[0, 1])
-        if not np.isfinite(ac1):
-            ac1 = 0.0
-        ac1 = float(np.clip(ac1, -0.99, 0.99))
+    # ESS adjusted for overlapping horizons
+    n = len(y_true)
+
+    if n <= 2:
+        ess = n
     else:
-        ac1 = 0.0
-    ess = max(1, int(len(y_true) * (1.0 - ac1) / (1.0 + ac1 + 1e-9)))
+        if horizon <= 1:
+            # no overlap → use original n
+            ess = n
+        else:
+            # remove overlap by subsampling
+            ess = max(1, n // horizon)
 
     # Base-rate directional accuracy on the same active subset.
-    eps = _direction_threshold(y_true)
-    true_sign = _signed_labels(y_true, eps=eps)
+    true_sign = _signed_labels(y_true, thr_true)
     active = true_sign != 0
     if np.any(active):
         pos_frac = float(np.mean(true_sign[active] == 1))
@@ -416,7 +505,6 @@ def compute_all(
     prec_val = direction_precision(y_true, y_pred)
     rec_val = direction_recall(y_true, y_pred)
     f1_val = direction_f1(y_true, y_pred)
-
     return {
         "MAE": mae(y_true, y_pred),
         "RMSE": rmse(y_true, y_pred),
@@ -428,12 +516,100 @@ def compute_all(
         "F1": f1_val,
         "ESS": ess,
         "base_rate_DA%": base_rate_da,
-        "DA_skill%": round(da_val - base_rate_da, 2),
+                "DA_skill%": round(da_val - base_rate_da, 2),
+        **compute_directional_independent(y_true, y_pred, horizon),
     }
 
-# ======================================================================
-# Statistical significance tests
-# ======================================================================
+
+def flag_degenerate(metrics: dict, y_pred: np.ndarray | None = None) -> bool:
+    """Robust collapse / no-skill detector for a computed metrics bundle.
+
+    The old rule (F1 < 0.01 and |DA% - 50| < 1.5) only caught the narrow
+    exact-50%% case and silently passed real collapses such as a constant
+    single-sign output that lands exactly on the base rate (IC == 0,
+    Rec == 1.0, DA%% == base_rate_DA%%, F1 ~ 0.33). This ORs in the
+    unambiguous collapse signatures:
+      - zero prediction variance (constant output),
+      - IC == 0 exactly (spearman of a constant series -> nan -> 0),
+      - Recall pinned to a single class (~0 or ~1),
+      - sitting on the base rate with no directional skill.
+    """
+    da = float(metrics.get("DA%", 0.0))
+    base = float(metrics.get("base_rate_DA%", 50.0))
+    f1 = float(metrics.get("F1", 0.0))
+    ic = float(metrics.get("IC", 0.0))
+    rec = float(metrics.get("Rec", 0.5))
+
+    pred_std_zero = (
+        y_pred is not None
+        and float(np.std(np.asarray(y_pred, dtype=float))) < 1e-8
+    )
+
+    return bool(
+        pred_std_zero
+        or abs(ic) < 1e-6                              # constant output -> spearman nan->0
+        or rec > 0.98 or rec < 0.02                    # single-sign predictions
+        or (abs(da - base) < 0.25 and f1 < 0.40)       # sits on base rate, no skill
+        or (f1 < 0.01 and abs(da - 50.0) < 1.5)        # original narrow rule, retained
+    )
+
+
+def compute_directional_independent(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    horizon: int,
+) -> dict[str, float]:
+    """Directional metrics on non-overlapping subsamples (phase-averaged stride=horizon).
+
+    For a horizon-h forward return, consecutive targets overlap by h-1 steps.
+    Evaluating on stride-h indices (h phase offsets, then averaged) gives
+    ~n/h statistically independent evaluations per phase — correcting the
+    inflated DA% / Prec / Rec / F1 that results from overlapping targets.
+
+    For horizon <= 1 returns the same values as the standard directional metrics.
+
+    NOTE: each phase now delegates to directional_accuracy/precision/recall/f1
+    directly, which resolve per-series thresholds internally (FIX-1), instead
+    of computing a single thr from the phase's y_true slice and reusing it for
+    y_pred.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if horizon <= 1 or len(y_true) == 0:
+        return {
+            "DA_ind%": directional_accuracy(y_true, y_pred),
+            "Prec_ind": direction_precision(y_true, y_pred),
+            "Rec_ind": direction_recall(y_true, y_pred),
+            "F1_ind": direction_f1(y_true, y_pred),
+        }
+
+    n = len(y_true)
+    phase_da: list[float] = []
+    phase_prec: list[float] = []
+    phase_rec: list[float] = []
+    phase_f1: list[float] = []
+
+    for offset in range(horizon):
+        idx = np.arange(offset, n, horizon)
+        if len(idx) < 2:
+            continue
+        yt = y_true[idx]
+        yp = y_pred[idx]
+        phase_da.append(directional_accuracy(yt, yp))
+        phase_prec.append(direction_precision(yt, yp))
+        phase_rec.append(direction_recall(yt, yp))
+        phase_f1.append(direction_f1(yt, yp))
+
+    if not phase_da:
+        return {"DA_ind%": 0.0, "Prec_ind": 0.0, "Rec_ind": 0.0, "F1_ind": 0.0}
+
+    return {
+        "DA_ind%": float(np.mean(phase_da)),
+        "Prec_ind": float(np.mean(phase_prec)),
+        "Rec_ind": float(np.mean(phase_rec)),
+        "F1_ind": float(np.mean(phase_f1)),
+    }
 
 def diebold_mariano_test(
     y_true: np.ndarray,
@@ -487,17 +663,28 @@ def paired_bootstrap_da(
     n_bootstrap: int = 10000,
     seed: int = 42,
 ) -> dict[str, float]:
-    """Paired bootstrap test for directional accuracy difference."""
+    """Paired bootstrap test for directional accuracy difference.
+
+    FIX-4: preds_a and preds_b now each get their own adaptive threshold
+    (previously both were thresholded using y_true's scale alone). This is
+    symmetric-fair between the two models being compared but no longer
+    penalizes whichever model happens to have smaller output magnitude,
+    independent of whether its sign calls are actually correct.
+    """
     y_true = np.asarray(y_true, dtype=float)
     preds_a = np.asarray(preds_a, dtype=float)
     preds_b = np.asarray(preds_b, dtype=float)
     n = len(y_true)
     rng = np.random.RandomState(seed)
 
-    eps = _direction_threshold(y_true)
-    true_sign = _signed_labels(y_true, eps=eps)
-    pred_a_sign = _signed_labels(preds_a, eps=eps)
-    pred_b_sign = _signed_labels(preds_b, eps=eps)
+    thr_true = _direction_threshold(y_true)
+    thr_a = _direction_threshold(preds_a)
+    thr_b = _direction_threshold(preds_b)
+
+    true_sign = _signed_labels(y_true, thr_true)
+    pred_a_sign = _signed_labels(preds_a, thr_a)
+    pred_b_sign = _signed_labels(preds_b, thr_b)
+
     active = true_sign != 0
 
     correct_a = (true_sign == pred_a_sign) & active

@@ -16,29 +16,54 @@ import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
 
-from .baseline_models import LSTMPredictor, CNNLSTMPredictor, sign_aware_huber_loss
+from .baseline_models import (
+    LSTMPredictor,
+    CNNLSTMPredictor,
+    sign_aware_huber_loss,
+    GLOBAL_LOSS_CONFIG,
+)
 from .news_module import (
     STANDARD_NEWS_DIM,
     NewsProjector,
     _as_bool_mask,
 )
-from .training_utils import compute_huber_delta
+from .training_utils import clone_state, compute_huber_delta
 from .gpt4ts_encoder import GPT4TSPredictor
 from .chronos_encoder import ChronosAdapter
+from .fusion_selection import selection_score
+
+
+_VALID_OUTPUT_MODES = frozenset(
+    {"market_plus_fusion", "fusion_plus_news", "encoder_residual", "anchored_fusion"}
+)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _clone_state(module: nn.Module) -> dict[str, torch.Tensor]:
-    return {k: v.detach().cpu().clone() for k, v in module.state_dict().items()}
-
-
 @dataclass
 class _BestState:
     fusion_state: dict[str, torch.Tensor]
     encoder_state: dict[str, torch.Tensor] | None = None
+
+
+def _rank_ic(pred, target) -> float:
+    """Spearman rank correlation (numpy-only). Used for IC-based model selection.
+
+    Rank-IC is scale-invariant, so it can be computed on scaled predictions/targets
+    directly. Returns 0.0 for degenerate (constant) inputs.
+    """
+    pred = np.asarray(pred, dtype=np.float64).ravel()
+    target = np.asarray(target, dtype=np.float64).ravel()
+    if pred.size < 3 or np.std(pred) < 1e-12 or np.std(target) < 1e-12:
+        return 0.0
+    pr = np.argsort(np.argsort(pred)).astype(np.float64)
+    tr = np.argsort(np.argsort(target)).astype(np.float64)
+    pr -= pr.mean()
+    tr -= tr.mean()
+    denom = np.sqrt((pr ** 2).sum() * (tr ** 2).sum())
+    return float((pr * tr).sum() / denom) if denom > 0 else 0.0
 
 
 def build_market_encoder(
@@ -47,6 +72,8 @@ def build_market_encoder(
     seq_len: int,
     horizon: int = 1,
     device: str = "cpu",
+    chronos_pipeline=None,
+    target_scale: float = 1.0,
     **kwargs,
 ):
     """
@@ -59,6 +86,7 @@ def build_market_encoder(
         return LSTMPredictor(
             input_dim=input_dim,
             device=device,
+            target_scale=target_scale,
             **kwargs,
         )
 
@@ -66,6 +94,7 @@ def build_market_encoder(
         return CNNLSTMPredictor(
             input_dim=input_dim,
             device=device,
+            target_scale=target_scale,
             **kwargs,
         )
 
@@ -74,7 +103,10 @@ def build_market_encoder(
             input_dim=market_dim,
             hidden_dim=kwargs.get("hidden_dim", 64),
             num_layers=kwargs.get("num_layers", 3),
+            patch_length=kwargs.get("patch_length", 6),
             dropout=kwargs.get("dropout", 0.3),
+            unfreeze_top_k_blocks=kwargs.get("unfreeze_top_k_blocks", 1),
+            target_scale=target_scale,
             device=device,
         )
     elif name == "chronos":
@@ -83,6 +115,14 @@ def build_market_encoder(
             model_name="amazon/chronos-t5-small",
             dropout=kwargs.get("dropout", 0.3),
             device=device,
+            pipeline=chronos_pipeline,
+            target_scale=target_scale,
+            # Opt-in linear-probe mode: freeze the input projection so the whole
+            # market->pooled path is deterministic and pooled embeddings can be
+            # memoized across OOF folds / epochs. DEFAULT OFF (fine-tunable
+            # adapter) to preserve existing benchmark semantics.
+            freeze_input_projection=kwargs.get("freeze_input_projection", False),
+            cache_frozen_embeddings=kwargs.get("cache_frozen_embeddings", True),
         )
 
     raise ValueError(
@@ -96,7 +136,24 @@ def build_market_encoder(
 # ---------------------------------------------------------------------------
 
 class HybridFusionPredictor(nn.Module):
-    """Standalone multimodal hybrid fusion model implementing CMTF."""
+    """Standalone multimodal hybrid fusion model implementing CMTF.
+
+        output_mode controls how the final prediction is composed (see
+        CMTF_FUSION_FINDINGS.md for the placebo-controlled A/B evidence):
+          * 'anchored_fusion'   (DEFAULT, recommended): TRAIN the fusion head to
+            predict the full news-using target (fusion_pred + news_residual) and
+            deploy that prediction directly. Combines the encoder's DA anchor (via
+            the aux loss) with the genuine news IC/Sharpe lift.
+          * 'encoder_residual'  (fallback): final = encoder_trained_pred +
+        news_residual (news branch learns an additive correction on top of the
+        encoder's trained scalar).
+      * 'fusion_plus_news'  (high-peak, NO guard): final = fusion_pred +
+        news_residual. Captures news IC/Sharpe but abandons the encoder's DA
+        anchor, so absolute DA can drop below market-only.
+      * 'market_plus_fusion' (DEPRECATED / harmful): re-learns the market from a
+        projection and discards the encoder's trained head — underperforms
+        market-only. Emits a warning; do not use.
+    """
 
     def __init__(
         self,
@@ -108,8 +165,10 @@ class HybridFusionPredictor(nn.Module):
         n_heads: int = 2,
         dropout: float = 0.2,
         seq_len: int = 30,
-        huber_delta: float = 1.0,
-        sign_penalty_weight: float = 0.005,
+                huber_delta: float = 1.0,
+        sign_penalty_weight: float = 0.1,
+        sharpe_surrogate_weight: float = 0.0,
+        sharpe_surrogate_k: float = 3.0,
         use_cross_attention: bool = True,
         use_positional_encoding: bool = True,
         use_news_gate: bool = True,
@@ -117,8 +176,8 @@ class HybridFusionPredictor(nn.Module):
         use_two_stage: bool = True,
         use_aux_loss: bool = True,
         freeze_market_encoder: bool = False,
-        recency_gate_k: int = 5,
-        target_scale: float = 100.0,
+        recency_gate_k: int = 5,    
+        target_scale: float = 1.0,
         aux_loss_weight: float = 0.3,
         encoder_lr_scale: float = 0.1,
         stage1_ratio: float = 0.33,
@@ -128,7 +187,7 @@ class HybridFusionPredictor(nn.Module):
         fusion_patience: int = 12,
         news_gate_alpha: float = 1.0,
         variance_reg_coeff: float = 0.001,
-        output_mode: str = "market_plus_fusion",
+        output_mode: str = "anchored_fusion",
         device: str = "cpu",
         news_projector: NewsProjector | None = None,
         use_interaction_prod: bool = True,
@@ -138,6 +197,8 @@ class HybridFusionPredictor(nn.Module):
         use_pooled_news: bool = True,
         fusion_style: str = "handcrafted",
         market_query_mode: str = "multi",
+        select_by_ic: bool = False,
+        fusion_weight_decay: float = 1e-5,
     ) -> None:
         super().__init__()
 
@@ -154,10 +215,17 @@ class HybridFusionPredictor(nn.Module):
         if getattr(market_encoder, "d_model", 0) <= 0:
             raise ValueError("market_encoder must expose d_model > 0")
 
-        if output_mode not in {"market_plus_fusion", "fusion_plus_news"}:
+        if output_mode not in _VALID_OUTPUT_MODES:
             raise ValueError(
                 f"Unsupported output_mode={output_mode!r}. "
-                "Expected 'market_plus_fusion' or 'fusion_plus_news'."
+                f"Expected one of {sorted(_VALID_OUTPUT_MODES)}."
+            )
+        if output_mode == "market_plus_fusion":
+            logger.warning(
+                "CMTF output_mode='market_plus_fusion' re-learns the market head from a "
+                "projection and discards the encoder's trained prediction. A placebo-"
+                "controlled 20D A/B showed it UNDERPERFORMS market-only (IC -0.055). "
+                "Prefer 'anchored_fusion' (default winner) or 'encoder_residual'."
             )
 
         self.fusion_style = str(fusion_style).strip().lower()
@@ -179,11 +247,31 @@ class HybridFusionPredictor(nn.Module):
         self.raw_news_dim = int(raw_news_dim)
         self.projected_news_dim = int(projected_news_dim)
         self.market_d_model = int(market_encoder.d_model)
-        self.market_seq_dim = int(getattr(market_encoder, "hidden_dim", fusion_market_dim))
+        self.market_seq_dim = int(
+            getattr(
+                market_encoder,
+                "seq_output_dim",
+                getattr(
+                    market_encoder,
+                    "d_model",
+                    getattr(market_encoder, "hidden_dim", fusion_market_dim),
+                ),
+            )
+        )        
         self.fusion_market_dim = int(fusion_market_dim)
         self.seq_len = int(seq_len)
         self.huber_delta = float(huber_delta)
         self.sign_penalty_weight = float(sign_penalty_weight)
+        # LEVER 3 (differentiable Sharpe surrogate). DA and Sharpe are sign/
+        # decision-layer objectives, but the fused head is trained as a point
+        # regressor (Huber + a tiny sign penalty), so it ~optimises IC while
+        # barely touching DA/Sharpe. This term adds a scale-invariant, fully
+        # differentiable negative-Sharpe surrogate on soft signed positions
+        # (tanh(k*pred)) so gradient descent can push directional structure out
+        # of the tails and into the bulk. DEFAULT 0.0 => exactly the legacy
+        # objective (no cached result changes); opt in per cell for the sweep.
+        self.sharpe_surrogate_weight = float(max(0.0, sharpe_surrogate_weight))
+        self.sharpe_surrogate_k = float(max(1e-3, sharpe_surrogate_k))
 
         self.use_cross_attention = bool(use_cross_attention)
         self.use_variance_reg = bool(use_variance_reg)
@@ -212,8 +300,19 @@ class HybridFusionPredictor(nn.Module):
         self.news_gate_alpha = float(max(0.0, min(1.0, news_gate_alpha)))
         self.variance_reg_coeff = float(max(0.0, variance_reg_coeff))
         self.output_mode = output_mode
+        # Model-selection + regularisation knobs (both validated via controlled,
+        # placebo-checked A/B on real 20D data — see CMTF_FUSION_FINDINGS.md):
+        #   * select_by_ic: pick the epoch with the highest validation rank-IC
+        #     instead of the lowest Huber loss. In SINGLE-STAGE (frozen encoder)
+        #     this ties loss-selection; in TWO-STAGE it raises IC further but
+        #     TRADES AWAY directional accuracy (DA). Hence default OFF; opt-in
+        #     only when IC is the sole objective.
+        #   * fusion_weight_decay: heavier decay did NOT help CMTF (unlike the
+        #     late-fusion news branch) — 1e-5 is best. Exposed for research only.
+        self.select_by_ic = bool(select_by_ic)
+        self.fusion_weight_decay = float(fusion_weight_decay)
 
-        self.direction_epsilon = 0.5
+        self.direction_epsilon = GLOBAL_LOSS_CONFIG.direction_epsilon
         self.direction_warmup_epochs = 5
 
         # --- Trainable news projector ---
@@ -234,13 +333,14 @@ class HybridFusionPredictor(nn.Module):
             nn.ReLU(),
         )
 
-        # Positional encoding for news sequence
+                # Positional encoding for news sequence
         self.news_pos_enc: nn.Embedding | None = None
         if use_positional_encoding:
             self.news_pos_enc = nn.Embedding(self.seq_len, self.fusion_market_dim)
             nn.init.normal_(self.news_pos_enc.weight, std=0.02)
 
-        # Null news token
+        # Null news token (ALWAYS present: _encode_news_tokens prepends it to the
+        # news sequence regardless of whether positional encoding is enabled).
         self.null_news_token = nn.Parameter(torch.zeros(1, 1, self.fusion_market_dim))
         nn.init.normal_(self.null_news_token, std=0.01)
 
@@ -365,33 +465,20 @@ class HybridFusionPredictor(nn.Module):
     # ------------------------------------------------------------------
 
     def _prediction_input_dim(self) -> int:
-        # Learned style: let the head learn interactions from [market_latent, attn_out]
-        if self.fusion_style == "learned":
-            return self.fusion_market_dim * 2
-
-        # Handcrafted style: current feature-rich construction
-        dim = self.fusion_market_dim * 2  # market_latent + attn_out
-
-        if self.use_pooled_news:
-            dim += self.fusion_market_dim
-        if self.use_interaction_prod:
-            dim += self.fusion_market_dim
-        if self.use_interaction_diff:
-            dim += self.fusion_market_dim
-        if self.use_news_context_prod:
-            dim += self.fusion_market_dim
-        if self.use_cosine_sim:
-            dim += 1
-
-        return dim
+        d = self.fusion_market_dim
+        dummy = torch.zeros(1, d)
+        return sum(
+            t.shape[-1]
+            for t in self._get_fused_feature_list(dummy, dummy, dummy)
+        )
 
     def _news_residual_input_dim(self) -> int:
-        # Learned style: residual learned directly from attended news
-        if self.fusion_style == "learned":
-            return self.fusion_market_dim
-
-        # Handcrafted style
-        return self.fusion_market_dim * 2 if self.use_pooled_news else self.fusion_market_dim
+        d = self.fusion_market_dim
+        dummy = torch.zeros(1, d)
+        return sum(
+            t.shape[-1]
+            for t in self._get_news_residual_list(dummy, dummy)
+        )
 
     # ------------------------------------------------------------------
     # Parameter groups
@@ -416,9 +503,10 @@ class HybridFusionPredictor(nn.Module):
             self.market_proj,
             self.market_seq_proj,
             self.market_aux_head,
-        ]:
+                ]:
             params += list(mod.parameters())
 
+        # Standalone nn.Parameters (append ONCE, outside the module loop).
         params.append(self.null_news_token)
         params.append(self.news_summary_query)
 
@@ -550,17 +638,15 @@ class HybridFusionPredictor(nn.Module):
     # Forward fusion
     # ------------------------------------------------------------------
 
-    def _build_fused_features(
+    def _get_fused_feature_list(
         self,
         market_latent: torch.Tensor,
         attn_out: torch.Tensor,
         pooled_news: torch.Tensor,
-    ) -> torch.Tensor:
-        # Learned style: let model infer interaction from core modalities only
+    ) -> list[torch.Tensor]:
         if self.fusion_style == "learned":
-            return torch.cat([market_latent, attn_out], dim=-1)
+            return [market_latent, attn_out]
 
-        # Handcrafted style: current feature-rich path
         interaction_prod = market_latent * attn_out
         interaction_diff = torch.abs(market_latent - attn_out)
         news_context_prod = market_latent * pooled_news
@@ -579,20 +665,20 @@ class HybridFusionPredictor(nn.Module):
         if self.use_cosine_sim:
             features.append(cosine_sim)
 
-        return torch.cat(features, dim=-1)
+        return features
 
-    def _build_news_residual_input(
+    def _get_news_residual_list(
         self,
         attn_out: torch.Tensor,
         pooled_news: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> list[torch.Tensor]:
         if self.fusion_style == "learned":
-            return attn_out
+            return [attn_out]
 
+        features: list[torch.Tensor] = [attn_out]
         if self.use_pooled_news:
-            return torch.cat([attn_out, pooled_news], dim=-1)
-
-        return attn_out
+            features.append(pooled_news)
+        return features
 
     def _forward_fusion(
         self,
@@ -600,7 +686,8 @@ class HybridFusionPredictor(nn.Module):
         market_seq: torch.Tensor,
         news_proj: torch.Tensor,
         news_mask: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        market_scalar_pred: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         market_latent = self.market_proj(market_emb)                  # (B, D)
         market_seq_proj = self.market_seq_proj(market_seq)            # (B, T, D)
         market_queries = self._build_market_queries(market_seq_proj)  # (B, Q, D)
@@ -629,7 +716,6 @@ class HybridFusionPredictor(nn.Module):
                 attn_out = self._apply_news_gate(attn_out, market_emb)
 
             self.last_attn_weights = attn_weights.detach() if attn_weights is not None else None
-            self.last_attended_news = attn_out.detach()
 
         else:
             valid_mask = (~pad_mask).unsqueeze(-1).float()
@@ -641,27 +727,48 @@ class HybridFusionPredictor(nn.Module):
                 attn_out = self._apply_news_gate(attn_out, market_emb)
 
             self.last_attn_weights = None
-            self.last_attended_news = attn_out.detach()
 
-        fused = self._build_fused_features(market_latent, attn_out, pooled_news)
+        fused = torch.cat(
+            self._get_fused_feature_list(market_latent, attn_out, pooled_news),
+            dim=-1,
+        )
 
         fusion_pred = self.prediction_head(fused).squeeze(-1)
         market_pred = self.market_aux_head(market_latent).squeeze(-1)
         fusion_delta = self.fusion_delta_head(fused).squeeze(-1)
 
-        news_residual_input = self._build_news_residual_input(attn_out, pooled_news)
+        news_residual_input = torch.cat(
+            self._get_news_residual_list(attn_out, pooled_news),
+            dim=-1,
+        )
         news_residual = self.news_residual_head(news_residual_input).squeeze(-1)
 
         if self.output_mode == "market_plus_fusion":
             final_pred = market_pred + fusion_delta
+            aux_pred = market_pred
         elif self.output_mode == "fusion_plus_news":
             final_pred = fusion_pred + news_residual
+            aux_pred = market_pred
+        elif self.output_mode == "encoder_residual":
+            # A3: anchor CMTF on the encoder's TRAINED scalar prediction and let the
+            # news branch learn a (near-zero-initialised) additive correction. This
+                        # guarantees CMTF starts at the backbone's performance instead of
+            # discarding the encoder head and relearning the market signal.
+            base_pred = market_pred if market_scalar_pred is None else market_scalar_pred
+            final_pred = base_pred + news_residual
+            aux_pred = base_pred
+        elif self.output_mode == "anchored_fusion":
+            # Train the fusion head to predict the full news-using target
+            # (fusion_pred + news_residual); this IS the deployed prediction.
+            # aux_pred exposes the encoder's trained scalar for the aux loss only.
+            final_pred = fusion_pred + news_residual
+            aux_pred = market_pred if market_scalar_pred is None else market_scalar_pred
         else:
             raise RuntimeError(f"Unexpected output_mode={self.output_mode!r}")
 
-        aux_pred = market_pred
+        self.last_attended_news = attn_out.detach()
 
-        return final_pred, aux_pred
+        return final_pred, aux_pred, attn_out
 
     # ------------------------------------------------------------------
     # Loss
@@ -673,6 +780,7 @@ class HybridFusionPredictor(nn.Module):
         aux_pred: torch.Tensor,
         target: torch.Tensor,
         epoch: int = 0,
+        attn_out: torch.Tensor | None = None,
     ) -> torch.Tensor:
         enable_direction = epoch >= self.direction_warmup_epochs
 
@@ -687,16 +795,46 @@ class HybridFusionPredictor(nn.Module):
 
         total = main_loss
 
+        # LEVER 3: differentiable negative-Sharpe surrogate on soft signed
+        # positions. Activated together with the sign penalty (post-warmup) so
+        # the regression warm-up is undisturbed. No-op when weight == 0.0.
+        if self.sharpe_surrogate_weight > 0.0 and enable_direction:
+            total = total + self.sharpe_surrogate_weight * self._sharpe_surrogate(
+                fused_pred, target
+            )
+
         if self.use_aux_loss:
             aux_loss = nn.functional.huber_loss(aux_pred, target, delta=self.huber_delta)
             total = total + self.aux_loss_weight * aux_loss
 
-        if self.use_variance_reg and self.last_attended_news is not None:
-            attn_var = self.last_attended_news.var(dim=0).mean()
+        if self.use_variance_reg and attn_out is not None:
+            attn_var = attn_out.var(dim=0).mean()
             floor = torch.tensor(0.01, device=total.device)
             total = total + self.variance_reg_coeff * torch.relu(floor - attn_var)
 
         return total
+
+    def _sharpe_surrogate(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        """Differentiable negative-Sharpe surrogate (minimise => maximise Sharpe).
+
+        Maps predictions to soft signed positions ``pos = tanh(k * pred)`` and
+        scores the resulting per-sample PnL ``pos * target`` by its Sharpe ratio
+        ``mean(pnl) / std(pnl)``. Returning the NEGATIVE Sharpe makes it a loss.
+
+        The ratio is invariant to a constant rescale of ``target``, so unit-std
+        target scaling does not change this term. Falls back to zero on a
+        degenerate (too-small or zero-variance) batch so it never emits NaNs.
+        """
+        if pred.numel() < 3:
+            return pred.new_zeros(())
+        pos = torch.tanh(self.sharpe_surrogate_k * pred)
+        pnl = pos * target
+        std = pnl.std(unbiased=False)
+        return -pnl.mean() / (std + 1e-6)
 
     # ------------------------------------------------------------------
     # Pre-bake encoder outputs (stage 1 only)
@@ -821,10 +959,11 @@ class HybridFusionPredictor(nn.Module):
         encoder_lr = base_lr * self.encoder_lr_scale
         optimizer = torch.optim.AdamW(
             [
-                {"params": self.fusion_parameters(), "lr": base_lr},
-                {"params": self.market_encoder.encoder_parameters(), "lr": encoder_lr},
+                {"params": self.fusion_parameters(), "lr": base_lr,
+                 "weight_decay": self.fusion_weight_decay},
+                {"params": self.market_encoder.encoder_parameters(), "lr": encoder_lr,
+                 "weight_decay": 1e-5},
             ],
-            weight_decay=1e-5,
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -872,8 +1011,8 @@ class HybridFusionPredictor(nn.Module):
         save_encoder_state: bool = False,
     ) -> dict:
         n_tr = len(y_tr)
-        history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
-        best_val_loss = float("inf")
+        history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "val_ic": []}
+        best_metric = float("inf")
         best_state: _BestState | None = None
         patience_counter = 0
 
@@ -891,9 +1030,19 @@ class HybridFusionPredictor(nn.Module):
             emb_tr_t = torch.as_tensor(emb_tr_np, dtype=torch.float32)
             seq_v_t = torch.as_tensor(seq_v_np, dtype=torch.float32)
             emb_v_t = torch.as_tensor(emb_v_np, dtype=torch.float32)
+            mpred_tr_t = (
+                torch.as_tensor(np.asarray(mpred_tr), dtype=torch.float32)
+                if mpred_tr is not None else None
+            )
+            mpred_v_t = (
+                torch.as_tensor(np.asarray(mpred_v), dtype=torch.float32)
+                if mpred_v is not None else None
+            )
         else:
             X_tr_t = X_tr
             X_v_t = X_v
+            mpred_tr_t = None
+            mpred_v_t = None
 
         for epoch in range(int(epochs)):
             self.train()
@@ -914,9 +1063,14 @@ class HybridFusionPredictor(nn.Module):
                     mb_market = X_tr_t[idx].to(self.device)
                     mb_emb = self.market_encoder.encode_pooled_torch(mb_market)
                     mb_seq = self.market_encoder.encode_sequence_torch(mb_market)
+                    mb_mpred = self.market_encoder.predict_market_only_torch(mb_market)
                 else:
                     mb_seq = seq_tr_t[idx].to(self.device)
                     mb_emb = emb_tr_t[idx].to(self.device)
+                    mb_mpred = (
+                        mpred_tr_t[idx].to(self.device)
+                        if mpred_tr_t is not None else None
+                    )
 
                 if store_raw_news:
                     mb_news_proj = self.news_projector(mb_news)
@@ -924,8 +1078,10 @@ class HybridFusionPredictor(nn.Module):
                     mb_news_proj = mb_news
 
                 optimizer.zero_grad()
-                fused_pred, aux_pred = self._forward_fusion(mb_emb, mb_seq, mb_news_proj, mb_mask)
-                loss = self._compute_loss(fused_pred, aux_pred, mb_y, epoch=epoch)
+                fused_pred, aux_pred, attn_out = self._forward_fusion(
+                    mb_emb, mb_seq, mb_news_proj, mb_mask, market_scalar_pred=mb_mpred
+                )
+                loss = self._compute_loss(fused_pred, aux_pred, mb_y, epoch=epoch, attn_out=attn_out)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
                 optimizer.step()
@@ -937,6 +1093,7 @@ class HybridFusionPredictor(nn.Module):
 
             self.eval()
             val_loss_accum, v_batches = 0.0, 0
+            val_pred_list: list[np.ndarray] = []
 
             with torch.no_grad():
                 for i in range(0, len(y_v), batch_size):
@@ -949,31 +1106,54 @@ class HybridFusionPredictor(nn.Module):
                         mb_market_v = X_v_t[sl].to(self.device)
                         mb_emb_v = self.market_encoder.encode_pooled_torch(mb_market_v)
                         mb_seq_v = self.market_encoder.encode_sequence_torch(mb_market_v)
+                        mb_mpred_v = self.market_encoder.predict_market_only_torch(mb_market_v)
                     else:
                         mb_seq_v = seq_v_t[sl].to(self.device)
                         mb_emb_v = emb_v_t[sl].to(self.device)
+                        mb_mpred_v = (
+                            mpred_v_t[sl].to(self.device)
+                            if mpred_v_t is not None else None
+                        )
 
                     if store_raw_news:
                         mb_news_proj_v = self.news_projector(mb_news_v)
                     else:
                         mb_news_proj_v = mb_news_v
 
-                    fp_v, ap_v = self._forward_fusion(mb_emb_v, mb_seq_v, mb_news_proj_v, mb_mask_v)
-                    v_loss = self._compute_loss(fp_v, ap_v, mb_y_v, epoch=epoch)
+                    fp_v, ap_v, attn_out_v = self._forward_fusion(
+                        mb_emb_v, mb_seq_v, mb_news_proj_v, mb_mask_v, market_scalar_pred=mb_mpred_v
+                    )
+                    v_loss = self._compute_loss(fp_v, ap_v, mb_y_v, epoch=epoch, attn_out=attn_out_v)
                     val_loss_accum += float(v_loss.item())
                     v_batches += 1
+                    val_pred_list.append(fp_v.detach().cpu().numpy())
 
             val_loss = val_loss_accum / max(v_batches, 1)
             history["val_loss"].append(val_loss)
+            val_pred = np.concatenate(val_pred_list) if val_pred_list else np.zeros_like(y_v)
+            val_ic = _rank_ic(val_pred, y_v)
+            history["val_ic"].append(val_ic)
             if scheduler is not None:
                 scheduler.step(val_loss)
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            # Selection metric (lower is better). ROOT-CAUSE FIX: the old default
+            # selected the epoch by validation Huber loss, which tracks neither
+            # DA nor the sign-based Sharpe the research prioritises (CMTF could
+            # lower loss / raise IC while DEGRADING DA/Sharpe below market-only).
+            # The new default maximises a DA-aware blend of rank-IC and DA-skill
+            # (see fusion_selection.selection_score). select_by_ic still forces
+            # pure rank-IC for IC-only studies.
+            if self.select_by_ic:
+                selection_metric = -val_ic
+            else:
+                selection_metric = -selection_score(val_pred, y_v)
+
+            if selection_metric < best_metric:
+                best_metric = selection_metric
                 best_state = _BestState(
-                    fusion_state=_clone_state(self),
+                    fusion_state=clone_state(self),
                     encoder_state=(
-                        _clone_state(self.market_encoder)
+                        clone_state(self.market_encoder)
                         if save_encoder_state
                         else None
                     ),
@@ -1011,20 +1191,24 @@ class HybridFusionPredictor(nn.Module):
         batch_size: int = 32,
         lr: float = 5e-4,
         patience: int = 12,
+        skip_encoder_fit: bool = False,
     ) -> dict:
         market_fit_kwargs = market_fit_kwargs or {}
 
         y_scaled = np.asarray(targets_train, dtype=np.float32) * self.target_scale
         self.huber_delta = compute_huber_delta(y_scaled)
 
-        logger.info("HybridFusion/CMTF: fitting market encoder")
-        self.market_encoder.fit(
-            market_windows_train,
-            targets_train,
-            market_windows_val,
-            targets_val,
-            **market_fit_kwargs,
-        )
+        if not skip_encoder_fit:
+            logger.info("HybridFusion/CMTF: fitting market encoder")
+            self.market_encoder.fit(
+                market_windows_train,
+                targets_train,
+                market_windows_val,
+                targets_val,
+                **market_fit_kwargs,
+            )
+        else:
+            logger.info("HybridFusion/CMTF: skipping market encoder fit (pre-trained weights)")
 
         logger.info("HybridFusion/CMTF: stage 1 (frozen encoder, fusion warm-up)")
         self.set_market_encoder_requires_grad(False)
@@ -1032,7 +1216,7 @@ class HybridFusionPredictor(nn.Module):
         stage1_epochs = max(3, int(epochs * self.stage1_ratio))
         stage1_epochs = min(stage1_epochs, max(3, epochs - 1))
         optimizer_s1 = torch.optim.AdamW(
-            self.fusion_parameters(), lr=lr, weight_decay=1e-5
+            self.fusion_parameters(), lr=lr, weight_decay=self.fusion_weight_decay
         )
 
         hist1 = self._train_stage1(
@@ -1043,7 +1227,7 @@ class HybridFusionPredictor(nn.Module):
             epochs=stage1_epochs,
             patience=min(patience, 8),
             batch_size=batch_size,
-        )
+                )
 
         if not self.use_two_stage or self.freeze_market_encoder:
             logger.info(
@@ -1067,7 +1251,7 @@ class HybridFusionPredictor(nn.Module):
             epochs=max(10, epochs - stage1_epochs),
             patience=patience,
             batch_size=batch_size,
-        )
+                )
 
         self.is_fitted = True
         return {
@@ -1079,16 +1263,19 @@ class HybridFusionPredictor(nn.Module):
     # Predict
     # ------------------------------------------------------------------
 
-    def predict(
+    def _forward_predict_raw(
         self,
         market_windows: np.ndarray,
         news_embs: np.ndarray,
         news_mask: np.ndarray | None = None,
         batch_size: int = 256,
-    ) -> np.ndarray:
-        if not self.is_fitted:
-            raise RuntimeError("HybridFusionPredictor.predict called before fit.")
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (final_raw, base_raw) in raw return units.
 
+        final = model's composed prediction; base = the anchor (aux_pred), which
+        for encoder_residual is the encoder's trained scalar (market-only). The
+        news residual is recoverable as final - base.
+        """
         self.eval()
         market_windows = np.asarray(market_windows, dtype=np.float32)
         news_proj = self.news_projector.ensure_projected(
@@ -1100,10 +1287,12 @@ class HybridFusionPredictor(nn.Module):
         N_t = torch.as_tensor(news_proj, dtype=torch.float32)
         NM_t = torch.as_tensor(mask, dtype=torch.bool)
 
-        preds = np.zeros(len(market_windows), dtype=np.float32)
+        n = len(market_windows)
+        finals = np.zeros(n, dtype=np.float32)
+        bases = np.zeros(n, dtype=np.float32)
 
         with torch.no_grad():
-            for i in range(0, len(market_windows), batch_size):
+            for i in range(0, n, batch_size):
                 sl = slice(i, i + batch_size)
                 mb_x = X_t[sl].to(self.device)
                 mb_n = N_t[sl].to(self.device)
@@ -1111,10 +1300,30 @@ class HybridFusionPredictor(nn.Module):
 
                 mb_emb = self.market_encoder.encode_pooled_torch(mb_x)
                 mb_seq = self.market_encoder.encode_sequence_torch(mb_x)
-                fused_pred, _ = self._forward_fusion(mb_emb, mb_seq, mb_n, mb_nm)
-                preds[sl] = fused_pred.cpu().numpy()
+                mb_mpred = self.market_encoder.predict_market_only_torch(mb_x)
+                fused_pred, aux_pred, _ = self._forward_fusion(
+                    mb_emb, mb_seq, mb_n, mb_nm, market_scalar_pred=mb_mpred
+                )
+                finals[sl] = fused_pred.cpu().numpy()
+                bases[sl] = aux_pred.cpu().numpy()
 
-        return (preds / self.target_scale).astype(np.float32)
+        return finals / self.target_scale, bases / self.target_scale
+
+    def predict(
+        self,
+        market_windows: np.ndarray,
+        news_embs: np.ndarray,
+        news_mask: np.ndarray | None = None,
+        batch_size: int = 256,
+        ) -> np.ndarray:
+        if not self.is_fitted:
+            raise RuntimeError("HybridFusionPredictor.predict called before fit.")
+
+        final_raw, _base_raw = self._forward_predict_raw(
+            market_windows, news_embs, news_mask, batch_size
+        )
+        # Always return the full news-using fusion prediction (no lambda guard).
+        return final_raw.astype(np.float32)
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.market_encoder.predict_market_only(market_windows)

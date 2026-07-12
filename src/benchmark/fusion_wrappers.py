@@ -79,7 +79,7 @@ def generate_oof_market_predictions(
     """Generate out-of-fold market predictions to avoid leakage in residual training.
 
     Uses TimeSeriesSplit exclusively; KFold is not valid for time-series.
-    """
+        """
     _require_attr(base_encoder, "fit", "generate_oof_market_predictions")
     _require_attr(base_encoder, "predict_market_only", "generate_oof_market_predictions")
 
@@ -88,12 +88,27 @@ def generate_oof_market_predictions(
 
     logger.info("Generating OOF market predictions ({} splits)", n_splits)
     oof_preds = np.zeros(len(y_train), dtype=np.float32)
-    initial_state = copy.deepcopy(base_encoder)
+
+    # Use ONE working copy of the template encoder (so the caller's encoder is
+    # never mutated) and reset it to its initial weights before each fold from a
+    # cached state_dict snapshot — instead of deep-copying the backbone once per
+    # fold. This is numerically identical to a per-fold deepcopy (every fold still
+    # starts from the exact same initial weights and builds a fresh optimizer
+    # inside fit), but for heavy foundation encoders (Chronos' frozen T5, GPT4TS'
+    # GPT-2) it avoids copying hundreds of MB of *frozen* backbone weights
+    # `n_splits` extra times — the dominant, purely-wasted cost of the OOF loop,
+    # since only the small trainable head differs between folds.
+    fold_model = copy.deepcopy(base_encoder)
+    initial_state = {
+        k: v.detach().cpu().clone() for k, v in fold_model.state_dict().items()
+    }
 
     cv = TimeSeriesSplit(n_splits=n_splits, gap=max(gap, 0))
     for fold, (tr_idx, v_idx) in enumerate(cv.split(X_train), start=1):
         logger.info("  OOF fold {}/{}", fold, n_splits)
-        fold_model = copy.deepcopy(initial_state)
+        # Reset weights to the shared initial state so each fold trains from an
+        # identical starting point (fit() constructs a fresh optimizer per call).
+        fold_model.load_state_dict(initial_state)
         fold_model.fit(
             X_train[tr_idx], y_train[tr_idx],
             X_train[v_idx], y_train[v_idx],
@@ -520,7 +535,7 @@ class LateFusionWrapper(nn.Module):
         targets_train: np.ndarray,
         market_val: np.ndarray,
         news_val: np.ndarray,
-        targets_val: np.ndarray,
+                targets_val: np.ndarray,
         news_mask_train: np.ndarray | None = None,
         news_mask_val: np.ndarray | None = None,
         n_splits: int = 5,
@@ -528,29 +543,73 @@ class LateFusionWrapper(nn.Module):
         batch_size_news: int = 32,
         lr_news: float = 1e-3,
         patience_news: int = 8,
+        skip_encoder_fit: bool = False,
+        precomputed_oof: np.ndarray | None = None,
+        oof_fit_kwargs: dict | None = None,
         **encoder_fit_kwargs,
     ) -> dict:
         _require_attr(self.encoder, "fit", "LateFusionWrapper.fit")
         _require_attr(self.encoder, "predict_market_only", "LateFusionWrapper.fit")
 
-        # Phase 1: OOF market predictions to build unbiased residual targets
-        logger.info("LateFusion phase 1: generating OOF market predictions")
-        oof_preds_train = generate_oof_market_predictions(
-            base_encoder=self.encoder,
-            X_train=market_train,
-            y_train=targets_train,
-            n_splits=n_splits,
-            gap=max(self.horizon, 1),
-            **encoder_fit_kwargs,
-        )
+                # Phase 1: OOF market predictions to build unbiased residual targets.
+        # OOF generation refits the backbone once per CV fold, so it is by far
+        # the most expensive phase (dominant for heavy foundation encoders). When
+        # the caller supplies a cached OOF vector (shared across late-fusion cells
+        # that reuse the same backbone + market inputs) we skip the refit loop.
+        if precomputed_oof is not None:
+            oof_preds_train = np.asarray(precomputed_oof, dtype=np.float32)
+            if len(oof_preds_train) != len(targets_train):
+                raise ValueError(
+                    "precomputed_oof length mismatch: "
+                    f"{len(oof_preds_train)} vs targets {len(targets_train)}"
+                )
+            logger.info(
+                "LateFusion phase 1: reusing cached OOF market predictions "
+                "(skipped {}-fold backbone refit)",
+                n_splits,
+            )
+        else:
+            # Phase 1 uses a cheaper per-fold training recipe than the final
+            # encoder fit (Phase 2): the caller passes an `oof_fit_kwargs` override
+            # (fewer epochs) so the k-fold refit loop — the dominant cost — is much
+            # cheaper; the OOF residual targets only need to be leakage-free, not
+            # fully converged. The same override is applied uniformly to every
+            # backbone (apple-to-apple residual generation). When omitted, OOF
+            # folds train with the same recipe as the main fit.
+            oof_encoder_fit_kwargs = {
+                **encoder_fit_kwargs,
+                **(oof_fit_kwargs or {}),
+            }
+            logger.info(
+                "LateFusion phase 1: generating OOF market predictions "
+                "({} folds, epochs={})",
+                n_splits, oof_encoder_fit_kwargs.get("epochs", "default"),
+            )
+            oof_preds_train = generate_oof_market_predictions(
+                base_encoder=self.encoder,
+                X_train=market_train,
+                y_train=targets_train,
+                n_splits=n_splits,
+                gap=max(self.horizon, 1),
+                **oof_encoder_fit_kwargs,
+            )
 
-        # Phase 2: fit the main market encoder on full training data
-        logger.info("LateFusion phase 2: fitting main market encoder")
-        self.encoder.fit(
-            market_train, targets_train,
-            market_val, targets_val,
-            **encoder_fit_kwargs,
-        )
+        # Expose the OOF vector so callers can persist it to a shared cache and
+        # reuse it across late-fusion cells that share this backbone + inputs.
+        self._last_oof_preds_train = oof_preds_train
+
+        # Phase 2: fit the main market encoder on full training data.
+        # When skip_encoder_fit is True the encoder was restored from the shared
+        # cache (already trained), so we reuse those weights rather than refit.
+        if not skip_encoder_fit:
+            logger.info("LateFusion phase 2: fitting main market encoder")
+            self.encoder.fit(
+                market_train, targets_train,
+                market_val, targets_val,
+                **encoder_fit_kwargs,
+            )
+        else:
+            logger.info("LateFusion phase 2: skipping main market encoder fit (cached weights)")
         market_preds_val = _to_numpy_float32(self.encoder.predict_market_only(market_val))
 
         # Phase 3: train news projector + branch jointly

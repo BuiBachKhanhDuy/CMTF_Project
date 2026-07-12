@@ -44,9 +44,18 @@ class TestRMSE:
 
 class TestDirectionalAccuracy:
     def test_perfect(self):
+        # Predictions in the same return-units scale as y_true; FIX-1 gives
+        # each series its own adaptive threshold, so both must be comparable.
         y_true = np.array([0.1, -0.2, 0.3])
-        y_pred = np.array([0.5, -0.1, 0.9])
+        y_pred = np.array([0.08, -0.15, 0.25])   # same scale, same direction
         assert directional_accuracy(y_true, y_pred) == 100.0
+
+    def test_perfect_explicit_eps(self):
+        # With an explicit eps both series share the same threshold — backward
+        # compatible with the old single-threshold behaviour.
+        y_true = np.array([0.1, -0.2, 0.3])
+        y_pred = np.array([0.5, -0.1, 0.9])   # different scale, but eps pins it
+        assert directional_accuracy(y_true, y_pred, eps=0.05) == 100.0
 
     def test_excludes_zeros(self):
         y_true = np.array([0.0, 0.0, 0.1, -0.2])
@@ -117,7 +126,14 @@ class TestComputeAll:
         y_true = np.array([0.01, -0.02, 0.03, 0.01, -0.01, 0.02, 0.03, -0.01, 0.01, 0.02])
         y_pred = np.array([0.01, -0.01, 0.02, 0.02, -0.02, 0.01, 0.04, -0.02, 0.02, 0.01])
         result = compute_all(y_true, y_pred)
-        assert set(result.keys()) == {"MAE", "RMSE", "DA%", "Sharpe", "IC", "Prec", "Rec", "F1"}
+        expected_keys = {
+            "MAE", "RMSE", "DA%", "Sharpe", "IC", "Prec", "Rec", "F1",
+            "ESS", "base_rate_DA%", "DA_skill%",
+            "DA_ind%", "Prec_ind", "Rec_ind", "F1_ind",
+        }
+        assert expected_keys.issubset(set(result.keys())), (
+            f"Missing keys: {expected_keys - set(result.keys())}"
+        )
 
 
 class TestMaxDrawdown:

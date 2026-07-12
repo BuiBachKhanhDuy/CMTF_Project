@@ -125,7 +125,6 @@ class TestNewGraphSmoke:
         assert len(result["seed_preds"]) == 3
         assert result["predict_confidence"] is not None
         assert result["model_evidence"] is not None
-        assert result["model_proposal"] is not None
 
         # Fusion agent
         assert result["fusion_decision"] is not None

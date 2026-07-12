@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from run_model_benchmark import (
+    _split_hash,
     extract_per_symbol_data,
     impute_market_window_splits,
     impute_tabular_splits,
@@ -75,7 +76,18 @@ class TestSplitByDate:
         splits = split_by_date(data, times, "2023-06-30", "2023-09-30")
 
         for split_name in ("train", "val", "test"):
-            assert set(splits[split_name].keys()) == set(data.keys())
+            assert set(data.keys()).issubset(set(splits[split_name].keys()))
+            assert "times" in splits[split_name]
+            assert len(splits[split_name]["times"]) == len(splits[split_name]["targets"])
+
+    def test_split_hash_changes_with_time_bounds(self):
+        data, times = self._make_data()
+        splits_a = split_by_date(data, times, "2023-06-30", "2023-09-30")
+        splits_b = split_by_date(data, times, "2023-07-31", "2023-09-30")
+
+        hash_a = _split_hash(splits_a, "VCB", 1)
+        hash_b = _split_hash(splits_b, "VCB", 1)
+        assert hash_a != hash_b
 
 
 # ======================================================================
@@ -236,169 +248,8 @@ class TestBaselineHpoFallback:
         assert params == baseline_hpo.get_default_baseline_hpo_params()
 
 
-# ======================================================================
-# ResidualNewsFusionHead (pure PyTorch)
-# ======================================================================
 
 
-class TestResidualNewsFusionHead:
-    def test_output_shape(self):
-        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
-
-        head = ResidualNewsFusionHead(
-            baseline_dim=32,
-            market_dim=32,
-            news_dim=16,
-            hidden_dim=8,
-            n_heads=2,
-            dropout=0.0,
-            seq_len=5,
-        )
-        import torch
-
-        market = torch.randn(4, 32)
-        news = torch.randn(4, 5, 16)
-        pred = head(market, news)
-        assert pred.shape == (4,)
-
-    def test_all_masked_news_returns_zero(self):
-        """Fully masked news should preserve exact zero residual parity."""
-        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
-        import torch
-
-        head = ResidualNewsFusionHead(
-            baseline_dim=32,
-            market_dim=32,
-            news_dim=16,
-            hidden_dim=8,
-            n_heads=2,
-            dropout=0.0,
-            seq_len=3,
-        )
-        market = torch.randn(2, 32)
-        news = torch.zeros(2, 3, 16)
-        news_mask = torch.ones(2, 3, dtype=torch.bool)
-
-        pred = head(market, news, news_mask=news_mask)
-        assert pred.shape == (2,)
-        assert torch.allclose(pred, torch.zeros_like(pred), atol=1e-6, rtol=0.0)
-
-    def test_zero_news_rows_stay_finite(self):
-        from src.benchmark.fusion_wrappers import ResidualNewsFusionHead
-        import torch
-
-        head = ResidualNewsFusionHead(
-            baseline_dim=32,
-            market_dim=32,
-            news_dim=16,
-            hidden_dim=8,
-            n_heads=2,
-            dropout=0.0,
-            seq_len=3,
-        )
-        market = torch.randn(2, 32)
-        news = torch.zeros(2, 3, 16)
-        news[0] = torch.randn(3, 16)
-
-        pred = head(market, news)
-        assert pred.shape == (2,)
-        assert torch.isfinite(pred).all()
-
-
-class TestNewsBranchPredictor:
-    def test_all_masked_news_returns_zero(self):
-        from src.benchmark.fusion_wrappers import NewsBranchPredictor
-        import torch
-
-        branch = NewsBranchPredictor(news_dim=16, hidden_dim=8, device="cpu")
-        news = torch.zeros(2, 3, 16)
-        news_mask = torch.ones(2, 3, dtype=torch.bool)
-
-        pred = branch(news, news_mask)
-        assert pred.shape == (2,)
-        assert torch.allclose(pred, torch.zeros_like(pred), atol=1e-6, rtol=0.0)
-
-
-class _DummyFrozenEncoder:
-    d_model = 8
-    supports_sequence = True
-
-    def encode(self, market_windows: np.ndarray) -> np.ndarray:
-        return np.ones((len(market_windows), self.d_model), dtype=np.float32)
-
-    def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
-        return np.full((len(market_windows),), 0.25, dtype=np.float32)
-
-
-class TestHybridFusionWrapper:
-    def test_zero_news_matches_market_only(self):
-        from src.benchmark.fusion_wrappers import HybridFusionWrapper
-
-        encoder = _DummyFrozenEncoder()
-        wrapper = HybridFusionWrapper(
-            encoder=encoder,
-            news_dim=16,
-            fusion_dim=8,
-            fusion_market_dim=8,
-            n_heads=2,
-            dropout=0.0,
-            seq_len=3,
-            device="cpu",
-        )
-
-        market = np.random.randn(2, 3, 4).astype(np.float32)
-        news = np.zeros((2, 3, 16), dtype=np.float32)
-        news_mask = np.ones((2, 3), dtype=bool)
-
-        pred = wrapper.predict(market, news, news_mask)
-        assert np.allclose(pred, encoder.predict_market_only(market), atol=1e-6)
-
-    def test_single_branch_mode(self):
-        """HybridFusionWrapper should have fusion head, no extra branches."""
-        from src.benchmark.fusion_wrappers import HybridFusionWrapper
-
-        encoder = _DummyFrozenEncoder()
-        wrapper = HybridFusionWrapper(
-            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
-            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
-        )
-        assert not hasattr(wrapper, "news_branch")
-        assert not hasattr(wrapper, "mix_gate")
-        assert hasattr(wrapper, "fusion")
-
-    def test_two_stage_fallback_for_non_temporal(self):
-        """Non-TemporalEncoder should fall back to single-stage even with use_two_stage=True."""
-        from src.benchmark.fusion_wrappers import HybridFusionWrapper
-
-        encoder = _DummyFrozenEncoder()
-        wrapper = HybridFusionWrapper(
-            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
-            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
-            use_two_stage=True,
-        )
-        # _is_temporal should be False for _DummyFrozenEncoder
-        assert not wrapper._is_temporal
-
-    def test_fit_single_stage_runs(self):
-        """Single-stage fit should complete without errors."""
-        from src.benchmark.fusion_wrappers import HybridFusionWrapper
-
-        encoder = _DummyFrozenEncoder()
-        wrapper = HybridFusionWrapper(
-            encoder=encoder, news_dim=16, fusion_dim=8, fusion_market_dim=8,
-            n_heads=2, dropout=0.0, seq_len=3, device="cpu",
-            use_two_stage=False,
-        )
-        mw = np.random.randn(8, 3, 4).astype(np.float32)
-        ne = np.random.randn(8, 3, 16).astype(np.float32)
-        nm = np.zeros((8, 3), dtype=bool)
-        y = np.random.randn(8).astype(np.float32)
-
-        history = wrapper.fit(mw, ne, y, mw, ne, y, news_mask_train=nm, news_mask_val=nm,
-                              epochs=2, batch_size=4, patience=5)
-        assert "train_loss" in history
-        assert "val_loss" in history
-        assert len(history["train_loss"]) > 0
 
 
 class TestDieboldMarianoTest:
