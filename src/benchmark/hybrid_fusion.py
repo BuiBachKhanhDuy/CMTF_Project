@@ -186,6 +186,7 @@ class HybridFusionPredictor(nn.Module):
         market_patience: int = 15,
         fusion_patience: int = 12,
         news_gate_alpha: float = 1.0,
+        gate_mode: str = "fixed",
         variance_reg_coeff: float = 0.001,
         output_mode: str = "anchored_fusion",
         device: str = "cpu",
@@ -298,6 +299,11 @@ class HybridFusionPredictor(nn.Module):
         self.fusion_patience = int(fusion_patience)
 
         self.news_gate_alpha = float(max(0.0, min(1.0, news_gate_alpha)))
+        self.gate_mode = str(gate_mode).strip().lower()
+        if self.gate_mode not in {"fixed", "learned"}:
+            raise ValueError(
+                f"Unsupported gate_mode={gate_mode!r}. Expected 'fixed' or 'learned'."
+            )
         self.variance_reg_coeff = float(max(0.0, variance_reg_coeff))
         self.output_mode = output_mode
         # Model-selection + regularisation knobs (both validated via controlled,
@@ -376,6 +382,26 @@ class HybridFusionPredictor(nn.Module):
                 nn.Linear(self.market_d_model, self.fusion_market_dim),
                 nn.Sigmoid(),
             )
+
+        # --- Learned gate-mixing head (gate_mode="learned") ---
+        # Replaces the fixed news_gate_alpha scalar with a lightweight,
+        # end-to-end trainable per-sample mixing coefficient g in [0,1]:
+        #   gate_input = concat([market_emb, pooled_news]) -> Linear -> GELU
+        #              -> Linear -> Sigmoid -> g
+        # Minimal parameter count, backward compatible (only built when
+        # gate_mode="learned" AND use_news_gate=True; gate_mode="fixed" keeps
+        # the exact legacy scalar-alpha behaviour byte-identical).
+        self.learned_gate_head: nn.Module | None = None
+        if self.use_news_gate and self.gate_mode == "learned":
+            gate_in_dim = self.market_d_model + self.fusion_market_dim
+            gate_hidden_dim = max(8, self.fusion_market_dim // 2)
+            self.learned_gate_head = nn.Sequential(
+                nn.Linear(gate_in_dim, gate_hidden_dim),
+                nn.GELU(),
+                nn.Linear(gate_hidden_dim, 1),
+                nn.Sigmoid(),
+            )
+        self.last_learned_gate_alpha: torch.Tensor | None = None
 
         # --- Cross-attention ---
         self.cross_attn = nn.MultiheadAttention(
@@ -625,11 +651,18 @@ class HybridFusionPredictor(nn.Module):
         self,
         attn_out: torch.Tensor,
         market_emb: torch.Tensor,
+        pooled_news: torch.Tensor | None = None,
     ) -> torch.Tensor:
         sigmoid_gate = self.news_gate(market_emb)
+        if self.gate_mode == "learned" and self.learned_gate_head is not None and pooled_news is not None:
+            gate_input = torch.cat([market_emb, pooled_news], dim=-1)
+            alpha = self.learned_gate_head(gate_input)  # (B, 1), broadcasts over feature dim
+            self.last_learned_gate_alpha = alpha.detach()
+        else:
+            alpha = self.news_gate_alpha
         effective_gate = (
-            self.news_gate_alpha * sigmoid_gate
-            + (1.0 - self.news_gate_alpha)
+            alpha * sigmoid_gate
+            + (1.0 - alpha)
         )
         gated = attn_out * effective_gate
         return 0.5 * attn_out + 0.5 * gated
@@ -713,7 +746,7 @@ class HybridFusionPredictor(nn.Module):
             attn_out = attn_out_multi.mean(dim=1)
 
             if self.news_gate is not None:
-                attn_out = self._apply_news_gate(attn_out, market_emb)
+                attn_out = self._apply_news_gate(attn_out, market_emb, pooled_news)
 
             self.last_attn_weights = attn_weights.detach() if attn_weights is not None else None
 
@@ -724,7 +757,7 @@ class HybridFusionPredictor(nn.Module):
             attn_out = self.news_pool_proj(pooled_news_fallback)
 
             if self.news_gate is not None:
-                attn_out = self._apply_news_gate(attn_out, market_emb)
+                attn_out = self._apply_news_gate(attn_out, market_emb, pooled_news)
 
             self.last_attn_weights = None
 

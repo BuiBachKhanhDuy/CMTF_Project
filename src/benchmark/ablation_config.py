@@ -1,17 +1,17 @@
 """Ablation benchmark configuration and grid generation.
 
-Two focused study tables (see CMTF_FUSION_FINDINGS.md for the evidence behind
-the canonical CMTF design):
+Study table (see CMTF_FUSION_FINDINGS.md for the evidence behind the canonical
+CMTF design):
 
     fusion_comparison
         The main result. Backbone x fusion strategy (none / early / late / CMTF)
         across every market backbone, plus a shuffled-news placebo. Proves CMTF
         beats early/late/none and that the lift is genuine news signal.
 
-    component_ablation
-        Leave-one-out ablation from the canonical CMTF design (CMTF_CORE) on the
-        LSTM backbone. Each row changes exactly ONE thing, so every metric delta
-        is attributable to a single component / design choice.
+The leave-one-out CMTF component ablation now lives in the authoritative
+experiment registry (src/benchmark/ablation_registry.py, run via
+run_ablation_registry.py), which supersedes the old ``component_ablation`` grid
+table that used to be generated here.
 
 Each cell = one AblationConfig. Invalid cells are never generated.
 """
@@ -29,9 +29,6 @@ BACKBONE_MODELS = (
 
 # Architecture label for the renamed hybrid model
 CMTF_MODEL = "cmtf"
-
-# Optional legacy alias if you still have older cached runs / labels elsewhere
-LEGACY_HYBRID_MODEL = "hybrid_fusion"
 
 MODELS = BACKBONE_MODELS + (CMTF_MODEL,)
 
@@ -130,6 +127,15 @@ class AblationConfig:
     # Variance regularization strength
     variance_reg_coeff: float = 0.001
 
+    # News-gate mixing mode:
+    #   "fixed"   -> news_gate_alpha is a fixed scalar hyperparameter (DEFAULT,
+    #                byte-identical to every historical cached cell).
+    #   "learned" -> a small trainable gate head predicts a per-sample mixing
+    #                coefficient g in [0,1] from [market_emb, pooled_news],
+    #                replacing the fixed alpha scalar end-to-end. See
+    #                HybridFusionPredictor._apply_news_gate.
+    gate_mode: str = "fixed"
+
     def is_valid(self) -> bool:
         """Check hard constraints for this config."""
 
@@ -208,6 +214,13 @@ class AblationConfig:
             if not self.use_two_stage or not self.use_aux_loss or not self.use_variance_reg:
                 return False
 
+        # gate_mode is meaningful only for CMTF (the learned gate head lives
+        # inside HybridFusionPredictor's news-gate mixing step).
+        if self.gate_mode not in {"fixed", "learned"}:
+            return False
+        if self.fusion_type != "cmtf" and self.gate_mode != "fixed":
+            return False
+
         return True
 
     @property
@@ -230,6 +243,8 @@ class AblationConfig:
             parts.append(f"k={self.recency_gate_k}")
             parts.append(f"gate={int(self.use_news_gate)}")
             parts.append(f"galpha={self.news_gate_alpha:.2f}")
+            if self.gate_mode != "fixed":
+                parts.append(f"gm={self.gate_mode}")
             parts.append(f"ts={int(self.use_two_stage)}")
             parts.append(f"aux={int(self.use_aux_loss)}")
             parts.append(f"vreg={int(self.use_variance_reg)}")
@@ -391,43 +406,6 @@ def generate_grid(table: str = "all") -> list[AblationConfig]:
         # Placebo: shuffled-news twin of the primary LSTM CMTF cell. If the news
         # lift is genuine, this collapses toward the market-only baseline.
         cfgs.append(_cmtf("lstm", shuffle_news=True))
-
-    # --------------------------------------------------------------
-    # Table 2: Component ablation (leave-one-out from CMTF_CORE, LSTM)
-    # --------------------------------------------------------------
-    if table in ("component_ablation", "all"):
-        # Core reference (dedups with the LSTM CMTF cell in fusion_comparison).
-        cfgs.append(_cmtf("lstm"))
-
-        # -- Component knock-outs (one change each) --
-        cfgs.append(_cmtf("lstm", use_cross_attention=False))     # cross-modal attention
-        cfgs.append(_cmtf("lstm", recency_gate_k=0))              # recency gating
-        cfgs.append(_cmtf("lstm", use_news_gate=False))           # news gate
-        cfgs.append(_cmtf("lstm", use_positional_encoding=True))  # news positional enc
-        cfgs.append(_cmtf("lstm", use_aux_loss=False))            # market-aux regulariser
-        cfgs.append(_cmtf("lstm", use_variance_reg=False))        # attn-collapse guard
-
-        # -- Cross-modal interaction features (learned core + handcrafted terms) --
-        cfgs.append(_cmtf(
-            "lstm",
-            fusion_style="handcrafted",
-            use_interaction_prod=True,
-            use_interaction_diff=True,
-            use_news_context_prod=True,
-            use_cosine_sim=True,
-            use_pooled_news=True,
-        ))
-
-        # -- Design-choice ablations (establish the research gap) --
-        # Core is 'anchored_fusion'; these isolate each alternative formulation.
-        cfgs.append(_cmtf("lstm", output_mode="encoder_residual"))    # news-residual only (safe, often news-blind)
-        cfgs.append(_cmtf("lstm", output_mode="fusion_plus_news"))    # high-peak, no guard (loses DA anchor)
-        cfgs.append(_cmtf("lstm", output_mode="market_plus_fusion"))  # naive re-predict (harmful)
-        cfgs.append(_cmtf("lstm", use_two_stage=True))                # end-to-end fine-tune (gain mostly not-news)
-
-        # -- News-side ablations --
-        cfgs.append(_cmtf("lstm", news_scope="matched"))              # matched vs cross-symbol news
-        cfgs.append(_cmtf("lstm", sentiment_mode="none"))             # sentiment contribution
 
     valid = [c for c in cfgs if c.is_valid()]
     return list(dict.fromkeys(valid))

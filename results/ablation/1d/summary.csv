@@ -1,2 +1,2 @@
 table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1,degenerate_rows_excluded
-fusion_comparison,1,cmtf,cmtf(lstm),45.81,0.0405,0.02047,cmtf,"cmtf(lstm, placebo)",0.533,0.451,1
+fusion_comparison,1,lstm,lstm::early,47.03,0.0579,0.01989,cmtf,cmtf(gpt4ts),0.897,0.44,3

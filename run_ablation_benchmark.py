@@ -5,14 +5,14 @@ Tables:
     fusion_comparison
         Main result. Backbone x fusion strategy (none / early / late / CMTF)
         across every market backbone, plus a shuffled-news placebo.
-    component_ablation
-        Leave-one-out ablation from the canonical CMTF design (CMTF_CORE) on the
-        LSTM backbone. Each row changes exactly one component / design choice.
+
+The leave-one-out CMTF component ablation now lives in the authoritative
+experiment registry (src/benchmark/ablation_registry.py), run via
+run_ablation_registry.py, which supersedes the old ``component_ablation`` table.
 
 Usage:
     python run_ablation_benchmark.py
-    python run_ablation_benchmark.py --table fusion_comparison
-    python run_ablation_benchmark.py --table component_ablation --horizons 1 5
+    python run_ablation_benchmark.py --table fusion_comparison --horizons 1 5
     python run_ablation_benchmark.py --stage plot
 """
 
@@ -82,6 +82,7 @@ _CONFIG_KEY_COLS = [
     "fusion_patience",
     "news_gate_alpha",
     "variance_reg_coeff",
+    "gate_mode",
     
     "fusion_style",
     "market_query_mode",
@@ -482,6 +483,7 @@ def _run_table(
     model_filter: str | None = None,
     use_cache: bool = True,
     gate: bool = False,
+    gate_coverage: float | None = 0.25,
 ) -> pd.DataFrame:
     """Run all cells for one table and return results DataFrame."""
     configs = generate_grid(table=table)
@@ -515,6 +517,7 @@ def _run_table(
                     use_cache=use_cache,
                     hpo_params=hpo_params,
                     compute_gate=gate,
+                    gate_coverage=gate_coverage,
                 )
                 row = {
                     "model_name": cfg.model_name,
@@ -557,6 +560,7 @@ def _run_table(
                     "fusion_patience": cfg.fusion_patience,
                     "news_gate_alpha": cfg.news_gate_alpha,
                     "variance_reg_coeff": cfg.variance_reg_coeff,
+                    "gate_mode": cfg.gate_mode,
 
                     **metrics,
                 }
@@ -606,6 +610,7 @@ def _run_table(
                     "fusion_patience": cfg.fusion_patience,
                     "news_gate_alpha": cfg.news_gate_alpha,
                     "variance_reg_coeff": cfg.variance_reg_coeff,
+                    "gate_mode": cfg.gate_mode,
 
                     "seed": seed,
                     "error": repr(e),
@@ -648,19 +653,6 @@ def _format_setting(row: pd.Series, table: str) -> str:
             suffix = ", placebo" if is_placebo else ""
             return f"cmtf({row.get('market_encoder_name', 'na')}{suffix})"
         return f"{row.get('model_name')}::{row.get('fusion_type')}"
-
-    if table == "component_ablation":
-        return (
-            f"cmtf(om={row.get('output_mode')}, "
-            f"ts={int(bool(row.get('use_two_stage', True)))}, "
-            f"xattn={int(bool(row.get('use_cross_attention', True)))}, "
-            f"gate={int(bool(row.get('use_news_gate', True)))}, "
-            f"pe={int(bool(row.get('use_positional_encoding', True)))}, "
-            f"k={row.get('recency_gate_k')}, "
-            f"style={row.get('fusion_style')}, "
-            f"ns={row.get('news_scope')}, "
-            f"sent={row.get('sentiment_mode')})"
-        )
 
     return str(row.get("fusion_type", ""))
 
@@ -888,7 +880,6 @@ def _regenerate_plots(horizon: int) -> None:
     hdir = _horizon_dir(horizon)
     for table in (
         "fusion_comparison",
-        "component_ablation",
     ):
         csv_path = hdir / f"{table}.csv"
         if not csv_path.exists():
@@ -1015,7 +1006,6 @@ def main() -> None:
         "--table",
         choices=[
             "fusion_comparison",
-            "component_ablation",
             "all",
         ],
         default="all",
@@ -1052,7 +1042,19 @@ def main() -> None:
              "columns. Forces fresh (non-cached) predictions since the gate needs validation "
              "predictions that the on-disk cache does not store.",
     )
+    parser.add_argument(
+        "--gate-coverage",
+        type=float,
+        default=0.25,
+        help="Fixed top-fraction-by-confidence every cell trades under --gate (default 0.25 "
+             "= top 25%%). Fixing this across cells keeps the comparison apples-to-apples — "
+             "each model is scored on the SAME operating point instead of a per-model "
+             "best-coverage search that lets different models trade different fractions of "
+             "the book. Pass --gate-coverage -1 to restore the legacy per-model auto-search.",
+    )
     args = parser.parse_args()
+    if args.gate_coverage is not None and args.gate_coverage < 0:
+        args.gate_coverage = None  # opt back into the legacy per-model auto-search
 
     _configure_logging(verbose=args.verbose)
     _ABLATION_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1080,6 +1082,11 @@ def main() -> None:
     logger.warning("Skip Chronos: {}", args.skip_chronos)
     logger.warning("Prediction cache: {}", "OFF (--no-cache)" if args.no_cache else "ON")
     logger.warning("Decision-gate layer: {}", "ON (--gate)" if args.gate else "OFF")
+    if args.gate:
+        logger.warning(
+            "Gate coverage: {}",
+            f"FIXED @ {args.gate_coverage:.0%} (apples-to-apples)" if args.gate_coverage is not None else "per-model auto-search (legacy, NOT apples-to-apples)",
+        )
     logger.warning("═════════════════════════════════════════════")
 
     # A model filter that can never select a Chronos-backed cell (baseline
@@ -1096,7 +1103,7 @@ def main() -> None:
 
     tables_to_run_global = (
         [args.table] if args.table != "all"
-        else ["fusion_comparison", "component_ablation"]
+        else ["fusion_comparison"]
     )
 
     for horizon in tqdm(
@@ -1195,6 +1202,7 @@ def main() -> None:
                     model_filter=args.model,
                     use_cache=not args.no_cache,
                     gate=args.gate,
+                    gate_coverage=args.gate_coverage,
                 )
                 if not df_seed.empty:
                     df_seed["run_seed"] = seed

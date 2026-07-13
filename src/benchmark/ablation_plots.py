@@ -8,7 +8,7 @@ Public API
 ----------
 plot_table_charts(df, table, horizon, figures_dir)
     Generates both charts for all primary metrics. Called from run_ablation_benchmark
-    with the two study tables: 'fusion_comparison' and 'component_ablation'.
+    for the 'fusion_comparison' study table.
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ _PRIMARY_METRICS: list[tuple[str, bool, str]] = [
 
 _TABLE_TITLE: dict[str, str] = {
     "fusion_comparison": "Fusion Comparison",
-    "component_ablation": "CMTF Component Ablation",
 }
 
 def _color_for(model: str) -> str:
@@ -91,42 +90,6 @@ def _resolve_plot_category(df: pd.DataFrame, table: str) -> tuple[pd.DataFrame, 
 
         return plot_df, "_plot_category"
 
-    if table == "component_ablation":
-        required_cols = {
-            "use_cross_attention",
-            "recency_gate_k",
-            "use_news_gate",
-            "use_positional_encoding",
-            "use_aux_loss",
-            "use_variance_reg",
-            "use_two_stage",
-            "output_mode",
-            "fusion_style",
-            "news_scope",
-            "sentiment_mode",
-        }
-        missing = required_cols - set(plot_df.columns)
-        if missing:
-            raise KeyError(f"component_ablation plotting missing columns: {sorted(missing)}")
-
-        def _component_label(row):
-            return (
-                f"xattn={int(_truthy(row['use_cross_attention'], True))}|"
-                f"k={int(row['recency_gate_k'])}|"
-                f"gate={int(_truthy(row['use_news_gate'], True))}|"
-                f"pe={int(_truthy(row['use_positional_encoding'], True))}|"
-                f"aux={int(_truthy(row['use_aux_loss'], True))}|"
-                f"vr={int(_truthy(row['use_variance_reg'], True))}|"
-                f"ts={int(_truthy(row['use_two_stage'], True))}|"
-                f"om={row['output_mode']}|"
-                f"style={row['fusion_style']}|"
-                f"ns={row['news_scope']}|"
-                f"sent={row['sentiment_mode']}"
-            )
-
-        plot_df["_plot_category"] = plot_df.apply(_component_label, axis=1)
-        return plot_df, "_plot_category"
-
     raise KeyError(f"Unknown table for plotting: {table}")
 
 def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
@@ -142,30 +105,6 @@ def _baseline_mask(df: pd.DataFrame, table: str) -> pd.Series:
         if "fusion_type" in df.columns:
             mask = df["fusion_type"].astype(str) == "none"
         return mask
-
-    if table == "component_ablation":
-        # Baseline = the canonical CMTF_CORE row (single change per ablation row).
-        needed = [
-            ("use_cross_attention", True),
-            ("recency_gate_k", 3),
-            ("use_news_gate", True),
-            ("use_positional_encoding", True),
-                        ("use_aux_loss", True),
-            ("use_variance_reg", True),
-            ("use_two_stage", False),
-            ("output_mode", "anchored_fusion"),
-
-            ("fusion_style", "learned"),
-            ("news_scope", "matched"),
-            ("sentiment_mode", "scalars"),
-        ]
-        mask = pd.Series([True] * len(df), index=df.index)
-        for col, val in needed:
-            if col in df.columns:
-                mask &= df[col] == val
-            else:
-                mask &= False
-                return mask
 
     return mask
 

@@ -1039,6 +1039,7 @@ def run_ablation_cell(
     artifacts: dict | None = None,
     compute_gate: bool = False,
     gate_conviction: bool = True,
+    gate_coverage: float | None = 0.25,
 ) -> dict[str, float]:
     assert cfg.is_valid(), f"Invalid config: {cfg}"
     logger.info("▶ Running cell: {} (seed={})", cfg.cell_id, seed)
@@ -1506,6 +1507,7 @@ def run_ablation_cell(
             market_patience=cfg.market_patience,
             fusion_patience=cfg.fusion_patience,
             news_gate_alpha=cfg.news_gate_alpha,
+            gate_mode=cfg.gate_mode,
             variance_reg_coeff=cfg.variance_reg_coeff,
             output_mode=cfg.output_mode,
             device=device,
@@ -1616,9 +1618,25 @@ def run_ablation_cell(
     if compute_gate:
         val_pred = artifacts.get("val_pred") if artifacts else None
         if val_pred is not None:
-            from .decision_policy import calibrate_gate, evaluate_policy
+            from .decision_policy import (
+                calibrate_gate,
+                calibrate_gate_fixed_coverage,
+                evaluate_policy,
+            )
 
-            policy = calibrate_gate(val_pred, y_val, conviction=gate_conviction)
+            if gate_coverage is not None:
+                # Fixed coverage across every cell (apples-to-apples): each
+                # model trades the SAME top-fraction of its own confidence
+                # ranking, so gated DA/Sharpe/IC compare confidence-ranking
+                # QUALITY rather than rewarding a model for how aggressively
+                # a per-model coverage search happened to gate it.
+                policy = calibrate_gate_fixed_coverage(
+                    val_pred, y_val, coverage=gate_coverage, conviction=gate_conviction
+                )
+            else:
+                # Legacy per-model best-coverage search (NOT apples-to-apples
+                # across cells — kept only for single-model deployment tuning).
+                policy = calibrate_gate(val_pred, y_val, conviction=gate_conviction)
             gated = evaluate_policy(y_test, preds, policy, horizon=horizon)
             metrics["DA%_gated"] = gated["DA%"]
             metrics["Sharpe_gated"] = gated["Sharpe"]

@@ -1,4 +1,9 @@
-"""Tests for ablation config grid generation (fusion_comparison + component_ablation)."""
+"""Tests for ablation config grid generation (fusion_comparison table).
+
+The leave-one-out CMTF component ablation now lives in the authoritative
+experiment registry (src/benchmark/ablation_registry.py); the old
+``component_ablation`` grid table has been removed from ablation_config.
+"""
 
 
 from __future__ import annotations
@@ -87,34 +92,7 @@ class TestFusionComparison:
         assert len(generate_grid("fusion_comparison")) == 15
 
 
-class TestComponentAblation:
-    def test_all_cmtf_lstm(self):
-        grid = generate_grid("component_ablation")
-        assert all(c.fusion_type == "cmtf" for c in grid)
-        assert all(c.market_encoder_name == "lstm" for c in grid)
-
-    def test_has_component_knockouts(self):
-        grid = generate_grid("component_ablation")
-        assert any(not c.use_cross_attention for c in grid)
-        assert any(c.recency_gate_k == 0 for c in grid)
-        assert any(not c.use_news_gate for c in grid)
-        assert any(not c.use_positional_encoding for c in grid)
-        assert any(not c.use_aux_loss for c in grid)
-        assert any(not c.use_variance_reg for c in grid)
-
-    def test_has_all_output_modes(self):
-        grid = generate_grid("component_ablation")
-        modes = {c.output_mode for c in grid}
-        assert modes == {
-            "anchored_fusion", "encoder_residual",
-            "fusion_plus_news", "market_plus_fusion",
-        }
-
-    def test_has_two_stage_variant(self):
-        grid = generate_grid("component_ablation")
-        assert any(c.use_two_stage for c in grid)
-        assert any(not c.use_two_stage for c in grid)
-
+class TestCoreDefaults:
     def test_core_default_is_anchored_fusion_single_stage(self):
         assert CMTF_CORE["output_mode"] == "anchored_fusion"
         assert CMTF_CORE["use_two_stage"] is False
@@ -124,13 +102,17 @@ class TestComponentAblation:
 
 class TestGenerateGrid:
     def test_all_cells_valid(self):
-        for table in ("fusion_comparison", "component_ablation", "all"):
+        for table in ("fusion_comparison", "all"):
             assert all(c.is_valid() for c in generate_grid(table))
 
     def test_no_duplicates(self):
-        for table in ("fusion_comparison", "component_ablation", "all"):
+        for table in ("fusion_comparison", "all"):
             cell_ids = [c.cell_id for c in generate_grid(table)]
             assert len(cell_ids) == len(set(cell_ids))
+
+    def test_component_ablation_table_removed(self):
+        # The legacy component_ablation grid now lives in ablation_registry.
+        assert generate_grid("component_ablation") == []
 
     def test_all_cmtf_cells_share_core_recipe(self):
         """Every CMTF cell shares CMTF_CORE's training recipe (enables cache sharing)."""

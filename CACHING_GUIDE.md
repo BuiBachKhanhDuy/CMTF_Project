@@ -117,8 +117,9 @@ L1–L3. The following were considered and deferred with rationale:
 ```powershell
 & "$PWD\.venv\Scripts\python.exe" run_ablation_benchmark.py
 ```
-Defaults: `--table all --horizons 1 5 20 --seeds 42 123 456` (tables
-`fusion_comparison` + `component_ablation`). On the **first**
+Defaults: `--table all --horizons 1 5 20 --seeds 42 123 456` (table
+`fusion_comparison`; the CMTF component ablation now lives in the authoritative
+registry, run via `run_ablation_registry.py`). On the **first**
 `unitstd_v2` run, all L1/L2/L3 caches are cold and will be (re)computed; the
 banner logs `Prediction cache: ON`.
 

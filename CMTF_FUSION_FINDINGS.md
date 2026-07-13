@@ -55,8 +55,9 @@ Metrics (priority order): **DA** directional accuracy → **Sharpe** (sign-based
 4. **[SUPERSEDED, see correction above]** There is no λ-gate in the shipped
    model, so there is no "picks λ=0 / falls back to market-only" behaviour to
    report. The live model always uses its full fused prediction; whether that
-   is good or bad is measured directly by `fusion_comparison`/`component_ablation`
-   (see `results/ablation/`), not by a gate's admit/reject decision.
+   is good or bad is measured directly by `fusion_comparison` and the CMTF
+   component ablation registry (see `results/ablation/`), not by a gate's
+   admit/reject decision.
 
 ---
 
@@ -149,7 +150,8 @@ the fusion head to predict the full news-using target directly
 (`final_pred = fusion_pred + news_residual`) and **deploy that value with no
 post-hoc blend, gate, or lambda** — `predict()` always returns it as-is. There is
 no `w` knob at inference; whatever DA/Sharpe/IC the trained head achieves on the
-test set is exactly what gets reported in `fusion_comparison`/`component_ablation`.
+test set is exactly what gets reported in `fusion_comparison` and the CMTF
+component ablation registry.
 
 ---
 

@@ -136,6 +136,49 @@ def calibrate_gate(
     return best
 
 
+def calibrate_gate_fixed_coverage(
+    val_pred: np.ndarray,
+    val_truth: np.ndarray,
+    coverage: float = 0.25,
+    conviction: bool = True,
+) -> GatePolicy:
+    """Calibrate a :class:`GatePolicy` at a FIXED target coverage (apples-to-apples).
+
+    ``calibrate_gate`` searches a coverage grid per-model and keeps whichever
+    coverage scores best on validation. That is the right *deployment* policy
+    for a single model, but it is NOT a fair basis for cross-model comparison:
+    two models end up trading different fractions of the book (e.g. one at 25%,
+    another at 60%), so their gated DA/Sharpe/IC are different operating points,
+    not the same policy. This function fixes every model to the SAME coverage
+    (e.g. "trade the top 25% most confident predictions"), so the comparison
+    isolates the *quality* of each model's confidence ranking rather than
+    rewarding/punishing it for its raw output scale or how aggressively the
+    auto-search happened to gate it.
+
+    ``tau`` is still frozen on VALIDATION only (the ``(1-coverage)`` quantile of
+    ``|val_pred|``) — the test set never enters calibration.
+    """
+    val_pred = np.asarray(val_pred, dtype=np.float64).ravel()
+    val_truth = np.asarray(val_truth, dtype=np.float64).ravel()
+    abs_pred = np.abs(val_pred)
+
+    coverage = float(np.clip(coverage, 1e-6, 1.0))
+    tau = 0.0 if coverage >= 1.0 else float(np.quantile(abs_pred, 1.0 - coverage))
+    mask = _traded_mask(val_pred, tau)
+    realised_cov = float(np.mean(mask)) if mask.size else 0.0
+    conv_scale = float(np.median(abs_pred[mask])) if mask.any() else 1.0
+    conv_scale = conv_scale or 1.0
+    score = float(selection_score(val_pred[mask], val_truth[mask])) if mask.sum() >= 3 else float("nan")
+
+    return GatePolicy(
+        tau=tau,
+        conviction=conviction,
+        conviction_scale=conv_scale,
+        coverage=realised_cov,
+        val_score=score,
+    )
+
+
 def apply_positions(pred: np.ndarray, policy: GatePolicy) -> np.ndarray:
     """Map raw predictions to signed positions under ``policy``.
 
