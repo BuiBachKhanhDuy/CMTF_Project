@@ -22,6 +22,7 @@ import copy
 import dataclasses
 import hashlib
 import json
+import os
 import random
 import time
 from pathlib import Path
@@ -1555,6 +1556,27 @@ def run_ablation_cell(
                 ),
             )
 
+        # Opt-in DEPLOY save (env SAVE_DEPLOY_MODEL=1): persist the full trained CMTF
+        # so the product can run LIVE inference instead of frozen-cache lookup. Saves
+        # the whole nn.Module object (market encoder + news projector + fusion head)
+        # plus a metadata sidecar for the feature schema. Gated so normal registry
+        # runs are untouched (R2). Deterministic w.r.t. seed => reproduces cached preds.
+        if os.environ.get("SAVE_DEPLOY_MODEL") == "1":
+            deploy_dir = Path("cache/deploy_models")
+            deploy_dir.mkdir(parents=True, exist_ok=True)
+            enc = cfg.market_encoder_name
+            stem = f"cmtf_{enc}_{horizon}d_seed{seed}"
+            torch.save(hybrid_model, str(deploy_dir / f"{stem}.pt"))
+            (deploy_dir / f"{stem}.meta.json").write_text(json.dumps({
+                "config_hash": _config_hash(cfg), "cell_id": cfg.cell_id,
+                "market_encoder_name": enc, "horizon": int(horizon), "seed": int(seed),
+                "input_dim": int(input_dim), "seq_len": int(mw_train.shape[1]),
+                "raw_news_dim": int(raw_news_dim),
+                "market_cols": list(effective_market_cols),
+                "target_scale": float(target_scale), "news_scope": cfg.news_scope,
+            }, indent=2), encoding="utf-8")
+            logger.info("DEPLOY: saved champion model → {}", deploy_dir / f"{stem}.pt")
+
     else:
         raise ValueError(f"Unknown fusion type: {cfg.fusion_type}")
 
@@ -1715,5 +1737,37 @@ def run_ablation_cell(
                 np.save(str(truth_file), y_test)
         else:
             np.save(str(truth_file), y_test)
+
+        # Per-row TEST timestamps, aligned 1:1 with preds/truth. Needed to group
+        # predictions by date for per-date cross-sectional IC (the primary rank
+        # metric). Additive + horizon-keyed; refreshed whenever the pipeline moves.
+        times_test = splits["test"].get("times")
+        if times_test is not None:
+            np.save(str(pred_dir / f"test_times__{horizon}d.npy"), np.asarray(times_test))
+        # Per-row symbol labels (aligned 1:1 with preds/truth) so the MAS can locate
+        # a single name's frozen prediction by (symbol, date). Additive.
+        symbols_test = splits["test"].get("symbols")
+        if symbols_test is not None:
+            np.save(str(pred_dir / f"test_symbols__{horizon}d.npy"), np.asarray(symbols_test, dtype=object))
+
+        # Per-seed VALIDATION predictions + val truth/times. The MAS `calibrate`
+        # CLI freezes its GatePolicy from these (leak-free: VAL only, never TEST),
+        # so the deployed gate is calibrated on the exact same frozen predictions
+        # the registry gated in-memory — runtime == research (plan §4, §11.5).
+        val_pred_cached = artifacts.get("val_pred") if artifacts else None
+        if val_pred_cached is not None:
+            np.save(
+                str(pred_dir / f"{short_id}__seed{seed}__val__{horizon}d.npy"),
+                np.asarray(val_pred_cached),
+            )
+            val_truth_file = pred_dir / f"val_truth__{horizon}d.npy"
+            if not val_truth_file.exists():
+                np.save(str(val_truth_file), np.asarray(y_val))
+            times_val = splits["val"].get("times")
+            if times_val is not None:
+                np.save(str(pred_dir / f"val_times__{horizon}d.npy"), np.asarray(times_val))
+            symbols_val = splits["val"].get("symbols")
+            if symbols_val is not None:
+                np.save(str(pred_dir / f"val_symbols__{horizon}d.npy"), np.asarray(symbols_val, dtype=object))
 
     return metrics

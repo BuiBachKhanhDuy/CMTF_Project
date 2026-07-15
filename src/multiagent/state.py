@@ -2,7 +2,7 @@
 
 Topology:
     orchestrator → [market_agent | news_agent] → predict_agent
-    → fusion_agent → risk_agent → answer_agent → END
+    → gate_agent → risk_agent (veto) → narrator → critic → END
 """
 
 from __future__ import annotations
@@ -30,8 +30,16 @@ class MultiAgentState(TypedDict, total=False):
     query_text: str
     symbol: str
     prediction_time: str  # ISO date e.g. "2025-03-31"
+    data_end: str  # optional: extend the live-inference data fetch to >= prediction_time
     target_horizon_days: int  # 1, 5, or 20
     sequence_len: int  # default 30
+
+    # --- Orchestrator routing output ---
+    query_intent: str  # "prediction" | "comparison" | "explanation" | "research"
+    target_symbols: list[str]  # symbols to act on (single for prediction, N for comparison)
+    target_horizon: str  # e.g. "5d"
+    aspect_filter: str  # optional topic filter for research/news
+    route_reason: str  # why this branch was chosen (never a silent default — R1)
 
     # --- Orchestrator output (data fetch) ---
     close_window: np.ndarray  # (seq_len,)
@@ -53,30 +61,49 @@ class MultiAgentState(TypedDict, total=False):
 
     # --- Predict agent output ---
     baseline_pred: float
-    final_pred: float
-    adjusted_pred: float  # consensus-corrected prediction
-    mkt_adjusted_pred: float  # market-agent-only correction
-    news_adjusted_pred: float  # news-agent-only correction
+    final_pred: float  # seed-mean (metadata only; NOT what the gate consumes)
+    gate_pred: float  # RAW magnitude the gate consumes (single-seed or mean per config)
     seed_preds: list[float]
     news_residual: float
     attn_weights: np.ndarray  # (seq_len,) mean attention
     news_weight: float
-    predict_confidence: float  # derived from seed agreement + pred strength
-    model_evidence: dict[str, Any]  # full evidence payload for answer agent
+    predict_confidence: float  # demoted to metadata — the gate does NOT use this
+    model_evidence: dict[str, Any]  # full evidence payload (incl. agreement annotations)
     model_proposal: dict[str, Any]  # direction, score, confidence, rationale
 
-    # --- Fusion agent output ---
-    fusion_decision: dict[str, Any]  # fused decision trace over model+market+news
+    # --- Gate agent output (the decision core) ---
+    gated_action: str  # "long" | "short" | "abstain" (gate's decision, pre-veto)
+    gate_tau: float
+    gate_coverage: float
+    gate_val_score: float
+    gate_reason: str
 
-    # --- Risk agent output (final decision authority) ---
-    action: str  # "long" | "short" | "flat"
-    position_scale: float  # [0.0, 1.0]
-    final_confidence: float
-    risk_checks: dict[str, Any]  # individual check results
+    # --- Risk agent output (one-way safety veto only) ---
+    action: str  # final action: "long" | "short" | "abstain"
+    position_scale: float  # signed conviction size (gate) or 0 (abstain/veto)
+    risk_vetoed: bool
+    veto_reasons: list[str]
     decision_reasoning: str
 
-    # --- Answer agent output ---
-    explanation_text_vi: str
+    # --- Metalabel agent output (one-way qualitative event-flag veto) ---
+    metalabel_flags: list[str]
+    metalabel_vetoed: bool
+
+    # --- Rank agent output (COMPARISON branch) ---
+    ranking: list[dict[str, Any]]  # one row per symbol, sorted by conviction
+    rank_longs: list[str]
+    rank_shorts: list[str]
+    rank_abstained: list[str]
+
+    # --- Research agent output (RESEARCH branch) ---
+    retrieved_docs: list[dict[str, Any]]
+    research_summary_vi: str
+
+    # --- Narrator + critic output ---
+    answer_text: str  # final Vietnamese answer (verified)
+    grounded_answer: str  # deterministic state-only answer (critic fallback + reference)
+    critic_status: str  # "ok" | "regenerated" | "failed"
+    critic_findings: list[str]
 
     # --- Audit ---
     data_cutoff: str
@@ -84,5 +111,5 @@ class MultiAgentState(TypedDict, total=False):
     errors: Annotated[list[str], _merge_lists]
     warnings: Annotated[list[str], _merge_lists]
     node_timings: Annotated[dict[str, float], _merge_dicts]
-    policy_version: int
+    trace: Annotated[list[dict[str, Any]], _merge_lists]
     decision_id: str

@@ -10,13 +10,14 @@ import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 from loguru import logger
 from tqdm import tqdm
 
 from src.sentiment import (
-    Phase2PhoBERTInferencer,
+    PhoBERTInferencer,
     aggregate_title_sentiment_scores,
     flatten_sentiment_scores,
 )
@@ -24,6 +25,41 @@ from src.sentiment import (
 _NEWS_DIM = 768
 _DEFAULT_MODEL_NAME = "dangvantuan/vietnamese-embedding"
 _EMBEDDINGS_CACHE_DIR = Path("./cache/embeddings")
+
+# Per-ROW embedding cache (keyed on that row's own symbol/date/text content, not the
+# whole dataframe). The whole-dataframe cache above (`encode_dataframe`'s cache_key)
+# invalidates completely whenever ANY row changes — extending the pipeline's `end`
+# date by even one day changes len(df)/date range/content hash, forcing a full
+# re-encode of the entire historical corpus (confirmed: ~35-45 min for ~11k rows on
+# CPU) every time a live-inference query needs one new day. This layer sits between
+# that whole-df cache and the model: rows whose own content is unchanged are served
+# from here regardless of what else changed in the surrounding dataframe, so a
+# live-inference rebuild only ever pays for genuinely NEW rows.
+_ROW_CACHE_PATH = _EMBEDDINGS_CACHE_DIR / "row_cache_v1.joblib"
+
+
+def _row_cache_key(symbol: Any, date: Any, texts: list[str]) -> str:
+    h = hashlib.sha256()
+    h.update(b"news_row_cache_v1")
+    h.update(str(symbol).encode())
+    h.update(str(date).encode())
+    for t in texts:
+        h.update(str(t).encode())
+    return h.hexdigest()
+
+
+def _load_row_cache() -> dict[str, dict[str, Any]]:
+    if _ROW_CACHE_PATH.exists():
+        try:
+            return joblib.load(_ROW_CACHE_PATH)
+        except Exception:
+            logger.warning("Corrupt row embedding cache — starting fresh")
+    return {}
+
+
+def _save_row_cache(cache: dict[str, dict[str, Any]]) -> None:
+    _EMBEDDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(cache, _ROW_CACHE_PATH, compress=3)
 SENTIMENT_FEATURE_COLUMNS = (
     "sentiment_mean",
     "sentiment_max_abs",
@@ -51,7 +87,7 @@ class NewsEncoder:
         model_name: str = _DEFAULT_MODEL_NAME,
         batch_size: int = 32,
         device: Optional[str] = None,
-        sentiment_inferencer: Phase2PhoBERTInferencer | None = None,
+        sentiment_inferencer: PhoBERTInferencer | None = None,
         sentiment_batch_size: int = 32,
         use_weighted_pooling: bool = True,
         export_hybrid_embedding: bool = False,
@@ -226,6 +262,17 @@ class NewsEncoder:
         hybrid_embeddings: list[np.ndarray] = []
         sentiment_records: list[dict[str, float]] = []
 
+        # Per-row cache is only safe to use in the simple (no sentiment-weighted
+        # pooling) path: sentiment scores feed into `encode_window` as pooling
+        # weights, and caching would need to key on those too. Sentiment fusion is
+        # off by default in production (`news_sentiment_enabled=False`), so this
+        # covers the common case; the sentiment-enabled path re-encodes as before.
+        use_row_cache = use_cache and self.sentiment_inferencer is None
+        row_cache = _load_row_cache() if use_row_cache else {}
+        row_cache_hits = 0
+        has_symbol_col = "symbol" in df.columns
+        has_time_col = "time" in df.columns
+
         logger.info("Encoding news for {} rows …", len(df))
         for pos in tqdm(range(len(df)), desc="Encoding news"):
             texts = df.iloc[pos][text_col]
@@ -236,11 +283,29 @@ class NewsEncoder:
             # (not content articles), so only use when lengths agree.
             row_texts = texts if isinstance(texts, list) else []
             row_weights = sentiment_scores_by_row[pos]
-            result = self.encode_window(
-                texts=row_texts,
-                null_mask=bool(is_null),
-                weights=row_weights if len(row_weights) == len(row_texts) else None,
-            )
+
+            row_key = None
+            if use_row_cache:
+                sym = df.iloc[pos]["symbol"] if has_symbol_col else ""
+                tm = df.iloc[pos]["time"] if has_time_col else pos
+                row_key = _row_cache_key(sym, tm, row_texts if not is_null else [])
+                cached_row = row_cache.get(row_key)
+                if cached_row is not None:
+                    result = {"embedding": cached_row["embedding"], "has_news": cached_row["has_news"]}
+                    row_cache_hits += 1
+                else:
+                    result = self.encode_window(
+                        texts=row_texts,
+                        null_mask=bool(is_null),
+                        weights=row_weights if len(row_weights) == len(row_texts) else None,
+                    )
+                    row_cache[row_key] = {"embedding": result["embedding"], "has_news": result["has_news"]}
+            else:
+                result = self.encode_window(
+                    texts=row_texts,
+                    null_mask=bool(is_null),
+                    weights=row_weights if len(row_weights) == len(row_texts) else None,
+                )
             embeddings.append(result["embedding"])
             has_news_flags.append(result["has_news"])
 
@@ -257,6 +322,15 @@ class NewsEncoder:
                     ]
                 ).astype(np.float32)
                 hybrid_embeddings.append(hybrid_vec)
+        if use_row_cache:
+            new_rows = len(df) - row_cache_hits
+            logger.info(
+                "Row embedding cache: {}/{} rows reused, {} newly encoded",
+                row_cache_hits, len(df), new_rows,
+            )
+            if new_rows > 0:
+                _save_row_cache(row_cache)
+
         df["news_emb"] = embeddings
         df["has_news"] = has_news_flags
         sentiment_frame = pd.DataFrame(sentiment_records, index=df.index)

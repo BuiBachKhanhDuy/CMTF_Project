@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "tau": 0.01800279183468471,
+    "conviction": true,
+    "conviction_scale": 0.023902720771729946,
+    "coverage": 0.25,
+    "val_score": 1.1048372462629592
+  },
+  "symbol": "VN",
+  "horizon": 5,
+  "cell_id": "0",
+  "config_hash": "60f71e5ce5",
+  "cmtf_version": "v4",
+  "backbone_version": "v3",
+  "calibrated_on": "validation",
+  "calibration_coverage": 0.25,
+  "gate_on_raw_seed": false,
+  "calibration_seed": null,
+  "n_val": 868,
+  "calibration_date": "2026-07-13T13:03:36Z"
+}

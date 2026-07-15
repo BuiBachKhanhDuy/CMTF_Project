@@ -1,166 +1,79 @@
-"""Tests for the Risk Agent — tiered position sizing."""
+"""Tests for the Risk Agent — one-way safety veto (plan §3.7).
 
-import pytest
+The invariant under test: risk can ONLY downgrade a trade to abstain. It can never
+turn an abstain into a trade, never up-size, never flip long↔short.
+"""
 
-from src.multiagent.agents.risk_agent import (
-    risk_agent_node,
-    _determine_action,
-    _tiered_risk,
-)
+from src.multiagent.agents.risk_agent import risk_agent_node
+from src.multiagent.config import MultiAgentConfig
 
-
-_POLICY = {
-    "version": 3,
-    "buy_threshold": 0.012,
-    "sell_threshold": -0.012,
-    "weak_signal": 0.001,
-    "hard_block_vol": 40.0,
-    "hard_block_drawdown": 20.0,
-    "hard_block_min_confidence": 0.10,
-    "reduced_vol": 30.0,
-    "reduced_min_confidence": 0.25,
-    "min_news_coverage": 0,
-    "max_staleness_frac": 1.0,
-}
+CFG = MultiAgentConfig()
 
 
-class TestDetermineAction:
-    def test_strong_buy(self):
-        assert _determine_action(0.02, 0.012, -0.012, 0.001) == "long"
-
-    def test_strong_sell(self):
-        assert _determine_action(-0.02, 0.012, -0.012, 0.001) == "short"
-
-    def test_weak_signal_flat(self):
-        assert _determine_action(0.0005, 0.012, -0.012, 0.001) == "flat"
-
-    def test_hold_zone_flat(self):
-        assert _determine_action(0.008, 0.012, -0.012, 0.001) == "flat"
+def _state(gated_action, position_scale, vol=20.0, dd=5.0):
+    return {
+        "gated_action": gated_action,
+        "position_scale": position_scale,
+        "volatility_metrics": {"vol_20d": vol, "max_drawdown_pct": dd, "trend_pct": 2.0},
+        "node_timings": {},
+    }
 
 
-class TestTieredRisk:
-    """Test the three tiers: hard block, reduced, full."""
-
-    # --- Hard block tier ---
-    def test_hard_block_high_vol(self):
-        r = _tiered_risk(0.03, 0.8, 45.0, 5.0, _POLICY)
-        assert r["tier"] == "blocked"
-        assert r["action"] == "flat"
-        assert r["position_scale"] == 0.0
-        assert any("vol" in s for s in r["hard_block_reasons"])
-
-    def test_hard_block_high_drawdown(self):
-        r = _tiered_risk(0.03, 0.8, 20.0, 25.0, _POLICY)
-        assert r["tier"] == "blocked"
-        assert r["action"] == "flat"
-        assert r["position_scale"] == 0.0
-        assert any("dd" in s for s in r["hard_block_reasons"])
-
-    def test_hard_block_low_confidence(self):
-        r = _tiered_risk(0.03, 0.05, 20.0, 5.0, _POLICY)
-        assert r["tier"] == "blocked"
-        assert r["action"] == "flat"
-        assert r["position_scale"] == 0.0
-        assert any("conf" in s for s in r["hard_block_reasons"])
-
-    def test_weak_signal_is_flat(self):
-        """Weak signal → flat_signal tier, not blocked."""
-        r = _tiered_risk(0.0005, 0.8, 20.0, 5.0, _POLICY)
-        assert r["tier"] == "flat_signal"
-        assert r["action"] == "flat"
-        assert r["position_scale"] == 0.0
-
-    # --- Reduced tier ---
-    def test_reduced_low_confidence(self):
-        """Confidence above hard block but below reduced threshold → reduced."""
-        r = _tiered_risk(0.03, 0.15, 20.0, 5.0, _POLICY)
-        assert r["tier"] == "reduced"
+class TestVetoPassThrough:
+    def test_calm_market_passes_long(self):
+        r = risk_agent_node(_state("long", 0.8), CFG)
         assert r["action"] == "long"
-        assert 0.3 <= r["position_scale"] <= 0.5
+        assert r["position_scale"] == 0.8
+        assert r["risk_vetoed"] is False
 
-    def test_reduced_moderate_vol(self):
-        """Vol above reduced threshold but below hard block → reduced."""
-        r = _tiered_risk(0.03, 0.5, 35.0, 5.0, _POLICY)
-        assert r["tier"] == "reduced"
-        assert r["action"] == "long"
-        assert 0.3 <= r["position_scale"] <= 0.5
-
-    def test_reduced_scale_increases_with_confidence(self):
-        """Higher confidence within reduced tier → higher scale (closer to 0.5)."""
-        r_low = _tiered_risk(0.03, 0.12, 20.0, 5.0, _POLICY)
-        r_high = _tiered_risk(0.03, 0.24, 20.0, 5.0, _POLICY)
-        assert r_low["tier"] == "reduced"
-        assert r_high["tier"] == "reduced"
-        assert r_high["position_scale"] > r_low["position_scale"]
-
-    # --- Full tier ---
-    def test_full_position_high_confidence(self):
-        """High confidence + calm market → full tier, scale ∝ confidence."""
-        r = _tiered_risk(0.03, 0.7, 20.0, 5.0, _POLICY)
-        assert r["tier"] == "full"
-        assert r["action"] == "long"
-        assert r["position_scale"] == 0.7
-
-    def test_full_position_short(self):
-        r = _tiered_risk(-0.03, 0.6, 15.0, 3.0, _POLICY)
-        assert r["tier"] == "full"
+    def test_calm_market_passes_short(self):
+        r = risk_agent_node(_state("short", -0.6), CFG)
         assert r["action"] == "short"
-        assert r["position_scale"] == 0.6
-
-    def test_full_scale_capped_at_one(self):
-        """Confidence above 1.0 edge case → scale capped at 1.0."""
-        r = _tiered_risk(0.03, 1.0, 15.0, 3.0, _POLICY)
-        assert r["tier"] == "full"
-        assert r["position_scale"] == 1.0
-
-    def test_full_scale_floor_at_03(self):
-        """Confidence 0.25 (just at threshold) → scale = max(0.3, 0.25) = 0.3."""
-        r = _tiered_risk(0.03, 0.25, 20.0, 5.0, _POLICY)
-        assert r["tier"] == "full"
-        assert r["position_scale"] == 0.3
+        assert r["position_scale"] == -0.6
+        assert r["risk_vetoed"] is False
 
 
-class TestRiskAgentNode:
-    def _base_state(self, **overrides):
-        final_pred = overrides.pop("final_pred", 0.03)
-        confidence = overrides.pop("confidence", 0.7)
-        vol = overrides.pop("vol_20d", 20.0)
-        dd = overrides.pop("max_drawdown_pct", 5.0)
-        state = {
-            "fusion_decision": {"score": final_pred, "confidence": confidence},
-            "volatility_metrics": {"vol_20d": vol, "max_drawdown_pct": dd, "trend_pct": 2.0},
-            "node_timings": {},
-        }
-        state.update(overrides)
-        return state
+class TestVetoDowngrade:
+    def test_high_vol_vetoes_trade(self):
+        r = risk_agent_node(_state("long", 0.8, vol=45.0), CFG)
+        assert r["action"] == "abstain"
+        assert r["position_scale"] == 0.0
+        assert r["risk_vetoed"] is True
+        assert any("vol" in reason for reason in r["veto_reasons"])
 
-    def test_full_long(self):
-        result = risk_agent_node(self._base_state())
-        assert result["action"] == "long"
-        assert result["position_scale"] == 0.7
-        assert result["risk_checks"]["tier"] == "full"
-        assert "APPROVED" in result["decision_reasoning"]
+    def test_high_drawdown_vetoes_trade(self):
+        r = risk_agent_node(_state("short", -0.7, dd=25.0), CFG)
+        assert r["action"] == "abstain"
+        assert r["position_scale"] == 0.0
+        assert r["risk_vetoed"] is True
+        assert any("dd" in reason for reason in r["veto_reasons"])
 
-    def test_hard_blocked(self):
-        result = risk_agent_node(self._base_state(vol_20d=50.0))
-        assert result["action"] == "flat"
-        assert result["position_scale"] == 0.0
-        assert "BLOCKED" in result["decision_reasoning"]
 
-    def test_reduced_position(self):
-        result = risk_agent_node(self._base_state(confidence=0.15))
-        assert result["action"] == "long"
-        assert 0.3 <= result["position_scale"] <= 0.5
-        assert "REDUCED" in result["decision_reasoning"]
+class TestOneWayInvariant:
+    def test_abstain_in_abstain_out_even_in_danger(self):
+        """Abstain-in ⇒ abstain-out: risk never manufactures a trade."""
+        r = risk_agent_node(_state("abstain", 0.0, vol=99.0, dd=99.0), CFG)
+        assert r["action"] == "abstain"
+        assert r["position_scale"] == 0.0
+        # An abstain is not a trade, so there is nothing to veto.
+        assert r["risk_vetoed"] is False
 
-    def test_short_decision(self):
-        result = risk_agent_node(self._base_state(final_pred=-0.03))
-        assert result["action"] == "short"
+    def test_abstain_never_becomes_trade_in_calm_market(self):
+        r = risk_agent_node(_state("abstain", 0.0), CFG)
+        assert r["action"] == "abstain"
+        assert r["position_scale"] == 0.0
 
+    def test_veto_never_upsizes(self):
+        """A passed-through trade keeps its exact gate size (no re-sizing)."""
+        r = risk_agent_node(_state("long", 0.42), CFG)
+        assert r["position_scale"] == 0.42
+
+
+class TestNodeContract:
     def test_node_timings(self):
-        result = risk_agent_node(self._base_state())
-        assert "risk_agent" in result["node_timings"]
+        r = risk_agent_node(_state("long", 0.8), CFG)
+        assert "risk_agent" in r["node_timings"]
 
-    def test_policy_version_returned(self):
-        result = risk_agent_node(self._base_state())
-        assert result["policy_version"] >= 1
+    def test_reasoning_present(self):
+        r = risk_agent_node(_state("long", 0.8), CFG)
+        assert r["decision_reasoning"]

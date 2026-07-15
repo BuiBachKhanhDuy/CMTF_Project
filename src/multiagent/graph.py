@@ -2,7 +2,8 @@
 
 Topology:
     orchestrator → [market_agent | news_agent] (parallel)
-    → predict_agent → fusion_agent → risk_agent → answer_agent → END
+    → predict_agent → gate_agent → risk_agent (veto) → metalabel_agent (veto)
+    → narrator → critic → END
 """
 
 from __future__ import annotations
@@ -19,15 +20,36 @@ from .agents.orchestrator_agent import orchestrator_node
 from .agents.market_agent import market_agent_node
 from .agents.news_agent import news_agent_node
 from .agents.predict_agent import predict_agent_node
-from .agents.fusion_agent import fusion_agent_node
+from .agents.gate_agent import gate_agent_node
 from .agents.risk_agent import risk_agent_node
-from .agents.answer_agent import answer_agent_node
+from .agents.metalabel_agent import metalabel_agent_node
+from .agents.narrator_agent import narrator_agent_node
+from .agents.critic_agent import critic_agent_node
 
 
-def _make_node_with_config(node_fn, config: MultiAgentConfig):
-    """Wrap a node function to inject config."""
+def _make_node_with_config(node_fn, config: MultiAgentConfig, node_name: str):
+    """Wrap a node to inject config and, when tracing is on, record a trace step.
+
+    Keeping the trace in the wrapper (derived from each node's returned update) lets
+    the agents stay clean while still giving R3 a legible per-node record.
+    """
+    import time as _time
+
+    from .trace import make_trace_record, render_step
+
     def wrapper(state: MultiAgentState) -> dict[str, Any]:
-        return node_fn(state, config=config)
+        if not config.trace_enabled:
+            return node_fn(state, config=config)
+        t0 = _time.time()
+        update = node_fn(state, config=config) or {}
+        elapsed = update.get("node_timings", {}).get(node_name, _time.time() - t0)
+        rec = make_trace_record(node_name, elapsed, dict(state), update)
+        # Live console rendering (step numbers are finalised in the transcript).
+        logger.info("\n{}", render_step(rec, 0, 0).replace("STEP 0/0 · ", ""))
+        merged = dict(update)
+        merged["trace"] = [rec]
+        return merged
+
     wrapper.__name__ = node_fn.__name__
     return wrapper
 
@@ -38,22 +60,26 @@ def build_graph(config: MultiAgentConfig | None = None) -> StateGraph:
     Topology:
         orchestrator → [market_agent | news_agent] (parallel fan-out)
         → predict_agent (fan-in)
-        → fusion_agent (proposal synthesis)
-        → risk_agent (policy execution)
-        → answer_agent (explanation only)
+        → gate_agent (frozen GatePolicy — the only place trade/abstain is set)
+        → risk_agent (one-way safety veto: vol/drawdown)
+        → metalabel_agent (one-way qualitative veto: pre-registered news event flags)
+        → narrator (honest Vietnamese disclosure)
+        → critic (verify vs state; regenerate/template fallback)
         → END
     """
     cfg = config or DEFAULT_CONFIG
 
     graph = StateGraph(MultiAgentState)
 
-    graph.add_node("orchestrator", _make_node_with_config(orchestrator_node, cfg))
-    graph.add_node("market_agent", _make_node_with_config(market_agent_node, cfg))
-    graph.add_node("news_agent", _make_node_with_config(news_agent_node, cfg))
-    graph.add_node("predict_agent", _make_node_with_config(predict_agent_node, cfg))
-    graph.add_node("fusion_agent", _make_node_with_config(fusion_agent_node, cfg))
-    graph.add_node("risk_agent", _make_node_with_config(risk_agent_node, cfg))
-    graph.add_node("answer_agent", _make_node_with_config(answer_agent_node, cfg))
+    graph.add_node("orchestrator", _make_node_with_config(orchestrator_node, cfg, "orchestrator"))
+    graph.add_node("market_agent", _make_node_with_config(market_agent_node, cfg, "market_agent"))
+    graph.add_node("news_agent", _make_node_with_config(news_agent_node, cfg, "news_agent"))
+    graph.add_node("predict_agent", _make_node_with_config(predict_agent_node, cfg, "predict_agent"))
+    graph.add_node("gate_agent", _make_node_with_config(gate_agent_node, cfg, "gate_agent"))
+    graph.add_node("risk_agent", _make_node_with_config(risk_agent_node, cfg, "risk_agent"))
+    graph.add_node("metalabel_agent", _make_node_with_config(metalabel_agent_node, cfg, "metalabel_agent"))
+    graph.add_node("narrator", _make_node_with_config(narrator_agent_node, cfg, "narrator"))
+    graph.add_node("critic_agent", _make_node_with_config(critic_agent_node, cfg, "critic_agent"))
 
     # Wire edges
     graph.set_entry_point("orchestrator")
@@ -66,11 +92,13 @@ def build_graph(config: MultiAgentConfig | None = None) -> StateGraph:
     graph.add_edge("market_agent", "predict_agent")
     graph.add_edge("news_agent", "predict_agent")
 
-    # Sequential: predict → fusion → risk → answer → END
-    graph.add_edge("predict_agent", "fusion_agent")
-    graph.add_edge("fusion_agent", "risk_agent")
-    graph.add_edge("risk_agent", "answer_agent")
-    graph.add_edge("answer_agent", END)
+    # Sequential: predict → gate → risk (veto) → metalabel (veto) → narrator → critic → END
+    graph.add_edge("predict_agent", "gate_agent")
+    graph.add_edge("gate_agent", "risk_agent")
+    graph.add_edge("risk_agent", "metalabel_agent")
+    graph.add_edge("metalabel_agent", "narrator")
+    graph.add_edge("narrator", "critic_agent")
+    graph.add_edge("critic_agent", END)
 
     return graph.compile()
 

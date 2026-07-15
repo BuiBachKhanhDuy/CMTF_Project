@@ -1,0 +1,17 @@
+{
+  "full_book_DA": 47.6348,
+  "AURC_gate_confidence": 0.496293,
+  "AURC_no_skill_confidence": 0.517587,
+  "delta_AURC_gate_minus_noskill": -0.021294,
+  "delta_AURC_ci": [
+    -0.04723,
+    0.005458
+  ],
+  "delta_AURC_significant": false,
+  "selective_DA_at_cov": 52.741,
+  "selective_coverage": 0.2502,
+  "gated_DA": 54.3689,
+  "gated_IC": 0.1285,
+  "gated_Sharpe": 0.2516,
+  "gate_coverage": 0.2668
+}

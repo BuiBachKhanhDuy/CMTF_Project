@@ -1,4 +1,4 @@
-"""Reusable Phase 2 handoff artifacts for downstream phases."""
+"""Reusable sentiment-encoder handoff artifacts for downstream phases."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_PHASE2_OUTPUT_ROOT = Path("outputs/phase2/latest")
+DEFAULT_SENTIMENT_OUTPUT_ROOT = Path("outputs/sentiment/latest")
 
 PHASE3_HANDOFF_FILENAME = "phase3_phobert_handoff.json"
 
 
-def build_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_ROOT) -> dict[str, Any]:
+def build_phobert_handoff(output_dir: str | Path = DEFAULT_SENTIMENT_OUTPUT_ROOT) -> dict[str, Any]:
     root = Path(output_dir)
     run_config = json.loads((root / "run_config.json").read_text(encoding="utf-8"))
     training_summary = json.loads((root / "phobert" / "training_summary.json").read_text(encoding="utf-8"))
@@ -24,7 +24,7 @@ def build_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_
     preprocessing_args = run_config.get("preprocessing", {})
     return {
         "variant": "phobert",
-        "phase2_output_dir": str(root.resolve()),
+        "sentiment_output_dir": str(root.resolve()),
         "checkpoint_path": str(checkpoint_path),
         "tokenizer_dir": str(tokenizer_dir),
         "model_name": str(run_config.get("phobert_model", "vinai/phobert-base-v2")),
@@ -47,17 +47,17 @@ def build_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_
     }
 
 
-def save_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_ROOT) -> Path:
+def save_phobert_handoff(output_dir: str | Path = DEFAULT_SENTIMENT_OUTPUT_ROOT) -> Path:
     root = Path(output_dir)
-    handoff = build_phase2_phobert_handoff(root)
+    handoff = build_phobert_handoff(root)
     handoff_path = root / PHASE3_HANDOFF_FILENAME
     handoff_path.write_text(json.dumps(handoff, indent=2), encoding="utf-8")
     return handoff_path
 
 
-def resolve_phase2_phobert_handoff(output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_ROOT) -> dict[str, Any]:
+def resolve_phobert_handoff(output_dir: str | Path = DEFAULT_SENTIMENT_OUTPUT_ROOT) -> dict[str, Any]:
     root = Path(output_dir)
     handoff_path = root / PHASE3_HANDOFF_FILENAME
     if handoff_path.exists():
         return json.loads(handoff_path.read_text(encoding="utf-8"))
-    return build_phase2_phobert_handoff(root)
+    return build_phobert_handoff(root)

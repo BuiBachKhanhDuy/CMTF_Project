@@ -1,1 +1,1 @@
-"""Retained Phase 2 test suite."""
+"""Sentiment encoder test suite."""

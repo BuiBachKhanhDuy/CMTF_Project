@@ -182,7 +182,7 @@ def _build_pipeline_config(horizon: int, pipeline_sentiment: bool = False) -> di
         "news_sentiment_enabled": pipeline_sentiment,
         "news_sentiment_device": "cpu",
         "news_sentiment_export_trace": False,
-        "phase2_output_dir": "outputs/phase2/latest",
+        "sentiment_output_dir": "outputs/sentiment/latest",
         "news_similarity_threshold": 85.0,
         "log_news_coverage": False,
         "sequence_len": 30,
@@ -333,10 +333,18 @@ def _trading_day_offset(sorted_times_ns: np.ndarray, boundary: pd.Timestamp, n: 
     return pd.Timestamp(sorted_times_ns[idx])
 
 
-def _extract_and_split(config: dict):
+def _extract_and_split(config: dict, allow_missing_target: bool = False):
     """
     Run pipeline once, extract per-symbol data, split by date, and return combined splits.
     This should be called once per horizon, not once per seed.
+
+    ``allow_missing_target``: default False preserves exact existing behaviour for the
+    research/ablation pipeline (every cached cell, every result in this file, is computed
+    with rows dropped when their forward-return target is NaN — correct for training and
+    backtesting, which need a label). Live inference (``live_inference.py``) passes True:
+    the most recent ~horizon days always have a NaN target (the future hasn't happened
+    yet), and dropping them would silently make it impossible to ever serve a prediction
+    for a genuinely current/live date — exactly the case live inference exists to serve.
     """
     from run_model_benchmark import (
         extract_per_symbol_data,
@@ -345,7 +353,7 @@ def _extract_and_split(config: dict):
         impute_tabular_splits,
     )
 
-    dataset = run_pipeline(config)
+    dataset = run_pipeline(config, allow_missing_target=allow_missing_target)
     seq_len = config["sequence_len"]
     horizon = config["target_horizon_days"]
 
@@ -359,6 +367,7 @@ def _extract_and_split(config: dict):
         raw_ohlcv,
         seq_len=seq_len,
         target_horizon_days=horizon,
+        allow_missing_target=allow_missing_target,
     )
 
     cross_symbol_news = _build_cross_symbol_news(all_data, seq_len)
@@ -406,6 +415,11 @@ def _extract_and_split(config: dict):
             )
             splits[split_name]["news_embs_all"] = pooled_embs[mask_indices]
             splits[split_name]["news_masks_all"] = pooled_masks[mask_indices]
+            # Per-row symbol label, aligned 1:1 with the split's other arrays.
+            # Concatenates alongside them below, so the combined splits carry a
+            # (symbol, date) index the MAS uses to look up frozen predictions for a
+            # single name (plan §3.4 frozen-prediction backend). Additive.
+            splits[split_name]["symbols"] = np.array([sym] * n_split, dtype=object)
 
         if not combined:
             combined = splits

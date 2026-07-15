@@ -1,0 +1,30 @@
+{
+  "all": {
+    "mean_ic": 0.0004,
+    "ir": 0.001,
+    "n_dates": 302
+  },
+  "all_placebo": {
+    "mean_ic": 0.0168,
+    "ir": 0.041,
+    "n_dates": 302
+  },
+  "matched": {
+    "mean_ic": 0.0402,
+    "ir": 0.105,
+    "n_dates": 302
+  },
+  "matched_placebo": {
+    "mean_ic": -0.0011,
+    "ir": -0.003,
+    "n_dates": 302
+  },
+  "matched_vs_placebo": {
+    "delta": 0.0413,
+    "ci": [
+      -0.0077,
+      0.0906
+    ],
+    "significant": false
+  }
+}

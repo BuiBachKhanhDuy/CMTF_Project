@@ -99,6 +99,10 @@ def _deterministic_parse(query_text: str) -> dict[str, Any]:
 
 def _llm_parse(query_text: str, config: MultiAgentConfig) -> dict[str, Any]:
     """Parse query via LLM orchestrator."""
+    from ..guards import assert_llm_allowed, ensure_local_no_proxy
+
+    assert_llm_allowed(config, "orchestrator._llm_parse")
+    ensure_local_no_proxy(config.ollama_base_url)
     from langchain_ollama import ChatOllama
 
     llm = ChatOllama(
@@ -178,10 +182,16 @@ def orchestrator_node(
             cutoff=cutoff,
             sequence_len=seq_len,
             news_cache_dir=str(cfg.news_cache_dir),
-            phase2_output_dir=str(cfg.phase2_output_dir),
+            sentiment_output_dir=str(cfg.sentiment_output_dir),
         )
         elapsed = time.time() - t0
         return {
+            # Explicit route (never silently defaulted — R1): CLI supplied symbol+horizon.
+            "query_intent": "PREDICTION",
+            "target_symbols": [state["symbol"]],
+            "target_horizon": f"{state['target_horizon_days']}d",
+            "aspect_filter": "general",
+            "route_reason": "symbol+horizon supplied by CLI → PREDICTION",
             "close_window": data["close_window"],
             "market_window": data["market_window"],
             "market_tabular": data["market_tabular"],
@@ -210,13 +220,27 @@ def orchestrator_node(
     horizon_map = {"1d": 1, "5d": 5, "20d": 20}
     horizon_days = horizon_map.get(parsed["horizon"], 1)
 
+    # Route reason is always recorded; a PREDICTION fallback (no symbol) is logged, not
+    # silently taken (R1).
+    intent = parsed["intent"]
+    if not parsed["symbols"] and intent in ("PREDICTION", "COMPARISON", "EXPLANATION"):
+        route_reason = f"no symbol parsed → fallback from {intent} (orchestrator.fallback=true)"
+        logger.warning("Orchestrator fallback: {} intent with no symbol", intent)
+    else:
+        route_reason = f"parsed intent={intent} symbols={parsed['symbols']}"
+
     elapsed = time.time() - t0
     logger.info(
-        "Orchestrator | symbol={} horizon={} | {:.2f}s",
-        symbol, parsed["horizon"], elapsed,
+        "Orchestrator | intent={} symbol={} horizon={} | {:.2f}s",
+        intent, symbol, parsed["horizon"], elapsed,
     )
 
     return {
+        "query_intent": intent,
+        "target_symbols": parsed["symbols"] or ([symbol] if symbol else []),
+        "target_horizon": parsed["horizon"],
+        "aspect_filter": parsed["aspect"],
+        "route_reason": route_reason,
         "symbol": symbol,
         "target_horizon_days": horizon_days,
         "node_timings": {"orchestrator": elapsed},

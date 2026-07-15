@@ -2,9 +2,9 @@
 
 from .data import (
     DatasetLoadConfig,
-    Phase2DatasetBundle,
+    SentimentDatasetBundle,
     deterministic_stratified_split,
-    load_phase2_dataset,
+    load_sentiment_dataset,
     save_dataset_manifest,
 )
 from .preprocessing import (
@@ -34,18 +34,18 @@ from .evaluation import (
     plot_training_curves,
 )
 from .handoff import (
-    DEFAULT_PHASE2_OUTPUT_ROOT,
+    DEFAULT_SENTIMENT_OUTPUT_ROOT,
     PHASE3_HANDOFF_FILENAME,
-    build_phase2_phobert_handoff,
-    resolve_phase2_phobert_handoff,
-    save_phase2_phobert_handoff,
+    build_phobert_handoff,
+    resolve_phobert_handoff,
+    save_phobert_handoff,
 )
 from .inference import (
-    Phase2PhoBERTInferenceBundle,
-    Phase2PhoBERTInferencer,
+    PhoBERTInferenceBundle,
+    PhoBERTInferencer,
     aggregate_title_sentiment_scores,
     flatten_sentiment_scores,
-    load_phase2_phobert_inference_bundle,
+    load_phobert_inference_bundle,
 )
 from .training import (
     EncodedTextDataset,
@@ -62,7 +62,7 @@ from .training import (
 
 __all__ = [
     "DatasetLoadConfig",
-    "Phase2DatasetBundle",
+    "SentimentDatasetBundle",
     "PreprocessingConfig",
     "CustomTransformerSentimentModel",
     "PhoBERTSentimentModel",
@@ -79,13 +79,13 @@ __all__ = [
     "deterministic_stratified_split",
     "evaluate_sentiment_model",
     "expected_value_from_probabilities",
-    "DEFAULT_PHASE2_OUTPUT_ROOT",
+    "DEFAULT_SENTIMENT_OUTPUT_ROOT",
     "PHASE3_HANDOFF_FILENAME",
-    "load_phase2_dataset",
-    "load_phase2_phobert_inference_bundle",
+    "load_sentiment_dataset",
+    "load_phobert_inference_bundle",
     "make_class_weights",
-    "Phase2PhoBERTInferenceBundle",
-    "Phase2PhoBERTInferencer",
+    "PhoBERTInferenceBundle",
+    "PhoBERTInferencer",
     "plot_confusion_matrix",
     "plot_expected_value_scatter",
     "plot_length_comparison",
@@ -95,11 +95,11 @@ __all__ = [
     "plot_residual_histogram",
     "plot_score_distribution_by_class",
     "plot_training_curves",
-    "build_phase2_phobert_handoff",
-    "resolve_phase2_phobert_handoff",
+    "build_phobert_handoff",
+    "resolve_phobert_handoff",
     "sample_preprocessing_examples",
     "save_dataset_manifest",
-    "save_phase2_phobert_handoff",
+    "save_phobert_handoff",
     "SimpleVocabulary",
     "aggregate_title_sentiment_scores",
     "flatten_sentiment_scores",

@@ -1,4 +1,4 @@
-"""Shared title-encoder models for Phase 2 sentiment comparison."""
+"""Shared title-encoder models for the sentiment comparison."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class SentimentQueryAttentionHead(nn.Module):
         if hidden_dim % num_heads != 0:
             raise ValueError("hidden_dim must be divisible by num_heads")
         if num_classes != 3:
-            raise ValueError("Phase 2 sentiment head expects exactly 3 classes")
+            raise ValueError("Sentiment head expects exactly 3 classes")
 
         self.sentiment_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
         self.cross_attention = nn.MultiheadAttention(
@@ -123,7 +123,7 @@ class SentimentQueryAttentionHead(nn.Module):
 
 
 class CustomTransformerSentimentModel(nn.Module):
-    """Lightweight TransformerEncoder branch for text-only Phase 2 comparison."""
+    """Lightweight TransformerEncoder branch for the text-only sentiment comparison."""
 
     def __init__(
         self,
@@ -201,7 +201,7 @@ class PhoBERTSentimentModel(nn.Module):
         except ImportError as exc:
             raise ImportError(
                 "PhoBERTSentimentModel requires the transformers package. "
-                "Install it from requirements.txt before running Phase 2 training."
+                "Install it from requirements.txt before running sentiment training."
             ) from exc
 
         self.model_name = model_name

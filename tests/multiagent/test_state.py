@@ -1,122 +1,97 @@
-"""Tests for MultiAgentState type shape and config defaults."""
+"""Tests for MultiAgentState type shape and config defaults (post-redesign)."""
 
-import pytest
+from pathlib import Path
 
 from src.multiagent.state import MultiAgentState
 from src.multiagent.config import MultiAgentConfig, DEFAULT_CONFIG
 
 
 class TestMultiAgentState:
-    """Verify the state TypedDict has all required groups."""
+    """Verify the state TypedDict has all required groups after the redesign."""
 
     def test_state_has_request_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "query_text" in annotations
-        assert "symbol" in annotations
-        assert "prediction_time" in annotations
-        assert "target_horizon_days" in annotations
-        assert "sequence_len" in annotations
+        ann = MultiAgentState.__annotations__
+        assert {"query_text", "symbol", "prediction_time",
+                "target_horizon_days", "sequence_len"} <= set(ann)
 
-    def test_state_has_request_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "symbol" in annotations
-        assert "target_horizon_days" in annotations
+    def test_state_has_routing_keys(self):
+        ann = MultiAgentState.__annotations__
+        assert {"query_intent", "target_symbols", "aspect_filter", "route_reason"} <= set(ann)
 
     def test_state_has_market_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "close_window" in annotations
-        assert "market_window" in annotations
-        assert "market_tabular" in annotations
-        assert "volatility_metrics" in annotations
-        assert "market_proposal" in annotations
+        ann = MultiAgentState.__annotations__
+        assert {"close_window", "market_window", "market_tabular",
+                "volatility_metrics", "market_proposal"} <= set(ann)
 
     def test_state_has_news_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "articles" in annotations
-        assert "news_emb" in annotations
-        assert "news_mask" in annotations
-        assert "sentiment_metrics" in annotations
-        assert "news_proposal" in annotations
+        ann = MultiAgentState.__annotations__
+        assert {"articles", "news_emb", "news_mask",
+                "sentiment_metrics", "news_proposal"} <= set(ann)
 
     def test_state_has_predict_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "baseline_pred" in annotations
-        assert "final_pred" in annotations
-        assert "seed_preds" in annotations
-        assert "news_residual" in annotations
-        assert "attn_weights" in annotations
-        assert "news_weight" in annotations
-        assert "predict_confidence" in annotations
-        assert "model_evidence" in annotations
-        assert "model_proposal" in annotations
+        ann = MultiAgentState.__annotations__
+        assert {"baseline_pred", "final_pred", "gate_pred", "seed_preds",
+                "news_residual", "model_evidence"} <= set(ann)
 
-    def test_state_has_fusion_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "fusion_decision" in annotations
+    def test_state_has_gate_keys(self):
+        ann = MultiAgentState.__annotations__
+        assert {"gated_action", "gate_tau", "gate_coverage",
+                "gate_val_score", "gate_reason"} <= set(ann)
 
-    def test_state_has_risk_decision_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "action" in annotations
-        assert "position_scale" in annotations
-        assert "final_confidence" in annotations
-        assert "risk_checks" in annotations
-        assert "decision_reasoning" in annotations
+    def test_state_has_veto_keys(self):
+        ann = MultiAgentState.__annotations__
+        assert {"action", "position_scale", "risk_vetoed",
+                "veto_reasons", "decision_reasoning"} <= set(ann)
 
-    def test_state_has_answer_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "explanation_text_vi" in annotations
+    def test_state_has_narrator_critic_keys(self):
+        ann = MultiAgentState.__annotations__
+        assert {"answer_text", "critic_status", "critic_findings"} <= set(ann)
 
     def test_state_has_audit_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "data_cutoff" in annotations
-        assert "artifact_versions" in annotations
-        assert "errors" in annotations
-        assert "warnings" in annotations
-        assert "node_timings" in annotations
-        assert "policy_version" in annotations
-        assert "decision_id" in annotations
+        ann = MultiAgentState.__annotations__
+        assert {"artifact_versions", "errors", "warnings",
+                "node_timings", "trace", "decision_id"} <= set(ann)
 
-    def test_no_legacy_keys(self):
-        annotations = MultiAgentState.__annotations__
-        assert "quant_proposal" not in annotations
-        assert "risk_proposal" not in annotations
-        assert "debate_log" not in annotations
-        assert "agent_breakdown" not in annotations
-        assert "evidence_dict" not in annotations
-        assert "sentiment_features" not in annotations
+    def test_deleted_legacy_keys_absent(self):
+        """R2: the deleted fusion/tier fields must be gone from the schema."""
+        ann = MultiAgentState.__annotations__
+        for dead in ("fusion_decision", "adjusted_pred", "mkt_adjusted_pred",
+                     "news_adjusted_pred", "final_confidence", "risk_checks",
+                     "policy_version"):
+            assert dead not in ann, f"legacy state key {dead!r} should be deleted"
 
 
 class TestMultiAgentConfig:
-    """Verify config defaults are reasonable."""
-
     def test_default_config_exists(self):
-        assert DEFAULT_CONFIG is not None
         assert isinstance(DEFAULT_CONFIG, MultiAgentConfig)
-
-    def test_config_ollama(self):
-        cfg = MultiAgentConfig()
-        assert cfg.ollama_model is not None
 
     def test_ensemble_seeds(self):
         cfg = MultiAgentConfig()
-        assert cfg.ensemble_seeds == [42, 123, 456]
-        assert len(cfg.ensemble_seeds) == 3
+        assert cfg.ensemble_seeds == [1, 42, 123]
 
-    def test_sequence_len(self):
+    def test_gate_defaults(self):
         cfg = MultiAgentConfig()
-        assert cfg.sequence_len == 30
+        assert cfg.gate_coverage == 0.25
+        assert cfg.use_conviction_sizing is True
+        assert cfg.gate_on_raw_seed is False  # ensemble mean is the deployed default
+
+    def test_news_scope_default_matched(self):
+        assert MultiAgentConfig().news_scope_default == "matched"
+
+    def test_veto_thresholds(self):
+        cfg = MultiAgentConfig()
+        assert cfg.hard_block_vol == 40.0
+        assert cfg.hard_block_drawdown == 20.0
 
     def test_evaluation_mode_default_false(self):
-        cfg = MultiAgentConfig()
-        assert cfg.evaluation_mode is False
+        assert MultiAgentConfig().evaluation_mode is False
 
-    def test_no_skip_llm_reasoning_field(self):
-        assert not hasattr(MultiAgentConfig(), "skip_llm_reasoning")
-
-    def test_paths_are_path_objects(self):
-        from pathlib import Path
+    def test_deleted_fusion_flags_absent(self):
+        """R2: fusion/tier config flags must be gone."""
         cfg = MultiAgentConfig()
-        assert isinstance(cfg.news_cache_dir, Path)
-        assert isinstance(cfg.cmtf_models_dir, Path)
-        assert isinstance(cfg.optuna_dir, Path)
-        assert isinstance(cfg.phase2_output_dir, Path)
+        for dead in ("override_alpha", "market_agree_bonus", "market_disagree_penalty",
+                     "news_agree_bonus", "news_disagree_penalty", "policy_store_path"):
+            assert not hasattr(cfg, dead), f"legacy config flag {dead!r} should be deleted"
+
+    def test_gate_policy_dir_is_path(self):
+        assert isinstance(MultiAgentConfig().gate_policy_dir, Path)

@@ -242,6 +242,7 @@ def extract_per_symbol_data(
     seq_len: int = 30,
     target_horizon_days: int = 1,
     close_only: bool = False,
+    allow_missing_target: bool = False,
 ) -> dict[str, dict[str, np.ndarray]]:
     df = dataset.df.copy()
 
@@ -331,7 +332,17 @@ def extract_per_symbol_data(
 
         for i in range(valid_start, valid_end):
             target_val = target_col[i]
-            if np.isnan(target_val):
+            # A NaN target means the row is too close to the end of the fetched
+            # range for a full forward-return window to exist yet (e.g. today, or
+            # any date within `target_horizon_days` of the most recent bar) — this
+            # is the ONLY case for genuinely live/current-date rows, since the
+            # future hasn't happened. Dropping these is correct for
+            # training/backtesting (a label is required), but wrong for live
+            # single-row inference, which needs only the feature window, never a
+            # label. `allow_missing_target` keeps the row (features intact, target
+            # NaN) instead of silently discarding the exact rows live inference
+            # exists to serve.
+            if np.isnan(target_val) and not allow_missing_target:
                 continue
 
             close_windows.append(raw_c[i - seq_len + 1 : i + 1])
@@ -799,7 +810,7 @@ def main() -> None:
         "news_sentiment_enabled": True,
         "news_sentiment_device": "cpu",
         "news_sentiment_export_trace": True,
-        "phase2_output_dir": "outputs/phase2/latest",
+        "sentiment_output_dir": "outputs/sentiment/latest",
         "news_similarity_threshold": 85.0,
         "log_news_coverage": True,
         "sequence_len": 30,

@@ -60,7 +60,7 @@ def market_agent_node(
         cutoff=cutoff,
         sequence_len=seq_len,
         news_cache_dir=str(cfg.news_cache_dir),
-        phase2_output_dir=str(cfg.phase2_output_dir),
+        sentiment_output_dir=str(cfg.sentiment_output_dir),
     )
 
     close_window = result["close_window"]

@@ -19,8 +19,8 @@ import torch
 
 from src.common import (
     JAVA_RUNTIME_ROOT,
-    PHASE2_DATASET_ROOT,
-    PHASE2_OUTPUT_ROOT,
+    SENTIMENT_DATASET_ROOT,
+    SENTIMENT_OUTPUT_ROOT,
     VNCORENLP_JAR_PATH,
     VNCORENLP_ROOT,
     VNCORENLP_WORDSEGMENTER_ROOT,
@@ -43,7 +43,7 @@ from src.sentiment import (
     build_preprocessing_report,
     compute_title_level_metrics,
     evaluate_sentiment_model,
-    load_phase2_dataset,
+    load_sentiment_dataset,
     make_class_weights,
     plot_confusion_matrix,
     plot_expected_value_scatter,
@@ -54,7 +54,7 @@ from src.sentiment import (
     plot_residual_histogram,
     plot_score_distribution_by_class,
     plot_training_curves,
-    save_phase2_phobert_handoff,
+    save_phobert_handoff,
     sample_preprocessing_examples,
     save_dataset_manifest,
     train_sentiment_model,
@@ -84,11 +84,11 @@ SUPPORTED_DATASET_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json"}
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Phase 2 encoder comparison")
-    parser.add_argument("--dataset-path", type=str, default=str(PHASE2_DATASET_ROOT))
+    parser = argparse.ArgumentParser(description="Sentiment encoder comparison")
+    parser.add_argument("--dataset-path", type=str, default=str(SENTIMENT_DATASET_ROOT))
     parser.add_argument("--dataset-download-url", type=str, default=DEFAULT_DATASET_ARCHIVE_URL)
     parser.add_argument("--skip-dataset-download", action="store_true")
-    parser.add_argument("--output-dir", type=str, default=str(PHASE2_OUTPUT_ROOT))
+    parser.add_argument("--output-dir", type=str, default=str(SENTIMENT_OUTPUT_ROOT))
     parser.add_argument("--variant", choices=["custom", "phobert", "both"], default="both")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -148,7 +148,7 @@ def _download_dataset_archive_bytes(download_url: str) -> bytes:
 def _download_dataset_once(dataset_path: Path, download_url: str) -> Path:
     if dataset_path.suffix:
         raise ValueError(
-            "Auto-downloaded Phase 2 dataset paths must point to a directory, not a file"
+            "Auto-downloaded sentiment dataset paths must point to a directory, not a file"
         )
 
     temp_dir = dataset_path.parent / f".{dataset_path.name}_download"
@@ -199,7 +199,7 @@ def _resolve_dataset_path(
 ) -> Path:
     resolved = Path(dataset_path)
     if _has_supported_dataset_files(resolved):
-        print(f"Using cached Phase 2 dataset at {resolved}")
+        print(f"Using cached sentiment dataset at {resolved}")
         return resolved
 
     if resolved.exists():
@@ -311,7 +311,7 @@ def _save_preprocessing_artifacts(
     output_dir: Path,
 ) -> None:
     figures_dir = output_dir / "figures"
-    processed_df.to_csv(output_dir / "phase2_preprocessed.csv", index=False)
+    processed_df.to_csv(output_dir / "sentiment_preprocessed.csv", index=False)
     save_dataset_manifest(dataset_manifest, output_dir / "dataset_manifest.json")
 
     report = build_preprocessing_report(processed_df)
@@ -359,7 +359,7 @@ def _save_variant_metrics(
     }
 
 
-def _build_phase2_data_overview(processed_df: pd.DataFrame) -> pd.DataFrame:
+def _build_sentiment_data_overview(processed_df: pd.DataFrame) -> pd.DataFrame:
     label_names = ["negative", "neutral", "positive"]
     rows: list[dict[str, Any]] = []
     for split_name, split_df in processed_df.groupby("split", sort=True):
@@ -376,7 +376,7 @@ def _build_phase2_data_overview(processed_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _build_phase2_benchmark_summary(
+def _build_sentiment_benchmark_summary(
     metrics_df: pd.DataFrame,
     *,
     selection_metric: str,
@@ -494,7 +494,7 @@ def main(argv: list[str] | None = None) -> None:
         skip_download=bool(args.skip_dataset_download),
     )
 
-    dataset_bundle = load_phase2_dataset(
+    dataset_bundle = load_sentiment_dataset(
         DatasetLoadConfig(dataset_path=dataset_path, random_seed=int(args.seed))
     )
     preprocessing_config, segmenter = _prepare_preprocessing(args)
@@ -537,7 +537,7 @@ def main(argv: list[str] | None = None) -> None:
         },
     )
 
-    data_overview_df = _build_phase2_data_overview(processed_df)
+    data_overview_df = _build_sentiment_data_overview(processed_df)
     if not data_overview_df.empty:
         data_overview_df.to_csv(output_dir / "data_overview.csv", index=False)
         plot_metric_panels(
@@ -545,7 +545,7 @@ def main(argv: list[str] | None = None) -> None:
             label_col="split",
             metric_cols=("row_count", "avg_raw_token_len", "avg_clean_token_len"),
             save_path=output_dir / "figures" / "data_overview.png",
-            title="Phase 2 Data Overview",
+            title="Sentiment Data Overview",
         )
 
     metrics_rows: list[dict[str, Any]] = []
@@ -616,12 +616,12 @@ def main(argv: list[str] | None = None) -> None:
                 training_config=_training_config_from_args(args, "phobert.pt", device),
             )
         )
-        save_phase2_phobert_handoff(output_dir)
+        save_phobert_handoff(output_dir)
 
     metrics_df = pd.DataFrame(metrics_rows)
     metrics_df.to_csv(output_dir / "comparison_metrics.csv", index=False)
     metrics_df.to_csv(output_dir / "model_comparison.csv", index=False)
-    benchmark_summary_df = _build_phase2_benchmark_summary(
+    benchmark_summary_df = _build_sentiment_benchmark_summary(
         metrics_df,
         selection_metric=str(args.selection_metric),
     )
@@ -638,7 +638,7 @@ def main(argv: list[str] | None = None) -> None:
                 label_col="model_name",
                 metric_cols=("macro_f1", "accuracy", "rmse", "mae"),
                 save_path=output_dir / "figures" / f"model_comparison_{split_name}.png",
-                title=f"Phase 2 Model Comparison ({split_name})",
+                title=f"Sentiment Model Comparison ({split_name})",
             )
 
 

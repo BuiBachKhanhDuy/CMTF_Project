@@ -1,0 +1,44 @@
+{
+  "model": "multi-CMTF ensemble MAS vs single champion",
+  "calibration": "leak-free time-split (calib=early test, eval=late test)",
+  "eval_window": ">= 2025-09-26",
+  "n_eval": 847,
+  "selected_subset": [
+    "cnn_lstm",
+    "gpt4ts",
+    "chronos"
+  ],
+  "H1_H2_multi_model_MAS": {
+    "full_book_DA": 50.18,
+    "full_book_IC": 0.0033,
+    "selective_DA@cov": 59.91,
+    "gated_DA": 59.59,
+    "gated_IC": 0.2737,
+    "gate_coverage": 0.228,
+    "AURC_gate": 0.4459,
+    "AURC_noskill": 0.4834,
+    "delta_AURC": -0.0599,
+    "delta_AURC_ci": [
+      -0.1009,
+      -0.0197
+    ],
+    "delta_AURC_significant": true
+  },
+  "H1_H2_single_champion": {
+    "full_book_DA": 51.95,
+    "full_book_IC": 0.1298,
+    "selective_DA@cov": 68.87,
+    "gated_DA": 68.98,
+    "gated_IC": 0.4358,
+    "gate_coverage": 0.221,
+    "AURC_gate": 0.3907,
+    "AURC_noskill": 0.4744,
+    "delta_AURC": -0.0973,
+    "delta_AURC_ci": [
+      -0.1376,
+      -0.0561
+    ],
+    "delta_AURC_significant": true
+  },
+  "H1b_cross_sectional": "not computable for the multi-CMTF ensemble — the backbones are all-scope; matched-scope variants of every backbone are not cached (only lstm-matched exists). Cross-sectional IC needs matched scope."
+}

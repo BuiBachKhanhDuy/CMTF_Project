@@ -4,7 +4,7 @@ A multimodal time-series forecasting system that fuses **OHLCV market data** wit
 
 ## Clone Requirements
 
-This repository includes Phase 2 model checkpoints under `outputs/phase2/latest/`.
+This repository includes sentiment-encoder model checkpoints under `outputs/sentiment/latest/`.
 To clone and pull these files successfully, install and enable Git LFS first:
 
 ```powershell
@@ -49,10 +49,13 @@ python run_model_benchmark.py --stage plot   # Regenerate plots
 ## Project Structure
 
 ```
-├── pipeline.py                  # Entry point: data ingestion pipeline
-├── run_model_benchmark.py       # Entry point: model training & evaluation
-├── run_ab_benchmark.py          # Entry point: multiagent A/B test + plots
-├── run_sentiment_benchmark.py   # Entry point: PhoBERT sentiment training
+├── pipeline.py                  # Entry point (Phase 1): data ingestion pipeline
+├── run_model_benchmark.py       # Entry point (Phase 2): model training & evaluation
+├── run_sentiment_benchmark.py   # Entry point (Phase 1/2): PhoBERT sentiment training
+├── run_ablation_benchmark.py    # Entry point (Phase 3): fusion-strategy ablation
+├── run_ablation_registry.py     # Entry point (Phase 3): component-ablation registry
+├── run_ab_benchmark.py          # Entry point (Phase 4): multiagent A/B test + plots
+├── chat.py                      # Entry point (Phase 5): interactive chatbot CLI
 ├── src/
 │   ├── pipeline/                # Data ingestion & preprocessing
 │   │   ├── orchestrator.py      # End-to-end pipeline orchestration
@@ -68,23 +71,43 @@ python run_model_benchmark.py --stage plot   # Regenerate plots
 │   │   ├── baseline_hpo.py      # Optuna HPO for baseline models
 │   │   ├── chronos_encoder.py   # Zero-shot + Chronos embeddings
 │   │   ├── fusion_wrappers.py   # News fusion heads (early/late/hybrid/residual)
+│   │   ├── ablation_runner.py   # Phase 3 ablation harness
+│   │   ├── calibration.py       # Prediction calibration checks
+│   │   ├── cross_sectional_ic.py # Cross-sectional IC evaluation
 │   │   └── plots.py             # A/B benchmark visualizations
 │   ├── sentiment/               # Vietnamese news sentiment (PhoBERT)
 │   │   ├── modeling.py          # PhoBERT + Custom Transformer architectures
 │   │   ├── training.py          # Sentiment model training loop
 │   │   ├── inference.py         # Deployed sentiment scorer
-│   │   └── handoff.py           # Phase 2 → pipeline artifact handoff
-│   └── multiagent/              # LangGraph multi-agent inference system
+│   │   └── handoff.py           # Sentiment encoder → pipeline artifact handoff
+│   └── multiagent/              # LangGraph multi-agent inference system (Phase 4/5)
 │       ├── graph.py             # StateGraph topology + run_graph()
 │       ├── config.py            # All tunable parameters
 │       ├── state.py             # Typed shared state definition
 │       ├── loaders.py           # Lazy model artifact loading
-│       ├── reflection.py        # Offline policy updates
-│       └── agents/              # 7 specialized agent nodes
-├── tests/                       # 85 unit tests (4 skipped smoke tests)
+│       ├── live_inference.py    # Real-time inference for the chatbot
+│       ├── frozen_predictions.py, gate_io.py, guards.py, trace.py, news_data.py
+│       ├── eval_ladder.py, metalabel_eval.py, h3_faithfulness.py, improved_ensemble.py
+│       └── agents/              # 11 specialized agent nodes (market, news, predict,
+│                                 # research, rank, risk, gate, metalabel, critic,
+│                                 # narrator, orchestrator)
+├── tools/
+│   └── e2e_demo.py              # Phase 5 end-to-end product demo/report generator
+├── tests/                       # Unit tests
 ├── results/                     # Benchmark outputs (CSV + figures)
-└── report.md                    # Full technical report
+└── docs/reference/              # Stable reference docs (see below)
 ```
+
+### Documentation
+
+- [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) — Phase 2/3 fusion research findings
+- [docs/reference/RESULTS_IMPROVEMENT_LEVERS.md](docs/reference/RESULTS_IMPROVEMENT_LEVERS.md) — Phase 3 improvement-lever experiments (evidence trail)
+- [docs/reference/CACHING_GUIDE.md](docs/reference/CACHING_GUIDE.md) — cache layout for ablation/benchmark runs
+- [docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md](docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md) — literature review & research agenda
+- [docs/reference/MULTIAGENT_SYSTEM.md](docs/reference/MULTIAGENT_SYSTEM.md) — Phase 4/5 multiagent architecture, workflow & results (canonical)
+- [docs/reference/MULTIAGENT_REDESIGN_PLAN.md](docs/reference/MULTIAGENT_REDESIGN_PLAN.md) — Phase 4 design rationale / decision log
+- [docs/reference/phase2_benchmark_report_HISTORICAL.md](docs/reference/phase2_benchmark_report_HISTORICAL.md) — superseded Phase 2 snapshot, kept for audit trail only
+- [docs/report.md](docs/report.md) — full thesis document (LaTeX source, local/untracked)
 
 ## Stack
 
@@ -117,7 +140,7 @@ python run_model_benchmark.py --stage plot   # Regenerate plots
 
 CMTF is the strongest model on the 20-day horizon by RMSE, DA%, Sharpe, IC, and composite score.
 
-See [report.md](report.md) for full methodology, results, and references.
+See [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) for current methodology and results, and [docs/report.md](docs/report.md) for the full thesis writeup.
 
 ## License
 

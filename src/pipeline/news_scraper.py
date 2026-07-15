@@ -277,6 +277,39 @@ def _cache_path(symbol: str, start: str = "", end: str = "") -> Path:
     return _NEWS_CACHE_DIR / f"{symbol}_{safe_start}_{safe_end}_news.json"
 
 
+_CACHE_FILE_RE = re.compile(r"^([A-Z]+)_(\d{8})_(\d{8})_news\.json$")
+
+
+def _find_overlapping_cache(symbol: str, start: str, end: str) -> tuple[Path, pd.Timestamp, pd.Timestamp] | None:
+    """Find the on-disk cache for ``symbol`` whose [cached_start, cached_end] window best
+    covers [start, end], regardless of exact filename match.
+
+    Every live-inference query uses a slightly different ``end`` (today's date, or
+    whatever cutoff the user asked about), so the old exact-filename cache lookup missed
+    every cache that already covered the request — forcing a full multi-source,
+    multi-year re-scrape for every single query (the live-inference slowness). Any cache
+    whose start is <= the requested start is a candidate; among those we prefer the one
+    with the largest end (most coverage), which is either a full cover (>= requested end,
+    fast path — no scraping at all) or a partial cover (< requested end, only the tail
+    needs a fresh incremental scrape).
+    """
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    best: tuple[Path, pd.Timestamp, pd.Timestamp] | None = None
+    for p in _NEWS_CACHE_DIR.glob(f"{symbol}_*_news.json"):
+        m = _CACHE_FILE_RE.match(p.name)
+        if not m:
+            continue
+        cached_start = pd.to_datetime(m.group(2), format="%Y%m%d")
+        cached_end = pd.to_datetime(m.group(3), format="%Y%m%d")
+        if cached_start > start_ts:
+            continue  # doesn't cover the requested start
+        if best is None or cached_end > best[2]:
+            best = (p, cached_start, cached_end)
+    if best is None:
+        return None
+    return best
+
+
 def _load_cache(symbol: str, start: str = "", end: str = "") -> list[dict[str, Any]] | None:
     p = _cache_path(symbol, start, end)
     if p.exists():
@@ -287,6 +320,15 @@ def _load_cache(symbol: str, start: str = "", end: str = "") -> list[dict[str, A
         except Exception:
             logger.warning("Corrupt news cache for {} — ignoring", symbol)
     return None
+
+
+def _load_articles_json(p: Path) -> list[dict[str, Any]] | None:
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data
+    except Exception:
+        logger.warning("Corrupt news cache {} — ignoring", p.name)
+        return None
 
 
 def _save_cache(symbol: str, start: str, end: str, articles: list[dict[str, Any]]) -> None:
@@ -999,6 +1041,9 @@ class NewsScraper:
                 f"Unsupported symbol '{symbol}'. Supported symbols: {_SUPPORTED_BANK_SYMBOLS}"
             )
 
+        prior_articles: list[dict[str, Any]] = []
+        fetch_start = start  # narrowed below if a prior cache covers part of the range
+
         if use_cache:
             cached = _load_cache(symbol, start, end)
             if cached is not None:
@@ -1006,9 +1051,43 @@ class NewsScraper:
                 if not df.empty:
                     return df
 
-        start_ts = pd.Timestamp(start)
+            # No exact-filename cache hit (every live-inference query uses a slightly
+            # different `end`, e.g. today's date, so an exact match almost never exists
+            # past the first call). Look for ANY prior cache that overlaps this request —
+            # if one fully covers it, skip scraping entirely; if one partially covers it,
+            # reuse those articles and only scrape the small incremental tail. This is
+            # what turns a live query from a full multi-year, multi-source re-scrape into
+            # a near-instant cache hit (full cover) or a few-day incremental fetch
+            # (partial cover).
+            overlap = _find_overlapping_cache(symbol, start, end)
+            if overlap is not None:
+                cache_path, cached_start, cached_end = overlap
+                end_ts_req = pd.Timestamp(end)
+                prior = _load_articles_json(cache_path)
+                if prior is not None:
+                    if cached_end >= end_ts_req:
+                        df = self._articles_to_dataframe(prior, start, end)
+                        if not df.empty:
+                            logger.info(
+                                "News cache FULL COVER for {} from {} (needed {}..{}) — "
+                                "no scrape needed",
+                                symbol, cache_path.name, start, end,
+                            )
+                            return df
+                    else:
+                        prior_articles = prior
+                        buffer_days = 5
+                        fetch_start = str((cached_end - pd.Timedelta(days=buffer_days)).date())
+                        logger.info(
+                            "News cache PARTIAL COVER for {} from {} ({}..{}) — "
+                            "incremental scrape only for {}..{} ({} prior articles reused)",
+                            symbol, cache_path.name, cached_start.date(), cached_end.date(),
+                            fetch_start, end, len(prior_articles),
+                        )
+
+        start_ts = pd.Timestamp(fetch_start)
         end_ts = pd.Timestamp(end)
-        all_articles: list[dict[str, Any]] = []
+        all_articles: list[dict[str, Any]] = list(prior_articles)
 
         if "vnexpress" in sources:
             try:

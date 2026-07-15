@@ -1,4 +1,4 @@
-"""Evaluation metrics and visualization helpers for Phase 2 comparison."""
+"""Evaluation metrics and visualization helpers for the sentiment encoder comparison."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def build_prediction_frame(
     expected_values: np.ndarray,
     attention_weights: np.ndarray | None = None,
 ) -> pd.DataFrame:
-    """Attach prediction outputs to the canonical Phase 2 dataframe rows."""
+    """Attach prediction outputs to the canonical sentiment dataframe rows."""
 
     out = frame.reset_index(drop=True).copy()
     if len(out) != len(probabilities) or len(out) != len(expected_values):

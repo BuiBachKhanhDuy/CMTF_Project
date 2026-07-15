@@ -1,4 +1,4 @@
-"""Dataset loading and canonical schema utilities for Phase 2 experiments."""
+"""Dataset loading and canonical schema utilities for the sentiment encoder pipeline."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class DatasetLoadConfig:
 
 @dataclass(frozen=True, slots=True)
 class DatasetManifest:
-    """Serializable metadata describing a canonicalized Phase 2 dataset."""
+    """Serializable metadata describing a canonicalized sentiment dataset."""
 
     dataset_path: str
     source_files: tuple[str, ...]
@@ -76,8 +76,8 @@ class DatasetManifest:
 
 
 @dataclass(frozen=True, slots=True)
-class Phase2DatasetBundle:
-    """Canonical dataset plus manifest for Phase 2 text experiments."""
+class SentimentDatasetBundle:
+    """Canonical dataset plus manifest for sentiment text experiments."""
 
     dataframe: pd.DataFrame
     manifest: DatasetManifest
@@ -341,7 +341,7 @@ def _build_article_ids(frame: pd.DataFrame, id_column: str | None) -> pd.Series:
     return pd.Series(generated, index=frame.index, dtype="string")
 
 
-def load_phase2_dataset(config: DatasetLoadConfig) -> Phase2DatasetBundle:
+def load_sentiment_dataset(config: DatasetLoadConfig) -> SentimentDatasetBundle:
     """Load the external title-level sentiment dataset into a canonical schema."""
 
     _validate_split_sizes(config)
@@ -360,7 +360,7 @@ def load_phase2_dataset(config: DatasetLoadConfig) -> Phase2DatasetBundle:
         label_column = _find_first_matching_column(columns, _LABEL_COLUMN_CANDIDATES)
         if title_column is None or label_column is None:
             logger.info(
-                "Skipping unlabeled Phase 2 dataset file: {}",
+                "Skipping unlabeled sentiment dataset file: {}",
                 file_path.name,
             )
             continue
@@ -477,18 +477,18 @@ def load_phase2_dataset(config: DatasetLoadConfig) -> Phase2DatasetBundle:
     )
 
     logger.info(
-        "Phase 2 dataset loaded | rows={} | files={} | title_col={} | label_col={} | split_source={}",
+        "Sentiment dataset loaded | rows={} | files={} | title_col={} | label_col={} | split_source={}",
         manifest.row_count,
         len(manifest.source_files),
         manifest.title_column,
         manifest.label_column,
         manifest.split_column,
     )
-    return Phase2DatasetBundle(dataframe=canonical, manifest=manifest)
+    return SentimentDatasetBundle(dataframe=canonical, manifest=manifest)
 
 
 def save_dataset_manifest(manifest: DatasetManifest, output_path: str | Path) -> Path:
-    """Persist a dataset manifest as JSON for reproducible Phase 2 runs."""
+    """Persist a dataset manifest as JSON for reproducible sentiment runs."""
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)

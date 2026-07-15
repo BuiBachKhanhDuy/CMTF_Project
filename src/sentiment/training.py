@@ -1,4 +1,4 @@
-"""Tokenization, dataloading, and training utilities for Phase 2 comparison."""
+"""Tokenization, dataloading, and training utilities for the sentiment encoder comparison."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class TrainingConfig:
     patience: int = 3
     device: str = "cpu"
     grad_clip_norm: float = 1.0
-    checkpoint_name: str = "phase2_model.pt"
+    checkpoint_name: str = "sentiment_model.pt"
     selection_metric: str = "macro_f1"
 
 

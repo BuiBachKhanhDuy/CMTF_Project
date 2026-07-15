@@ -33,7 +33,7 @@ artifacts/
 kaggle_bundle/
 
 # Model outputs (large checkpoints, not for VCS)
-outputs/phase2/_rerun_both
+outputs/sentiment/_rerun_both
 
 # External data / binaries (downloaded at setup time)
 data/external/

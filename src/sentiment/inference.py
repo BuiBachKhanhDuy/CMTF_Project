@@ -1,4 +1,4 @@
-"""Reusable Phase 2 PhoBERT inference utilities for downstream phases."""
+"""Reusable PhoBERT sentiment inference utilities for downstream phases."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 from loguru import logger
 
-from .handoff import DEFAULT_PHASE2_OUTPUT_ROOT, resolve_phase2_phobert_handoff
+from .handoff import DEFAULT_SENTIMENT_OUTPUT_ROOT, resolve_phobert_handoff
 from .modeling import PhoBERTSentimentModel
 from .preprocessing import PreprocessingConfig, VnCoreNLPSegmenter, apply_preprocessing
 
@@ -19,8 +19,8 @@ _DEFAULT_VNCORENLP_JAR_PATH = Path("data/external/vncorenlp/VnCoreNLP-1.1.1.jar"
 
 
 @dataclass(frozen=True, slots=True)
-class Phase2PhoBERTInferenceBundle:
-    """Loaded Phase 2 PhoBERT inference artifacts."""
+class PhoBERTInferenceBundle:
+    """Loaded PhoBERT sentiment inference artifacts."""
 
     handoff: dict[str, Any]
     preprocessing_config: PreprocessingConfig
@@ -47,7 +47,7 @@ def _load_tokenizer(tokenizer_dir: str | Path):
         from transformers import AutoTokenizer
     except ImportError as exc:
         raise ImportError(
-            "Phase 2 PhoBERT inference requires the transformers package."
+            "PhoBERT sentiment inference requires the transformers package."
         ) from exc
     return AutoTokenizer.from_pretrained(str(tokenizer_dir))
 
@@ -65,15 +65,15 @@ def _load_segmenter(
     return VnCoreNLPSegmenter(resolved)
 
 
-def load_phase2_phobert_inference_bundle(
-    output_dir: str | Path = DEFAULT_PHASE2_OUTPUT_ROOT,
+def load_phobert_inference_bundle(
+    output_dir: str | Path = DEFAULT_SENTIMENT_OUTPUT_ROOT,
     *,
     device: str = "cpu",
     vncorenlp_jar_path: str | Path | None = None,
-) -> Phase2PhoBERTInferenceBundle:
-    """Load the trained Phase 2 PhoBERT branch for downstream inference."""
+) -> PhoBERTInferenceBundle:
+    """Load the trained PhoBERT sentiment branch for downstream inference."""
 
-    handoff = resolve_phase2_phobert_handoff(output_dir)
+    handoff = resolve_phobert_handoff(output_dir)
     preprocessing_config = _build_preprocessing_config(handoff)
     try:
         segmenter = _load_segmenter(preprocessing_config, jar_path=vncorenlp_jar_path)
@@ -81,7 +81,7 @@ def load_phase2_phobert_inference_bundle(
         if preprocessing_config.segmentation != "vncorenlp":
             raise
         logger.warning(
-            "Phase 2 inference could not initialize VnCoreNLP ({}); falling back to non-segmented preprocessing",
+            "Sentiment inference could not initialize VnCoreNLP ({}); falling back to non-segmented preprocessing",
             exc,
         )
         preprocessing_config = PreprocessingConfig(
@@ -109,7 +109,7 @@ def load_phase2_phobert_inference_bundle(
     model.to(device)
     model.eval()
 
-    return Phase2PhoBERTInferenceBundle(
+    return PhoBERTInferenceBundle(
         handoff=handoff,
         preprocessing_config=preprocessing_config,
         tokenizer=tokenizer,
@@ -119,10 +119,10 @@ def load_phase2_phobert_inference_bundle(
     )
 
 
-class Phase2PhoBERTInferencer:
-    """Thin downstream inference wrapper around the trained Phase 2 model."""
+class PhoBERTInferencer:
+    """Thin downstream inference wrapper around the trained PhoBERT sentiment model."""
 
-    def __init__(self, bundle: Phase2PhoBERTInferenceBundle) -> None:
+    def __init__(self, bundle: PhoBERTInferenceBundle) -> None:
         self.bundle = bundle
 
     @property

@@ -75,8 +75,8 @@ def generate_walkforward_folds(
 # ---------------------------------------------------------------------------
 # Directory constants
 # ---------------------------------------------------------------------------
-PHASE2_DATASET_ROOT = Path("data/phase2")
-PHASE2_OUTPUT_ROOT = Path("outputs/phase2/latest")
+SENTIMENT_DATASET_ROOT = Path("data/sentiment")
+SENTIMENT_OUTPUT_ROOT = Path("outputs/sentiment/latest")
 JAVA_RUNTIME_ROOT = Path("cache/java_runtime")
 VNCORENLP_ROOT = Path("cache/vncorenlp")
 VNCORENLP_WORDSEGMENTER_ROOT = VNCORENLP_ROOT / "models" / "wordsegmenter"

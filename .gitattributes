@@ -1,2 +1,2 @@
-outputs/phase2/latest/**/*.pt filter=lfs diff=lfs merge=lfs -text
+outputs/sentiment/latest/**/*.pt filter=lfs diff=lfs merge=lfs -text
 kaggle_bundle.zip filter=lfs diff=lfs merge=lfs -text

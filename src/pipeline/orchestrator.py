@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from src.sentiment import Phase2PhoBERTInferencer, load_phase2_phobert_inference_bundle
+from src.sentiment import PhoBERTInferencer, load_phobert_inference_bundle
 
 from .data_fetcher import VnstockDataFetcher
 from .temporal_aligner import TemporalAligner
@@ -101,7 +101,7 @@ def _config_hash(config: dict[str, Any]) -> str:
         "val_end",
         "normalize_method",
         "news_sentiment_enabled",
-        "phase2_output_dir",
+        "sentiment_output_dir",
         "news_sentiment_device",
         "news_sentiment_batch_size",
         "news_use_cache",
@@ -318,8 +318,19 @@ def _merge_vnindex_features_single_symbol(df_featured: pd.DataFrame, vnidx_featu
 # Main pipeline
 # -----------------------------------------------------------------------------
 
-def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
-    """Execute the full CMTF data-ingestion pipeline."""
+def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> CMTFDataset:
+    """Execute the full CMTF data-ingestion pipeline.
+
+    ``allow_missing_target``: default False preserves exact existing behaviour — every
+    research/ablation result in this project is built on the dropna below removing any
+    row whose forward-return target is NaN (correct: training/backtesting need a real
+    label). True is used ONLY by the live-inference path (``live_inference.py``): the
+    most recent ~horizon trading days before ``end`` always have a NaN target (the
+    future hasn't happened yet), so dropping them silently makes it impossible to ever
+    serve a prediction for a genuinely current/live date. Cached under a distinct path
+    (see ``cache_path`` below) so it can never collide with — or be served by — the
+    standard research cache.
+    """
     symbols: list[str] = config["symbols"]
     start: str = config["start"]
     end: str = config["end"]
@@ -340,7 +351,7 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
     norm_method: str = config.get("normalize_method", "zscore")
     rebuild_data: bool = bool(config.get("rebuild_data", False))
     news_sentiment_enabled: bool = bool(config.get("news_sentiment_enabled", False))
-    phase2_output_dir: str | Path = config.get("phase2_output_dir", "outputs/phase2/latest")
+    sentiment_output_dir: str | Path = config.get("sentiment_output_dir", "outputs/sentiment/latest")
     news_sentiment_device: str = str(config.get("news_sentiment_device", "cpu"))
     news_sentiment_export_trace: bool = bool(config.get("news_sentiment_export_trace", True))
     news_sentiment_batch_size: int = int(config.get("news_sentiment_batch_size", 32))
@@ -349,12 +360,14 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         logger.info("rebuild_data=True → dataset cache bypassed (news cache preserved)")
 
     cfg_hash = _config_hash(config)
-    cache_path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}.parquet"
+    cache_suffix = "_livewide" if allow_missing_target else ""
+    cache_path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}{cache_suffix}.parquet"
 
     if not rebuild_data:
         cached_df = _load_dataset_cache(cache_path)
         if cached_df is not None:
-            cached_df = cached_df.dropna(subset=[target_col])
+            if not allow_missing_target:
+                cached_df = cached_df.dropna(subset=[target_col])
 
             if news_sentiment_export_trace and any(col in cached_df.columns for col in SENTIMENT_TRACE_COLUMNS):
                 _export_sentiment_outputs(cached_df, article_trace=None, cache_hash=cfg_hash)
@@ -374,12 +387,12 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
 
     sentiment_inferencer = None
     if news_sentiment_enabled:
-        sentiment_bundle = load_phase2_phobert_inference_bundle(
-            phase2_output_dir,
+        sentiment_bundle = load_phobert_inference_bundle(
+            sentiment_output_dir,
             device=news_sentiment_device,
         )
-        sentiment_inferencer = Phase2PhoBERTInferencer(sentiment_bundle)
-        logger.info("Hybrid news sentiment enabled via Phase 2 PhoBERT handoff")
+        sentiment_inferencer = PhoBERTInferencer(sentiment_bundle)
+        logger.info("Hybrid news sentiment enabled via sentiment-encoder PhoBERT handoff")
 
     encoder = NewsEncoder(
         sentiment_inferencer=sentiment_inferencer,
@@ -496,8 +509,10 @@ def run_pipeline(config: dict[str, Any]) -> CMTFDataset:
         )
         df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols].astype("float32")
 
-    # Keep target-valid rows only
-    df_all = df_all.dropna(subset=[target_col])
+    # Keep target-valid rows only (skipped when allow_missing_target=True — the live-
+    # inference path needs the most recent rows precisely BECAUSE their target is NaN).
+    if not allow_missing_target:
+        df_all = df_all.dropna(subset=[target_col])
 
     dataset = CMTFDataset(
         df_featured=df_all,
@@ -532,7 +547,7 @@ def prepare_single_cutoff(
     *,
     news_cache_dir: str | Path = "cache/news",
     ohlcv_source: str = "KBS",
-    phase2_output_dir: str | Path = "outputs/phase2/latest",
+    sentiment_output_dir: str | Path = "outputs/sentiment/latest",
     news_sentiment_device: str = "cpu",
 ) -> dict[str, Any]:
     """Prepare all market + news tensors for one (symbol, cutoff) request."""
@@ -553,7 +568,7 @@ def prepare_single_cutoff(
             sequence_len,
             news_cache_dir=news_cache_dir,
             ohlcv_source=ohlcv_source,
-            phase2_output_dir=phase2_output_dir,
+            sentiment_output_dir=sentiment_output_dir,
             news_sentiment_device=news_sentiment_device,
         )
         _prepare_cache[cache_key] = result_dict
@@ -567,7 +582,7 @@ def _compute_single_cutoff(
     *,
     news_cache_dir: str | Path,
     ohlcv_source: str,
-    phase2_output_dir: str | Path,
+    sentiment_output_dir: str | Path,
     news_sentiment_device: str,
 ) -> dict[str, Any]:
     """Internal computation for prepare_single_cutoff (no caching)."""
@@ -623,11 +638,11 @@ def _compute_single_cutoff(
         df_featured["vnindex_vol_ratio"] = 1.0
 
     try:
-        sentiment_bundle = load_phase2_phobert_inference_bundle(
-            phase2_output_dir,
+        sentiment_bundle = load_phobert_inference_bundle(
+            sentiment_output_dir,
             device=news_sentiment_device,
         )
-        sentiment_inferencer = Phase2PhoBERTInferencer(sentiment_bundle)
+        sentiment_inferencer = PhoBERTInferencer(sentiment_bundle)
     except Exception:
         logger.warning("PhoBERT bundle load failed — news encoding without sentiment")
         sentiment_inferencer = None

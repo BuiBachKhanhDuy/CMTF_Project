@@ -1,4 +1,4 @@
-"""Text preprocessing utilities and diagnostics for Phase 2 title models."""
+"""Text preprocessing utilities and diagnostics for sentiment title models."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 
 @dataclass(frozen=True, slots=True)
 class PreprocessingConfig:
-    """Configurable text cleanup for Phase 2 sentiment experiments."""
+    """Configurable text cleanup for sentiment experiments."""
 
     lowercase: bool = False
     strip_html: bool = True
@@ -79,7 +79,7 @@ def apply_preprocessing(
     output_col: str = "title_clean",
     segmenter: Callable[[str], str] | None = None,
 ) -> pd.DataFrame:
-    """Apply shared Phase 2 preprocessing and attach diagnostics columns."""
+    """Apply shared sentiment preprocessing and attach diagnostics columns."""
 
     if text_col not in df.columns:
         raise ValueError(f"Missing text column: {text_col}")
