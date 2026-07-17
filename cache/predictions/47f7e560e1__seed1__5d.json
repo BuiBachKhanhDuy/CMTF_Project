@@ -1,0 +1,11 @@
+{
+  "cell_id": "cmtf__cmtf__all__scalars__enc=lstm__om=fusion_plus_news__fstyle=learned__mq=multi__xattn=1__pe=0__k=3__gate=1__galpha=1.00__ts=0__aux=1__vreg=1__iprod=0__idiff=0__nprod=0__csim=0__pnews=0__vcoeff=0.0010__fmd=64__fhd=32__pnd=128__nh=4__do=0.1__spw=0.01__elr=0.1__auxw=0.1__s1r=0.33__me=50__fe=40__mp=8__fp=8",
+  "config_hash": "47f7e560e1",
+  "seed": 1,
+  "horizon": 5,
+  "scaling_version": "unitstd_v2",
+  "target_scale": 21.045994298499014,
+  "shuffle_news": false,
+  "data_sig": "5065b454e97b0f2a793c198503f31b44",
+  "news_sig": "21bf132e66147ef43677338c50a4f0c1"
+}

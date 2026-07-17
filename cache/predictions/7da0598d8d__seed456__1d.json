@@ -1,0 +1,11 @@
+{
+  "cell_id": "gpt4ts__none__matched__scalars",
+  "config_hash": "7da0598d8d",
+  "seed": 456,
+  "horizon": 1,
+  "scaling_version": "unitstd_v2",
+  "target_scale": 47.03168725658993,
+  "shuffle_news": false,
+  "data_sig": "46a4caab38a5dcc6a499404852367931",
+  "news_sig": "b1a739676496d318c1519bd3b4b2f00c"
+}

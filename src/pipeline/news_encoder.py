@@ -10,13 +10,14 @@ import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 from loguru import logger
 from tqdm import tqdm
 
-from src.phase2 import (
-    Phase2PhoBERTInferencer,
+from src.sentiment import (
+    PhoBERTInferencer,
     aggregate_title_sentiment_scores,
     flatten_sentiment_scores,
 )
@@ -24,6 +25,47 @@ from src.phase2 import (
 _NEWS_DIM = 768
 _DEFAULT_MODEL_NAME = "dangvantuan/vietnamese-embedding"
 _EMBEDDINGS_CACHE_DIR = Path("./cache/embeddings")
+
+# Per-ARTICLE embedding cache (keyed on the article's own text content only — not on
+# which bar/row it was assigned to, and not on the whole dataframe). The whole-
+# dataframe cache above (`encode_dataframe`'s cache_key) invalidates completely
+# whenever ANY row changes — extending the pipeline's `end` date by even one day
+# changes len(df)/date range/content hash, forcing a full re-encode of the entire
+# historical corpus (confirmed: ~35-45 min for ~11k rows on CPU) every time a live-
+# inference query needs one new day.
+#
+# An earlier version of this cache was keyed per ROW (symbol+date+the row's full text
+# list). In practice that had a poor hit rate: a bar's list of assigned articles
+# shifts slightly between scrapes (a newly-discovered article changes the set, or
+# just its order), so the row's hash rarely matched even when almost all of its
+# individual articles were unchanged. Caching per INDIVIDUAL ARTICLE TEXT instead is
+# robust to exactly that: the same article's own text is byte-identical no matter
+# which bar's window it ends up in or what else is in that window, so it hits
+# regardless of how the surrounding row's article set is reshuffled. Pooling (mean,
+# or sentiment-weighted) is cheap and always redone fresh per row; only the
+# per-article embedding lookup benefits from the cache, so this also works when
+# sentiment-weighted pooling is enabled (the earlier row-level cache had to disable
+# itself there, since the pooling weights are part of what makes a row's output
+# unique).
+_ARTICLE_CACHE_PATH = _EMBEDDINGS_CACHE_DIR / "article_cache_v1.joblib"
+
+
+def _article_cache_key(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _load_article_cache() -> dict[str, np.ndarray]:
+    if _ARTICLE_CACHE_PATH.exists():
+        try:
+            return joblib.load(_ARTICLE_CACHE_PATH)
+        except Exception:
+            logger.warning("Corrupt article embedding cache — starting fresh")
+    return {}
+
+
+def _save_article_cache(cache: dict[str, np.ndarray]) -> None:
+    _EMBEDDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(cache, _ARTICLE_CACHE_PATH, compress=3)
 SENTIMENT_FEATURE_COLUMNS = (
     "sentiment_mean",
     "sentiment_max_abs",
@@ -51,9 +93,10 @@ class NewsEncoder:
         model_name: str = _DEFAULT_MODEL_NAME,
         batch_size: int = 32,
         device: Optional[str] = None,
-        sentiment_inferencer: Phase2PhoBERTInferencer | None = None,
+        sentiment_inferencer: PhoBERTInferencer | None = None,
         sentiment_batch_size: int = 32,
         use_weighted_pooling: bool = True,
+        export_hybrid_embedding: bool = False,
     ) -> None:
         self.model_name = model_name
         self.batch_size = batch_size
@@ -62,6 +105,7 @@ class NewsEncoder:
         self.sentiment_inferencer = sentiment_inferencer
         self.sentiment_batch_size = int(sentiment_batch_size)
         self.use_weighted_pooling = bool(use_weighted_pooling)
+        self.export_hybrid_embedding = bool(export_hybrid_embedding)
         self.last_sentiment_trace: pd.DataFrame | None = None
 
     @property
@@ -92,6 +136,7 @@ class NewsEncoder:
         texts: list[str],
         null_mask: bool = False,
         weights: list[float] | None = None,
+        article_cache: dict[str, np.ndarray] | None = None,
     ) -> dict[str, Any]:
         """Encode a list of news texts for one time window.
 
@@ -103,6 +148,11 @@ class NewsEncoder:
                 magnitude-weighted pooling when ``use_weighted_pooling``
                 is True. Must be the same length as ``texts`` after
                 filtering. Falls back to mean-pooling on mismatch.
+            article_cache: Optional shared dict (mutated in place) mapping a hash of
+                an article's own text to its already-computed embedding. Individual
+                article text is stable regardless of which bar/window it's assigned
+                to, so this survives dataset rebuilds that only shift which articles
+                land in which window (see module docstring above `_article_cache_key`).
 
         Returns:
             Dict with keys:
@@ -123,20 +173,18 @@ class NewsEncoder:
                 "has_news": False,
             }
 
-        # Truncate long texts to stay within the model's max token limit.
-        # PhoBERT's tokenizer does not auto-truncate, so we cut at the
-        # character level (rough proxy ≈ 1.5 chars/token for Vietnamese).
-        max_chars = int(self.model.max_seq_length * 1.5)
-        valid_texts = [t[:max_chars] for t in valid_texts]
+        if article_cache is not None:
+            keys = [_article_cache_key(t) for t in valid_texts]
+            miss_idx = [i for i, k in enumerate(keys) if k not in article_cache]
+            if miss_idx:
+                miss_texts = [valid_texts[i] for i in miss_idx]
+                miss_embeddings = self._encode_texts(miss_texts)
+                for i, emb in zip(miss_idx, miss_embeddings):
+                    article_cache[keys[i]] = emb
+            embeddings = np.stack([article_cache[k] for k in keys])
+        else:
+            embeddings = self._encode_texts(valid_texts)
 
-        # Enable tokenizer-level truncation as a safety net
-        self.model.tokenizer.model_max_length = self.model.max_seq_length
-        embeddings = self.model.encode(
-            valid_texts,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
         # Weighted pool: weight by sentiment magnitude so polarised articles
         # dominate over neutral ones. Falls back to mean-pool on any mismatch.
         if (
@@ -149,6 +197,22 @@ class NewsEncoder:
         else:
             pooled = np.mean(embeddings, axis=0).astype(np.float32)
         return {"embedding": pooled, "has_news": True}
+
+    def _encode_texts(self, texts: list[str]) -> np.ndarray:
+        """Raw model encode, no caching. Handles truncation for the model's token limit."""
+        # PhoBERT's tokenizer does not auto-truncate, so we cut at the character
+        # level (rough proxy ≈ 1.5 chars/token for Vietnamese).
+        max_chars = int(self.model.max_seq_length * 1.5)
+        truncated = [t[:max_chars] for t in texts]
+
+        # Enable tokenizer-level truncation as a safety net
+        self.model.tokenizer.model_max_length = self.model.max_seq_length
+        return self.model.encode(
+            truncated,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        )
 
     # ------------------------------------------------------------------
     # DataFrame-level encoding
@@ -192,7 +256,7 @@ class NewsEncoder:
                 emb_array = cached["embeddings"]
                 has_news_array = cached["has_news"]
                 hybrid_array = cached[NEWS_HYBRID_COLUMN] if NEWS_HYBRID_COLUMN in cached.files else None
-                expected_hybrid = self.sentiment_inferencer is not None
+                expected_hybrid = self.sentiment_inferencer is not None and self.export_hybrid_embedding
                 has_expected_hybrid = (hybrid_array is not None) == expected_hybrid
                 if len(emb_array) == len(df) and has_expected_hybrid:
                     df["news_emb"] = list(emb_array)
@@ -224,6 +288,9 @@ class NewsEncoder:
         hybrid_embeddings: list[np.ndarray] = []
         sentiment_records: list[dict[str, float]] = []
 
+        article_cache = _load_article_cache() if use_cache else None
+        cache_size_before = len(article_cache) if article_cache is not None else 0
+
         logger.info("Encoding news for {} rows …", len(df))
         for pos in tqdm(range(len(df)), desc="Encoding news"):
             texts = df.iloc[pos][text_col]
@@ -238,13 +305,14 @@ class NewsEncoder:
                 texts=row_texts,
                 null_mask=bool(is_null),
                 weights=row_weights if len(row_weights) == len(row_texts) else None,
+                article_cache=article_cache,
             )
             embeddings.append(result["embedding"])
             has_news_flags.append(result["has_news"])
 
             sentiment_features = aggregate_title_sentiment_scores(sentiment_scores_by_row[pos])
             sentiment_records.append(sentiment_features)
-            if self.sentiment_inferencer is not None:
+            if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
                 hybrid_vec = np.concatenate(
                     [
                         result["embedding"],
@@ -256,12 +324,21 @@ class NewsEncoder:
                 ).astype(np.float32)
                 hybrid_embeddings.append(hybrid_vec)
 
+        if article_cache is not None:
+            new_articles = len(article_cache) - cache_size_before
+            logger.info(
+                "Article embedding cache: {} known articles, {} newly encoded this run",
+                len(article_cache), new_articles,
+            )
+            if new_articles > 0:
+                _save_article_cache(article_cache)
+
         df["news_emb"] = embeddings
         df["has_news"] = has_news_flags
         sentiment_frame = pd.DataFrame(sentiment_records, index=df.index)
         for col in SENTIMENT_TRACE_COLUMNS:
             df[col] = sentiment_frame[col].to_numpy(dtype=np.float32, copy=True)
-        if self.sentiment_inferencer is not None:
+        if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
             df[NEWS_HYBRID_COLUMN] = hybrid_embeddings
         logger.info("News encoding complete")
 
@@ -269,17 +346,22 @@ class NewsEncoder:
         if use_cache:
             _EMBEDDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
             payload: dict[str, Any] = {
-                "embeddings": np.stack(embeddings),
-                "has_news": np.array(has_news_flags),
+                "embeddings": np.stack(embeddings).astype(np.float32),
+                "has_news": np.array(has_news_flags, dtype=bool),
             }
+
             for col in SENTIMENT_TRACE_COLUMNS:
                 payload[col] = df[col].to_numpy(dtype=np.float32, copy=True)
-            if self.sentiment_inferencer is not None:
-                payload[NEWS_HYBRID_COLUMN] = np.stack(hybrid_embeddings)
+
+            if self.sentiment_inferencer is not None and self.export_hybrid_embedding:
+                hybrid_array = np.stack(hybrid_embeddings).astype(np.float32)
+                df[NEWS_HYBRID_COLUMN] = hybrid_embeddings
+                payload[NEWS_HYBRID_COLUMN] = hybrid_array
+
             np.savez_compressed(cache_path, **payload)
             logger.info("Embeddings cached → {} ({} rows)", cache_path.name, len(df))
-
-        return df
+            
+        return df    
 
     def _score_titles(self, df: pd.DataFrame) -> tuple[list[list[float]], pd.DataFrame]:
         if self.sentiment_inferencer is None:
@@ -340,7 +422,7 @@ class NewsEncoder:
     ) -> str:
         """Compute a deterministic cache key from the DataFrame contents."""
         h = hashlib.sha256()
-        h.update(b"news_encoder_cache_v3")
+        h.update(b"news_encoder_cache_v4")
         h.update(str(bool(weighted_pooling)).encode())
         h.update(str(len(df)).encode())
         if model_name:

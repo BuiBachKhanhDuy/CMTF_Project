@@ -1,0 +1,11 @@
+{
+  "cell_id": "lstm__late__all__scalars",
+  "config_hash": "5b85788ae7",
+  "seed": 42,
+  "horizon": 1,
+  "scaling_version": "unitstd_v2",
+  "target_scale": 47.03168725658993,
+  "shuffle_news": false,
+  "data_sig": "46a4caab38a5dcc6a499404852367931",
+  "news_sig": "7c487617615339c4b66ce7ebdb6f625e"
+}

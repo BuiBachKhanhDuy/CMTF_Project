@@ -1,0 +1,53 @@
+[32m2026-07-16 22:34:36.805[0m | [1mINFO    [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m140[0m - [1mFetching OHLCV | VCB | 2025-03-16 \u2192 2025-08-13 | 1D[0m
+\U0001f4e6 Vnai 2.5.0 is available
+Current: 2.4.9 (Python 3.11 (venv))
+Update: c:\Users\bachkhan\Documents\ChatbotThesis\.venv\Scripts\python.exe -m pip install vnai --upgrade
+Release: https://pypi.org/project/vnai/#history
+[32m2026-07-16 22:34:50.745[0m | [33m[1mWARNING [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m158[0m - [33m[1mVCB � 4 missing trading days detected (of 108 expected)[0m
+[32m2026-07-16 22:34:50.745[0m | [1mINFO    [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m166[0m - [1mOHLCV fetched | VCB | 104 rows[0m
+[32m2026-07-16 22:35:35.661[0m | [1mINFO    [0m | [36msrc.pipeline.temporal_aligner[0m:[36massign_news_to_bars[0m:[36m77[0m - [1mNews alignment complete | 103 / 103 bars have news[0m
+[32m2026-07-16 22:35:35.683[0m | [1mINFO    [0m | [36msrc.pipeline.feature_engineer[0m:[36mcompute_technical[0m:[36m99[0m - [1mTechnical indicators computed | 103 rows[0m
+[32m2026-07-16 22:35:35.684[0m | [1mINFO    [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m140[0m - [1mFetching OHLCV | VNINDEX | 2025-03-16 \u2192 2025-08-13 | 1D[0m
+[32m2026-07-16 22:35:38.737[0m | [33m[1mWARNING [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m158[0m - [33m[1mVNINDEX � 4 missing trading days detected (of 108 expected)[0m
+[32m2026-07-16 22:35:38.737[0m | [1mINFO    [0m | [36msrc.pipeline.data_fetcher[0m:[36mfetch_ohlcv[0m:[36m166[0m - [1mOHLCV fetched | VNINDEX | 104 rows[0m
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                 ┃
+┃  ⚠️ THÔNG BÁO QUAN TRỌNG                                                        ┃
+┃                                                                                 ┃
+┃  Phát hành vnstock 4.0.1 cung cấp sửa lỗi quan trọng và bổ sung giao diện API   ┃
+┃  thống nhất (Unified UI), tăng tính ổn định của code.                           ┃
+┃  Cập nhật: pip install vnstock -U                                               ┃
+┃  AI Agent Guide: https://github.com/vnstock-hq/vnstock-agent-guide/             ┃
+┃                                                                                 ┃
+┃  ────────────────────────────────────────────────────────────────────────────── ┃
+┃                                                                                 ┃
+┃  🚀 VNSTOCK INSIDERS PROGRAM - NÂNG TẦM TRẢI NGHIỆM CỦA BẠN! 🚀                 ┃
+┃                                                                                 ┃
+┃  Nếu bạn cảm thấy khó chịu với các thông báo và quảng cáo:                      ┃
+┃                                                                                 ┃
+┃  ✨ Ẩn toàn bộ thông báo và quảng cáo phiền hà                                  ┃
+┃  🔓 Mở rộng khả năng sử dụng API tối đa                                         ┃
+┃  ⚡ Tăng tốc tải dữ liệu từ 5-8 lần                                              ┃
+┃  📈 Tăng giới hạn truy cập API lên đến 5 lần                                    ┃
+┃  🤖 Dùng AI Agent viết code hiệu quả với tài liệu Agent Guide                    ┃
+┃                                                                                 ┃
+┃  🔗 Tham gia ngay: https://vnstocks.com/insiders-program#tiers                  ┃
+┃                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+Loading weights:   0%|          | 0/197 [00:00<?, ?it/s]Loading weights: 100%|##########| 197/197 [00:00<00:00, 32837.02it/s]
+[transformers] [1mRobertaModel LOAD REPORT[0m from: vinai/phobert-base-v2
+Key                       | Status     | 
+--------------------------+------------+-
+lm_head.layer_norm.bias   | UNEXPECTED | 
+lm_head.layer_norm.weight | UNEXPECTED | 
+lm_head.bias              | UNEXPECTED | 
+lm_head.dense.bias        | UNEXPECTED | 
+lm_head.dense.weight      | UNEXPECTED | 
+pooler.dense.weight       | MISSING    | 
+pooler.dense.bias         | MISSING    | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+EXIT=124

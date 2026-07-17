@@ -1,0 +1,34 @@
+📦 Vnai 2.5.0 is available
+Current: 2.4.9 (Python 3.11 (venv))
+Update: c:\Users\bachkhan\Documents\ChatbotThesis\.venv\Scripts\python.exe -m pip install vnai --upgrade
+Release: https://pypi.org/project/vnai/#history
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                 ┃
+┃  ⚠️ THÔNG BÁO QUAN TRỌNG                                                        ┃
+┃                                                                                 ┃
+┃  Phát hành vnstock 4.0.1 cung cấp sửa lỗi quan trọng và bổ sung giao diện API   ┃
+┃  thống nhất (Unified UI), tăng tính ổn định của code.                           ┃
+┃  Cập nhật: pip install vnstock -U                                               ┃
+┃  AI Agent Guide: https://github.com/vnstock-hq/vnstock-agent-guide/             ┃
+┃                                                                                 ┃
+┃  ────────────────────────────────────────────────────────────────────────────── ┃
+┃                                                                                 ┃
+┃  🚀 VNSTOCK INSIDERS PROGRAM - NÂNG TẦM TRẢI NGHIỆM CỦA BẠN! 🚀                 ┃
+┃                                                                                 ┃
+┃  Nếu bạn cảm thấy khó chịu với các thông báo và quảng cáo:                      ┃
+┃                                                                                 ┃
+┃  ✨ Ẩn toàn bộ thông báo và quảng cáo phiền hà                                  ┃
+┃  🔓 Mở rộng khả năng sử dụng API tối đa                                         ┃
+┃  ⚡ Tăng tốc tải dữ liệu từ 5-8 lần                                              ┃
+┃  📈 Tăng giới hạn truy cập API lên đến 5 lần                                    ┃
+┃  🤖 Dùng AI Agent viết code hiệu quả với tài liệu Agent Guide                    ┃
+┃                                                                                 ┃
+┃  🔗 Tham gia ngay: https://vnstocks.com/insiders-program#tiers                  ┃
+┃                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ACB 2024-12-31 -> abstain size=+0.00 critic=ok metalabel_vetoed=True
+ACB 2025-01-15 -> abstain size=+0.00 critic=ok metalabel_vetoed=False
+ACB 2025-04-10 -> abstain size=+0.00 critic=ok metalabel_vetoed=False
+
+Transcript -> results\agent_ablation\5d\e2e_demo.md
+EXIT=0

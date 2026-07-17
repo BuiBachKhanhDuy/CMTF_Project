@@ -1,0 +1,7 @@
+rung,config,group,status,primary,full_book_DA,AURC,pooled_IC,gated_DA,gated_IC,coverage,xsec_IC_matched
+A0,bare LLM,LLM,runnable,AURC+faithfulness,,,,,,,
+A1,LLM + prices+news (bar for H3),LLM,runnable,AURC+faithfulness,,,,,,,
+A2,"frozen CMTF, no gate",LLM-free,run,,51.2299,0.448736,0.2081,,,,
+A3,+ gate,LLM-free,run,,,0.448736,,58.2895,0.2081,0.3959,
+A4,+ critic (faithfulness),LLM,runnable,faithfulness,,,,,,,
+A5,full MAS (rank+veto),mixed,decision-path run; faithfulness runnable,,,,,58.2895,0.2081,,0.0402

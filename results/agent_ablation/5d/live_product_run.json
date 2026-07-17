@@ -1,0 +1,2933 @@
+{
+  "manifest": {
+    "git_sha": "e516b49",
+    "eval_mode": false,
+    "seed": null,
+    "ensemble_seeds": [
+      1,
+      42,
+      123
+    ],
+    "cmtf_version": "v4",
+    "backbone_version": "v3",
+    "gate_coverage": 0.25,
+    "gate_on_raw_seed": false,
+    "news_scope_default": "matched",
+    "symbol": "VCB",
+    "cutoff": "2025-08-13",
+    "horizon": 5
+  },
+  "state": {
+    "query_text": "VCB có nên mua trong 5 ngày tới không?",
+    "symbol": "VCB",
+    "prediction_time": "2025-08-13",
+    "target_horizon_days": 5,
+    "sequence_len": 30,
+    "query_intent": "PREDICTION",
+    "target_symbols": [
+      "VCB"
+    ],
+    "target_horizon": "5d",
+    "aspect_filter": "general",
+    "route_reason": "symbol+horizon supplied by CLI → PREDICTION",
+    "market_feature_cols": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "rsi_14",
+      "macd",
+      "macd_signal",
+      "macd_hist",
+      "bb_lower",
+      "bb_mid",
+      "bb_upper",
+      "atr_14",
+      "vol_ratio",
+      "log_ret",
+      "vnindex_ret",
+      "vnindex_vol_ratio",
+      "vnindex_mom_5d",
+      "vnindex_mom_20d"
+    ],
+    "news_mask": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "articles": [
+      {
+        "title": "Chủ tịch Fed: Nếu không vì thuế quan, lãi suất đã giảm rồi",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.0006402228027582169
+      },
+      {
+        "title": "Rủi ro nợ xấu tiếp tục tăng mạnh trong quý 2/2025?",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": -0.757337749004364
+      },
+      {
+        "title": "Rủi ro nợ xấu tiếp tục tăng mạnh trong quý 2/2025?",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": -0.757337749004364
+      },
+      {
+        "title": "Áp dụng lãi suất 5,9%/năm đối với gói vay mua nhà ở xã hội đến 31/12/2025",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.7062099575996399
+      },
+      {
+        "title": "Chủ tịch Fed: Nếu không vì thuế quan, lãi suất đã giảm rồi",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.0006402228027582169
+      },
+      {
+        "title": "Cuộc đua vốn hóa 25 năm: Một công ty thủy điện từng giữ ngôi vua trước khi những 'gã khổng lồ' FPT, Vinamilk, Vietcombank 'tràn' lên sàn",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.8950291872024536
+      },
+      {
+        "title": "Thanh tra VCB Tây Ninh: Tồn tại trong xử lý nợ xấu và giao dịch ngoại tệ",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.17249861359596252
+      },
+      {
+        "title": "Thanh tra VCB Tây Ninh: Tồn tại trong xử lý nợ xấu và giao dịch ngoại tệ",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.17249861359596252
+      },
+      {
+        "title": "Áp dụng lãi suất 5,9%/năm đối với gói vay mua nhà ở xã hội đến 31/12/2025",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.7062099575996399
+      },
+      {
+        "title": "VCB Bình Dương còn tồn tại trong cấp tín dụng sau thanh tra",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": -0.20752045512199402
+      },
+      {
+        "title": "Cuộc đua vốn hóa 25 năm: Một công ty thủy điện từng giữ ngôi vua trước khi những 'gã khổng lồ' FPT, Vinamilk, Vietcombank 'tràn' lên sàn",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.8950291872024536
+      },
+      {
+        "title": "Cơ cấu tổ chức mới của Bộ Tài chính từ ngày 1/7/2025 - Tạp chí Kinh tế",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": 0.3074195384979248
+      },
+      {
+        "title": "VCB Bình Dương còn tồn tại trong cấp tín dụng sau thanh tra",
+        "published_at": "2025-07-02 07:00:00",
+        "bar_index": 0,
+        "sentiment_score": -0.20752045512199402
+      },
+      {
+        "title": "Vietcombank triển khai Apple Pay cho chủ thẻ JCB",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.3151470124721527
+      },
+      {
+        "title": "Vietcombank triển khai Apple Pay cho chủ thẻ JCB",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.3151470124721527
+      },
+      {
+        "title": "Thanh tra NHNN phát hiện sai phạm ở loạt chi nhánh ngân hàng Vietcombank",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": -0.6300495862960815
+      },
+      {
+        "title": "Ngân hàng Nhà nước công bố kết luận thanh tra hàng loạt chi nhánh ngân hàng thương mại",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.5080409646034241
+      },
+      {
+        "title": "Ngân hàng Nhà nước công bố kết luận thanh tra hàng loạt chi nhánh ngân hàng thương mại",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.5080409646034241
+      },
+      {
+        "title": "Thanh tra NHNN phát hiện sai phạm ở loạt chi nhánh ngân hàng Vietcombank",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": -0.6300495862960815
+      },
+      {
+        "title": "VN-Index cần thêm thời gian tích lũy trở lại với hỗ trợ gần tại 1.365 – 1.375 điểm",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.9567996263504028
+      },
+      {
+        "title": "Cuộc đua vốn hóa: Vietcombank sa sút, Techcombank bứt phá bỏ xa VPBank, VietinBank áp sát BIDV",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.9218882322311401
+      },
+      {
+        "title": "VN-Index cần thêm thời gian tích lũy trở lại với hỗ trợ gần tại 1.365 – 1.375 điểm",
+        "published_at": "2025-07-03 07:00:00",
+        "bar_index": 1,
+        "sentiment_score": 0.9567996263504028
+      },
+      {
+        "title": "Thủ tướng yêu cầu sớm bỏ hạn mức tăng trưởng tín dụng",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.16291376948356628
+      },
+      {
+        "title": "Thủ tướng yêu cầu sớm bỏ hạn mức tăng trưởng tín dụng",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.16291376948356628
+      },
+      {
+        "title": "Điểm tin 6h: Thủ tướng yêu cầu sớm bỏ hạn mức tăng trưởng tín dụng | Ông Putin điện đàm với ông Trump, tuyên bố 'không từ bỏ mục tiêu ở Ukraine'",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.1201801598072052
+      },
+      {
+        "title": "Điểm tin 6h: Thủ tướng yêu cầu sớm bỏ hạn mức tăng trưởng tín dụng | Ông Putin điện đàm với ông Trump, tuyên bố 'không từ bỏ mục tiêu ở Ukraine'",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.1201801598072052
+      },
+      {
+        "title": "Cổ phiếu một ngân hàng Big4 vượt đỉnh lịch sử",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.9895584583282471
+      },
+      {
+        "title": "Vietcombank tăng trưởng kỷ lục, quản trị rủi ro cần “vượt tầm” quy mô",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.7245765328407288
+      },
+      {
+        "title": "Vietnam Summit 2025 bình chọn Vietcombank dẫn đầu ngành ngân hàng về đổi mới sáng tạo và ESG",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.9154530167579651
+      },
+      {
+        "title": "Vietcombank tăng trưởng kỷ lục, quản trị rủi ro cần “vượt tầm” quy mô",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.7245765328407288
+      },
+      {
+        "title": "Cổ phiếu một ngân hàng Big4 vượt đỉnh lịch sử",
+        "published_at": "2025-07-04 07:00:00",
+        "bar_index": 2,
+        "sentiment_score": 0.9895584583282471
+      },
+      {
+        "title": "Tăng trưởng GRDP TP.HCM (mới) ước đạt 7,4% trong 6 tháng đầu năm 2025",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9724102020263672
+      },
+      {
+        "title": "[Video] GDP 6 tháng tăng cao nhất cùng kỳ giai đoạn 2011-2025",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9683948755264282
+      },
+      {
+        "title": "CPI bình quân 6 tháng tăng 3,27%, lạm phát vẫn trong tầm kiểm soát",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.6475610733032227
+      },
+      {
+        "title": "Bình quân 6 tháng, CPI tăng 3,27%; lạm phát trong tầm kiểm soát",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.5772464871406555
+      },
+      {
+        "title": "Bình quân 6 tháng, CPI tăng 3,27%; lạm phát trong tầm kiểm soát",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.5772464871406555
+      },
+      {
+        "title": "GDP quý II tăng 7,96%",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9289118051528931
+      },
+      {
+        "title": "Lạm phát cơ bản 6 tháng đầu năm 2025 tăng 3,16% - Chi tiết bài viết",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.883061408996582
+      },
+      {
+        "title": "GDP quý II tăng 7,96%",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9289118051528931
+      },
+      {
+        "title": "CPI bình quân 6 tháng tăng 3,27%, lạm phát vẫn trong tầm kiểm soát",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.6475610733032227
+      },
+      {
+        "title": "Lạm phát cơ bản 6 tháng đầu năm 2025 tăng 3,16% - Chi tiết bài viết",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.883061408996582
+      },
+      {
+        "title": "Tăng trưởng GRDP TP.HCM (mới) ước đạt 7,4% trong 6 tháng đầu năm 2025",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9724102020263672
+      },
+      {
+        "title": "Lạm phát năm thứ 11 liên tiếp được kiểm soát theo mục tiêu",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": -0.907997727394104
+      },
+      {
+        "title": "Lạm phát năm thứ 11 liên tiếp được kiểm soát theo mục tiêu",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": -0.907997727394104
+      },
+      {
+        "title": "Chiến sự Ukraine ngày 1.229 : Văn phòng tuyển quân Ukraine liên tục bị nhắm đến",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": -0.42547956109046936
+      },
+      {
+        "title": "Chính sách tài khóa vững vàng “chèo lái” tăng trưởng khi tiền tệ dần cạn dư địa",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.7866557240486145
+      },
+      {
+        "title": "6 tháng đầu năm, CPI tăng 3,27% so với cùng kỳ, lạm phát cơ bản tăng 3,16%",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.9198336005210876
+      },
+      {
+        "title": "Chính sách tài khóa vững vàng “chèo lái” tăng trưởng khi tiền tệ dần cạn dư địa",
+        "published_at": "2025-07-07 07:00:00",
+        "bar_index": 3,
+        "sentiment_score": 0.7866557240486145
+      },
+      {
+        "title": "Vietcombank nhận cú đúp giải thưởng châu Á về quản trị rủi ro",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9400678873062134
+      },
+      {
+        "title": "Vietcombank nhận cú đúp giải thưởng châu Á về quản trị rủi ro",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9400678873062134
+      },
+      {
+        "title": "Ông Võ Minh Tuấn làm Giám đốc Ngân hàng Nhà nước chi nhánh Khu vực 2",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.5397603511810303
+      },
+      {
+        "title": "Ông Võ Minh Tuấn làm Giám đốc Ngân hàng Nhà nước chi nhánh Khu vực 2",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.5397603511810303
+      },
+      {
+        "title": "Ngân hàng Nhà nước nêu lý do USD yếu nhưng tiền đồng vẫn mất giá",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.14774233102798462
+      },
+      {
+        "title": "Ngân hàng Nhà nước nêu lý do USD yếu nhưng tiền đồng vẫn mất giá",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.14774233102798462
+      },
+      {
+        "title": "Chiến sự Ukraine ngày 1.230: Nga đạt đột phá sau hơn 3 năm",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9598224759101868
+      },
+      {
+        "title": "Kinh tế năm 2024: Tăng trưởng vượt trội",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.23177988827228546
+      },
+      {
+        "title": "Tín dụng tăng gần 10% trong 6 tháng đầu năm 2025",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9673755764961243
+      },
+      {
+        "title": "Tín dụng tăng gần 10% trong 6 tháng đầu năm 2025",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9673755764961243
+      },
+      {
+        "title": "Chiến sự Ukraine ngày 1.230: Nga đạt đột phá sau hơn 3 năm",
+        "published_at": "2025-07-08 07:00:00",
+        "bar_index": 4,
+        "sentiment_score": 0.9598224759101868
+      },
+      {
+        "title": "Những nhân tố góp phần hỗ trợ tăng trưởng kinh tế Việt Nam sáu tháng đầu năm 2025",
+        "published_at": "2025-07-09 07:00:00",
+        "bar_index": 5,
+        "sentiment_score": 0.8007212281227112
+      },
+      {
+        "title": "Lạm phát năm 2025 có thể ở mức 3,4-4,2%",
+        "published_at": "2025-07-09 07:00:00",
+        "bar_index": 5,
+        "sentiment_score": -0.5721568465232849
+      },
+      {
+        "title": "Kiểm soát lạm phát hiệu quả là điểm sáng trong điều hành kinh tế vĩ mô",
+        "published_at": "2025-07-09 07:00:00",
+        "bar_index": 5,
+        "sentiment_score": 0.6382860541343689
+      },
+      {
+        "title": "Kiểm soát lạm phát hiệu quả là điểm sáng trong điều hành kinh tế vĩ mô",
+        "published_at": "2025-07-09 07:00:00",
+        "bar_index": 5,
+        "sentiment_score": 0.6382860541343689
+      },
+      {
+        "title": "Kinh tế ổn định, kỳ vọng lạm phát 2025 “về đích” dưới 4%",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.17289206385612488
+      },
+      {
+        "title": "Kinh tế ổn định, kỳ vọng lạm phát 2025 “về đích” dưới 4%",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.17289206385612488
+      },
+      {
+        "title": "Lạm phát năm 2025 trong tầm kiểm soát",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.04205317795276642
+      },
+      {
+        "title": "Ban Chính sách, chiến lược Trung ương chủ trì tổ chức Diễn đàn tăng trưởng kinh tế Việt Nam 2025",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.16809797286987305
+      },
+      {
+        "title": "Lạm phát về đâu?",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.03282776102423668
+      },
+      {
+        "title": "Ban Chính sách, chiến lược Trung ương chủ trì tổ chức Diễn đàn tăng trưởng kinh tế Việt Nam 2025",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.16809797286987305
+      },
+      {
+        "title": "Chủ tịch Vietcombank: Dư nợ tín dụng đã tăng hơn 11% từ đầu năm, đạt 1,6 triệu tỷ đồng",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.8841855525970459
+      },
+      {
+        "title": "Kiểm soát lạm phát 6 tháng cuối năm 2025: Khả thi song không thể chủ quan",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.010061606764793396
+      },
+      {
+        "title": "Lạm phát về đâu?",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.03282776102423668
+      },
+      {
+        "title": "Kiểm soát lạm phát 6 tháng cuối năm 2025: Khả thi song không thể chủ quan",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": -0.010061606764793396
+      },
+      {
+        "title": "Chủ tịch Vietcombank: Dư nợ tín dụng đã tăng hơn 11% từ đầu năm, đạt 1,6 triệu tỷ đồng",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.8841855525970459
+      },
+      {
+        "title": "Lạm phát năm 2025 trong tầm kiểm soát",
+        "published_at": "2025-07-10 07:00:00",
+        "bar_index": 6,
+        "sentiment_score": 0.04205317795276642
+      },
+      {
+        "title": "Lãi suất ngân hàng nào cao nhất?",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.17637908458709717
+      },
+      {
+        "title": "Lãi suất ngân hàng nào cao nhất?",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.17637908458709717
+      },
+      {
+        "title": "Cơ chế thử nghiệm có kiểm soát - Bước ngoặt chiến lược thúc đẩy Fintech và chuyển đổi số ngành Ngân hàng",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.88568514585495
+      },
+      {
+        "title": "Cơ chế thử nghiệm có kiểm soát - Bước ngoặt chiến lược thúc đẩy Fintech và chuyển đổi số ngành Ngân hàng",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.88568514585495
+      },
+      {
+        "title": "Thanh tra NHNN \"bắt bệnh\" Shinhan Bank Việt Nam - Tạp chí Kinh tế",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.6230934262275696
+      },
+      {
+        "title": "Dự báo lạm phát nửa cuối năm, gió ngược tỷ giá và tín dụng tăng tốc sẽ gây áp lực",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.06983904540538788
+      },
+      {
+        "title": "Dự báo lạm phát nửa cuối năm, gió ngược tỷ giá và tín dụng tăng tốc sẽ gây áp lực",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.06983904540538788
+      },
+      {
+        "title": "Bức tranh kinh tế Việt Nam 6 tháng đầu năm và dự báo cả năm 2025",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.31076285243034363
+      },
+      {
+        "title": "Thanh tra NHNN \"bắt bệnh\" Shinhan Bank Việt Nam - Tạp chí Kinh tế",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.6230934262275696
+      },
+      {
+        "title": "Bức tranh kinh tế Việt Nam 6 tháng đầu năm và dự báo cả năm 2025",
+        "published_at": "2025-07-11 07:00:00",
+        "bar_index": 7,
+        "sentiment_score": 0.31076285243034363
+      },
+      {
+        "title": "Cập nhật KQKD ngân hàng 6 tháng đầu năm: Nhà băng tư nhân đầu tiên công bố lợi nhuận, Big3 tăng trưởng tín dụng mạnh nhất trong nhiều năm",
+        "published_at": "2025-07-14 07:00:00",
+        "bar_index": 8,
+        "sentiment_score": 0.9818457365036011
+      },
+      {
+        "title": "Cập nhật KQKD ngân hàng 6 tháng đầu năm: Nhà băng tư nhân đầu tiên công bố lợi nhuận, Big3 tăng trưởng tín dụng mạnh nhất trong nhiều năm",
+        "published_at": "2025-07-14 07:00:00",
+        "bar_index": 8,
+        "sentiment_score": 0.9818457365036011
+      },
+      {
+        "title": "TOP 10 thương hiệu mạnh Việt Nam 2024 - Bài 3: Vietcombank đã xây dựng thương hiệu như thế nào?",
+        "published_at": "2025-07-14 07:00:00",
+        "bar_index": 8,
+        "sentiment_score": 0.7003474831581116
+      },
+      {
+        "title": "TOP 10 thương hiệu mạnh Việt Nam 2024 - Bài 3: Vietcombank đã xây dựng thương hiệu như thế nào?",
+        "published_at": "2025-07-14 07:00:00",
+        "bar_index": 8,
+        "sentiment_score": 0.7003474831581116
+      },
+      {
+        "title": "CPI Mỹ tăng mạnh",
+        "published_at": "2025-07-15 07:00:00",
+        "bar_index": 9,
+        "sentiment_score": -0.08196935057640076
+      },
+      {
+        "title": "CPI Mỹ tăng mạnh",
+        "published_at": "2025-07-15 07:00:00",
+        "bar_index": 9,
+        "sentiment_score": -0.08196935057640076
+      },
+      {
+        "title": "Nếu khối ngoại mua mạnh tiếp, VN-Index sẽ vượt đỉnh lịch sử 1.500 điểm ngay trong tháng 7?",
+        "published_at": "2025-07-15 07:00:00",
+        "bar_index": 9,
+        "sentiment_score": 0.9785853028297424
+      },
+      {
+        "title": "Nếu khối ngoại mua mạnh tiếp, VN-Index sẽ vượt đỉnh lịch sử 1.500 điểm ngay trong tháng 7?",
+        "published_at": "2025-07-15 07:00:00",
+        "bar_index": 9,
+        "sentiment_score": 0.9785853028297424
+      },
+      {
+        "title": "Phương Tây đã ủng hộ những gì cho Ukraine kể từ đầu xung đột?",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.07515931874513626
+      },
+      {
+        "title": "Huy động nguồn lực tài chính cho tăng trưởng xanh ở Việt Nam trong bối cảnh Cách mạng công nghiệp 4.0 - Tạp chí Kinh tế",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.8958032727241516
+      },
+      {
+        "title": "Huy động nguồn lực tài chính cho tăng trưởng xanh ở Việt Nam trong bối cảnh Cách mạng công nghiệp 4.0 - Tạp chí Kinh tế",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.8958032727241516
+      },
+      {
+        "title": "Lạm phát Mỹ nóng lên trong tháng 6",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": -0.6357758045196533
+      },
+      {
+        "title": "Giá vàng chịu áp lực khi kinh tế Mỹ phát đi tín hiệu hồi phục",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.7068690061569214
+      },
+      {
+        "title": "Giá vàng chịu áp lực khi kinh tế Mỹ phát đi tín hiệu hồi phục",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.7068690061569214
+      },
+      {
+        "title": "Chính phủ đặt mục tiêu tăng trưởng GDP năm 2025 đạt 8,3-8,5%",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.9581375122070312
+      },
+      {
+        "title": "Lạm phát Mỹ nóng lên trong tháng 6",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": -0.6357758045196533
+      },
+      {
+        "title": "Phương Tây đã ủng hộ những gì cho Ukraine kể từ đầu xung đột?",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.07515931874513626
+      },
+      {
+        "title": "Chính phủ đặt mục tiêu tăng trưởng GDP năm 2025 đạt 8,3-8,5%",
+        "published_at": "2025-07-16 07:00:00",
+        "bar_index": 10,
+        "sentiment_score": 0.9581375122070312
+      },
+      {
+        "title": "Cập nhật lợi nhuận ngân hàng đến trưa 17/7: Một ngân hàng báo lãi gấp 77 lần cùng kỳ, nhiều nhà băng tăng trưởng tín dụng rất mạnh",
+        "published_at": "2025-07-17 07:00:00",
+        "bar_index": 11,
+        "sentiment_score": 0.9836843013763428
+      },
+      {
+        "title": "Cập nhật lợi nhuận ngân hàng đến trưa 17/7: Một ngân hàng báo lãi gấp 77 lần cùng kỳ, nhiều nhà băng tăng trưởng tín dụng rất mạnh",
+        "published_at": "2025-07-17 07:00:00",
+        "bar_index": 11,
+        "sentiment_score": 0.9836843013763428
+      },
+      {
+        "title": "Thủy sản Hùng Vương (HVG) 'ôm' khối nợ 2.500 tỷ tại Vietcombank, BIDV trước khi dừng công bố BCTC",
+        "published_at": "2025-07-18 07:00:00",
+        "bar_index": 12,
+        "sentiment_score": -0.9134364724159241
+      },
+      {
+        "title": "Tổn thất của Nga và Ukraine sau hơn 3 năm xung đột",
+        "published_at": "2025-07-18 07:00:00",
+        "bar_index": 12,
+        "sentiment_score": -0.17758452892303467
+      },
+      {
+        "title": "Tổn thất của Nga và Ukraine sau hơn 3 năm xung đột",
+        "published_at": "2025-07-18 07:00:00",
+        "bar_index": 12,
+        "sentiment_score": -0.17758452892303467
+      },
+      {
+        "title": "Thủy sản Hùng Vương (HVG) 'ôm' khối nợ 2.500 tỷ tại Vietcombank, BIDV trước khi dừng công bố BCTC",
+        "published_at": "2025-07-18 07:00:00",
+        "bar_index": 12,
+        "sentiment_score": -0.9134364724159241
+      },
+      {
+        "title": "Sức ép kinh tế gia tăng với cả Nga và Ukraine khi cuộc chiến kéo dài",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": -0.03420431911945343
+      },
+      {
+        "title": "VN-Index tiếp tục hướng đến vùng đỉnh lịch sử 1500 điểm -1537 điểm",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": 0.962688684463501
+      },
+      {
+        "title": "VN-Index tiếp tục hướng đến vùng đỉnh lịch sử 1500 điểm -1537 điểm",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": 0.962688684463501
+      },
+      {
+        "title": "Ngân hàng hé lộ kết quả quý II: NCB lãi đột biến, loạt 'ông lớn' bứt phá",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": 0.9836670756340027
+      },
+      {
+        "title": "Chuyên gia nhận định về lạm phát và đề xuất chiến lược nhằm giảm thiểu tác động khi giá dầu tăng",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": 0.03833477944135666
+      },
+      {
+        "title": "Chuyên gia nhận định về lạm phát và đề xuất chiến lược nhằm giảm thiểu tác động khi giá dầu tăng",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": 0.03833477944135666
+      },
+      {
+        "title": "VN-Index lại thất bại trước mốc 1500 điểm, cổ phiếu chứng khoán quay đầu giảm cả loạt",
+        "published_at": "2025-07-21 07:00:00",
+        "bar_index": 13,
+        "sentiment_score": -0.9891567230224609
+      },
+      {
+        "title": "Việt Nam 2045—Tăng trưởng Xanh hơn: Con đường Hướng tới Tương lai Bền vững",
+        "published_at": "2025-07-22 07:00:00",
+        "bar_index": 14,
+        "sentiment_score": 0.8650434017181396
+      },
+      {
+        "title": "VN-Index chính thức vượt 1.500 điểm với thanh khoản tỷ USD, nhiều cổ phiếu Bluechips đồng loạt bứt phá",
+        "published_at": "2025-07-22 07:00:00",
+        "bar_index": 14,
+        "sentiment_score": 0.991865336894989
+      },
+      {
+        "title": "Việt Nam 2045—Tăng trưởng Xanh hơn: Con đường Hướng tới Tương lai Bền vững",
+        "published_at": "2025-07-22 07:00:00",
+        "bar_index": 14,
+        "sentiment_score": 0.8650434017181396
+      },
+      {
+        "title": "ADB: Kinh tế Việt Nam được kỳ vọng vẫn sẽ vững vàng trong năm 2025 và 2026",
+        "published_at": "2025-07-22 07:00:00",
+        "bar_index": 14,
+        "sentiment_score": 0.9361116290092468
+      },
+      {
+        "title": "Nền kinh tế AI ở Việt Nam: Cơ hội hay giấc mơ",
+        "published_at": "2025-07-22 07:00:00",
+        "bar_index": 14,
+        "sentiment_score": 0.26635080575942993
+      },
+      {
+        "title": "Vietcombank lần thứ ba liên tiếp vào Top 20 doanh nghiệp phát triển bền vững",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.9882290959358215
+      },
+      {
+        "title": "Từ lớp học ra thẳng chiến trường – Những thanh niên Nga 18 tuổi chiến đấu và hy sinh tại Ukraine",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.8312203884124756
+      },
+      {
+        "title": "ADB dự báo tăng trưởng Việt Nam trong năm 2025 là 6,3%",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.9429154992103577
+      },
+      {
+        "title": "Vietcombank lần thứ ba liên tiếp vào Top 20 doanh nghiệp phát triển bền vững",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.9882290959358215
+      },
+      {
+        "title": "Từ lớp học ra thẳng chiến trường – Những thanh niên Nga 18 tuổi chiến đấu và hy sinh tại Ukraine",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.8312203884124756
+      },
+      {
+        "title": "Tín dụng tăng trưởng “tiếp sức” nền kinh tế hiệu quả",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.7628174424171448
+      },
+      {
+        "title": "Tín dụng tăng trưởng “tiếp sức” nền kinh tế hiệu quả",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.7628174424171448
+      },
+      {
+        "title": "ADB dự báo tăng trưởng Việt Nam trong năm 2025 là 6,3%",
+        "published_at": "2025-07-23 07:00:00",
+        "bar_index": 15,
+        "sentiment_score": 0.9429154992103577
+      },
+      {
+        "title": "GDP 8,5%: Cú hích để kinh tế Việt Nam bứt phá",
+        "published_at": "2025-07-24 07:00:00",
+        "bar_index": 16,
+        "sentiment_score": 0.9642290472984314
+      },
+      {
+        "title": "Thông tư 14 của Ngân hàng Nhà nước: Tạo điều kiện mở rộng tín dụng, phù hợp mục tiêu tăng trưởng GDP",
+        "published_at": "2025-07-24 07:00:00",
+        "bar_index": 16,
+        "sentiment_score": 0.8974649906158447
+      },
+      {
+        "title": "Thông tư 14 của Ngân hàng Nhà nước: Tạo điều kiện mở rộng tín dụng, phù hợp mục tiêu tăng trưởng GDP",
+        "published_at": "2025-07-24 07:00:00",
+        "bar_index": 16,
+        "sentiment_score": 0.8974649906158447
+      },
+      {
+        "title": "GDP 8,5%: Cú hích để kinh tế Việt Nam bứt phá",
+        "published_at": "2025-07-24 07:00:00",
+        "bar_index": 16,
+        "sentiment_score": 0.9642290472984314
+      },
+      {
+        "title": "Chương mới của nền kinh tế",
+        "published_at": "2025-07-25 07:00:00",
+        "bar_index": 17,
+        "sentiment_score": 0.3123137354850769
+      },
+      {
+        "title": "Chính sách tiền tệ linh hoạt: Giải pháp “kép” cho tăng trưởng và kiểm soát rủi ro - Tạp chí Kinh tế",
+        "published_at": "2025-07-25 07:00:00",
+        "bar_index": 17,
+        "sentiment_score": 0.12309524416923523
+      },
+      {
+        "title": "Chương mới của nền kinh tế",
+        "published_at": "2025-07-25 07:00:00",
+        "bar_index": 17,
+        "sentiment_score": 0.3123137354850769
+      },
+      {
+        "title": "Vietcombank hợp tác Bệnh viện K chuyển đổi số y tế",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.039974287152290344
+      },
+      {
+        "title": "Vietcombank hợp tác Bệnh viện K chuyển đổi số y tế",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.039974287152290344
+      },
+      {
+        "title": "Nhà đầu tư ngoại kỳ vọng chứng khoán sẽ lên ngưỡng 1.800 điểm",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9678183794021606
+      },
+      {
+        "title": "Kịch bản VN-Index năm 2025 đạt 1.800 điểm không hề bất khả thi",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": -0.223840594291687
+      },
+      {
+        "title": "Kịch bản VN-Index năm 2025 đạt 1.800 điểm không hề bất khả thi",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": -0.223840594291687
+      },
+      {
+        "title": "Thị trường chứng khoán 25 năm: Những con số nổi bật",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.4508959650993347
+      },
+      {
+        "title": "Điểm danh những cổ phiếu dẫn đầu trong tuần VN-Index vượt đỉnh lịch sử",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9828470945358276
+      },
+      {
+        "title": "Chuyên gia: Còn dư địa để Việt Nam đạt mục tiêu tăng trưởng 8,5%",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9100716710090637
+      },
+      {
+        "title": "Điểm danh những cổ phiếu dẫn đầu trong tuần VN-Index vượt đỉnh lịch sử",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9828470945358276
+      },
+      {
+        "title": "Dự báo mới nhất về tăng trưởng GDP Việt Nam cả năm 2025",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.5838361382484436
+      },
+      {
+        "title": "Dự báo mới nhất về tăng trưởng GDP Việt Nam cả năm 2025",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.5838361382484436
+      },
+      {
+        "title": "Thủ tướng Hungary: Nguy cơ Thế chiến thứ ba ngày càng gia tăng",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.1339515894651413
+      },
+      {
+        "title": "Chuyên gia kinh tế: Dư địa để Việt Nam đạt mục tiêu tăng trưởng 8,5% là đầu tư tư nhân?",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.8764186501502991
+      },
+      {
+        "title": "Chuyên gia: Còn dư địa để Việt Nam đạt mục tiêu tăng trưởng 8,5%",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9100716710090637
+      },
+      {
+        "title": "Chuyên gia kinh tế: Dư địa để Việt Nam đạt mục tiêu tăng trưởng 8,5% là đầu tư tư nhân?",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.8764186501502991
+      },
+      {
+        "title": "Dự báo tăng trưởng nửa cuối năm 'rất triển vọng'",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.20618703961372375
+      },
+      {
+        "title": "Chủ động chuyển đổi toàn diện sang kinh tế xanh, GDP sẽ tăng trưởng 10-12%/năm",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.8888383507728577
+      },
+      {
+        "title": "Chủ động chuyển đổi toàn diện sang kinh tế xanh, GDP sẽ tăng trưởng 10-12%/năm",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.8888383507728577
+      },
+      {
+        "title": "Các tổ chức quốc tế cập nhật dự báo tăng trưởng GDP Việt Nam 2025",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.7014793753623962
+      },
+      {
+        "title": "Các tổ chức quốc tế cập nhật dự báo tăng trưởng GDP Việt Nam 2025",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.7014793753623962
+      },
+      {
+        "title": "Dự báo tăng trưởng nửa cuối năm 'rất triển vọng'",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.20618703961372375
+      },
+      {
+        "title": "Công ty chứng khoán nhận định gì khi VN-Index vượt đỉnh lịch sử?",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9338666200637817
+      },
+      {
+        "title": "Thanh khoản bùng nổ, VN-Index lập đỉnh lịch sử",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9884553551673889
+      },
+      {
+        "title": "Công ty chứng khoán nhận định gì khi VN-Index vượt đỉnh lịch sử?",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9338666200637817
+      },
+      {
+        "title": "VN-Index vượt đỉnh lịch sử trong ngày kỷ niệm 25 năm thị trường chứng khoán",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9796373844146729
+      },
+      {
+        "title": "VN-Index vượt đỉnh lịch sử, ngày càng xuất hiện nhiều dự báo sẽ lên 1800 điểm",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9827179312705994
+      },
+      {
+        "title": "Thanh khoản bùng nổ, VN-Index lập đỉnh lịch sử",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9884553551673889
+      },
+      {
+        "title": "Vn-Index vượt đỉnh sau 3,5 năm: LPB tăng sốc, Hòa Phát, Masan, PV GAS, Vinamilk vẫn chưa về thời hoàng kim, Novaland chỉ bằng 1/5 đỉnh cũ",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9566622376441956
+      },
+      {
+        "title": "Dòng vốn ngoại quay lại: Động lực mạnh mẽ thúc đẩy VN-Index lập kỷ lục mới",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.990543007850647
+      },
+      {
+        "title": "Vn-Index vượt đỉnh sau 3,5 năm: LPB tăng sốc, Hòa Phát, Masan, PV GAS, Vinamilk vẫn chưa về thời hoàng kim, Novaland chỉ bằng 1/5 đỉnh cũ",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9566622376441956
+      },
+      {
+        "title": "Dòng vốn ngoại quay lại: Động lực mạnh mẽ thúc đẩy VN-Index lập kỷ lục mới",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.990543007850647
+      },
+      {
+        "title": "VN-Index lập đỉnh trong ngày kỷ niệm 25 năm thị trường chứng khoán",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.972571849822998
+      },
+      {
+        "title": "VN-Index vượt đỉnh lịch sử",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9840946197509766
+      },
+      {
+        "title": "VN-Index vượt đỉnh lịch sử trong ngày kỷ niệm 25 năm thị trường chứng khoán",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9796373844146729
+      },
+      {
+        "title": "VN-Index vượt đỉnh lịch sử, ngày càng xuất hiện nhiều dự báo sẽ lên 1800 điểm",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9827179312705994
+      },
+      {
+        "title": "VN-Index lập đỉnh trong ngày kỷ niệm 25 năm thị trường chứng khoán",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.972571849822998
+      },
+      {
+        "title": "Tăng trưởng GDP trên 8%, cần cú hích từ tín dụng và đầu tư công",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.9493992924690247
+      },
+      {
+        "title": "Tiền ồ ạt đổ vào chứng khoán khi VN-Index vượt đỉnh lịch sử, thanh khoản khớp lệnh cao kỷ lục",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.988461971282959
+      },
+      {
+        "title": "Tiền ồ ạt đổ vào chứng khoán khi VN-Index vượt đỉnh lịch sử, thanh khoản khớp lệnh cao kỷ lục",
+        "published_at": "2025-07-28 07:00:00",
+        "bar_index": 18,
+        "sentiment_score": 0.988461971282959
+      },
+      {
+        "title": "Vietcombank lần thứ ba vào top 20 doanh nghiệp phát triển bền vững",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.9825996160507202
+      },
+      {
+        "title": "Vietcombank lần thứ ba vào top 20 doanh nghiệp phát triển bền vững",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.9825996160507202
+      },
+      {
+        "title": "Những trụ cột nào góp sức giúp chỉ số VN-Index tăng mạnh trong năm 2025?",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.6189665198326111
+      },
+      {
+        "title": "Chứng khoán Việt Nam: Hướng tới nâng hạng, hội nhập",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.9383963942527771
+      },
+      {
+        "title": "Gần 2,4 tỉ USD giao dịch chứng khoán, lập kỷ lục về thanh khoản",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.9863802194595337
+      },
+      {
+        "title": "Chiến sự Ukraine ngày 1.251: Mặt trận Pokrovsk trong thế nguy",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.10650012642145157
+      },
+      {
+        "title": "Chứng khoán sụp mạnh sau khi vượt đỉnh, nhiều nhà đầu tư bắt đầu lo",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.8354926109313965
+      },
+      {
+        "title": "'Giải mã' vì sao chứng khoán Việt Nam giảm mạnh, kịch bản tiếp theo là gì?",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.024063056334853172
+      },
+      {
+        "title": "Chứng khoán mất 64 điểm",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.984788179397583
+      },
+      {
+        "title": "Tiêu dùng phục hồi thúc đẩy tăng trưởng kinh tế năm 2025",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.8445544242858887
+      },
+      {
+        "title": "Chỉ số VN-Index giảm sâu hiếm có, mất hơn 64 điểm",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.99468994140625
+      },
+      {
+        "title": "Gần 2,4 tỉ USD giao dịch chứng khoán, lập kỷ lục về thanh khoản",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.9863802194595337
+      },
+      {
+        "title": "Chứng khoán mất 64 điểm",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.984788179397583
+      },
+      {
+        "title": "Cuộc đua vốn hóa ngân hàng khi VN-Index tạo đỉnh: Nhóm ngân hàng nhỏ 'chiến thắng' tuyệt đối, các đại gia Vietcombank, BIDV, VietinBank đồng loạt 'thua trận'",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.8719012141227722
+      },
+      {
+        "title": "Chứng khoán đỏ rực, la liệt 'nằm sàn', mất 64 điểm, thanh khoản lớn chưa từng có",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.9896284937858582
+      },
+      {
+        "title": "'Giải mã' vì sao chứng khoán Việt Nam giảm mạnh, kịch bản tiếp theo là gì?",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.024063056334853172
+      },
+      {
+        "title": "Chiến sự Ukraine ngày 1.251: Mặt trận Pokrovsk trong thế nguy",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.10650012642145157
+      },
+      {
+        "title": "Cuộc đua vốn hóa ngân hàng khi VN-Index tạo đỉnh: Nhóm ngân hàng nhỏ 'chiến thắng' tuyệt đối, các đại gia Vietcombank, BIDV, VietinBank đồng loạt 'thua trận'",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.8719012141227722
+      },
+      {
+        "title": "Tiêu dùng phục hồi thúc đẩy tăng trưởng kinh tế năm 2025",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": 0.8445544242858887
+      },
+      {
+        "title": "Chứng khoán sụp mạnh sau khi vượt đỉnh, nhiều nhà đầu tư bắt đầu lo",
+        "published_at": "2025-07-29 07:00:00",
+        "bar_index": 19,
+        "sentiment_score": -0.8354926109313965
+      },
+      {
+        "title": "Eximbank tăng trưởng tín dụng gần 10% nửa đầu năm",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9799068570137024
+      },
+      {
+        "title": "Eximbank tăng trưởng tín dụng gần 10% nửa đầu năm",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9799068570137024
+      },
+      {
+        "title": "Vietcombank (VCB): 6 tháng đầu năm 2025, lợi nhuận trước thuế đạt gần 21.894 tỷ đồng, tăng 5,1%",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9906935095787048
+      },
+      {
+        "title": "MB khẳng định vị thế Big 5, dẫn đầu về hiệu quả và số hóa - Tạp chí Kinh tế",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.7547358274459839
+      },
+      {
+        "title": "Cập nhật tối 30/7: Ngân hàng đồng loạt công bố lợi nhuận hết quý 2/2025, quán quân Vietcombank lộ diện, xuất hiện nhà băng tăng \"sốc\"",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.8573911190032959
+      },
+      {
+        "title": "Mỹ - Nga leo thang căng thẳng về vấn đề Ukraine",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": -0.03240889683365822
+      },
+      {
+        "title": "Mỹ - Nga leo thang căng thẳng về vấn đề Ukraine",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": -0.03240889683365822
+      },
+      {
+        "title": "Cập nhật tối 30/7: Ngân hàng đồng loạt công bố lợi nhuận hết quý 2/2025, quán quân Vietcombank lộ diện, xuất hiện nhà băng tăng \"sốc\"",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.8573911190032959
+      },
+      {
+        "title": "Vietcombank (VCB): 6 tháng đầu năm 2025, lợi nhuận trước thuế đạt gần 21.894 tỷ đồng, tăng 5,1%",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9906935095787048
+      },
+      {
+        "title": "Chính phủ muốn kinh tế tăng 8,5%: túi tiền người dân có bị ảnh hưởng?",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.45184028148651123
+      },
+      {
+        "title": "GDP Mỹ dự báo phục hồi trong quý II/2025, quy mô kinh tế vượt mốc 30.000 tỷ USD",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9664220809936523
+      },
+      {
+        "title": "GDP Mỹ dự báo phục hồi trong quý II/2025, quy mô kinh tế vượt mốc 30.000 tỷ USD",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.9664220809936523
+      },
+      {
+        "title": "MB khẳng định vị thế Big 5, dẫn đầu về hiệu quả và số hóa - Tạp chí Kinh tế",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.7547358274459839
+      },
+      {
+        "title": "Chính phủ muốn kinh tế tăng 8,5%: túi tiền người dân có bị ảnh hưởng?",
+        "published_at": "2025-07-30 07:00:00",
+        "bar_index": 20,
+        "sentiment_score": 0.45184028148651123
+      },
+      {
+        "title": "MSB tăng trưởng tín dụng 13,39% nửa đầu năm",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9855796098709106
+      },
+      {
+        "title": "MSB tăng trưởng tín dụng 13,39% nửa đầu năm",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9855796098709106
+      },
+      {
+        "title": "Những dấu hiệu ảm đạm đằng sau số liệu GDP tốt hơn dự báo của Mỹ",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.2883837819099426
+      },
+      {
+        "title": "[Cập nhật] KQKD ngân hàng 6 tháng 2025: Vietcombank quán quân lợi nhuận ngành, MB dẫn đầu nhóm cổ phần",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9344225525856018
+      },
+      {
+        "title": "10 ngân hàng lãi lớn nhất quý II/2025 lộ diện: Ví trí quán quân đổi chủ, VietinBank, Vietcombank và BIDV chiếm hơn 1/3 lợi nhuận ngân hàng trên sàn chứng khoán",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9261542558670044
+      },
+      {
+        "title": "Cập nhật KQKD ngân hàng 6 tháng đầu năm 2025: Vietcombank giữ ngôi vương, xuất hiện nhà băng lợi nhuận tăng ‘sốc’ 200%",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9668232202529907
+      },
+      {
+        "title": "1.500 điểm của VN-Index hiện khác gì năm 2022?",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.6656079888343811
+      },
+      {
+        "title": "Dự kiến năm 2025, kinh tế Việt Nam vượt qua mức thu nhập trung bình thấp",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.8992083072662354
+      },
+      {
+        "title": "Ông Trump, ông Medvedev đấu khẩu trên mạng xã hội",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.01082405261695385
+      },
+      {
+        "title": "10 ngân hàng lãi lớn nhất quý II/2025 lộ diện: Ví trí quán quân đổi chủ, VietinBank, Vietcombank và BIDV chiếm hơn 1/3 lợi nhuận ngân hàng trên sàn chứng khoán",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9261542558670044
+      },
+      {
+        "title": "1.500 điểm của VN-Index hiện khác gì năm 2022?",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.6656079888343811
+      },
+      {
+        "title": "Dự kiến năm 2025, kinh tế Việt Nam vượt qua mức thu nhập trung bình thấp",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.8992083072662354
+      },
+      {
+        "title": "Cập nhật KQKD ngân hàng 6 tháng đầu năm 2025: Vietcombank giữ ngôi vương, xuất hiện nhà băng lợi nhuận tăng ‘sốc’ 200%",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9668232202529907
+      },
+      {
+        "title": "Thị trường chứng khoán lên đỉnh thời đại, rất nhiều cổ phiếu vẫn còn 'trễ sóng'",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.30407801270484924
+      },
+      {
+        "title": "Những dấu hiệu ảm đạm đằng sau số liệu GDP tốt hơn dự báo của Mỹ",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.2883837819099426
+      },
+      {
+        "title": "[Cập nhật] KQKD ngân hàng 6 tháng 2025: Vietcombank quán quân lợi nhuận ngành, MB dẫn đầu nhóm cổ phần",
+        "published_at": "2025-07-31 07:00:00",
+        "bar_index": 21,
+        "sentiment_score": 0.9344225525856018
+      },
+      {
+        "title": "Ngân hàng Nhà nước phân bổ thêm 'room' tín dụng cho các nhà băng",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.7118134498596191
+      },
+      {
+        "title": "Ngân hàng Nhà nước phân bổ thêm 'room' tín dụng cho các nhà băng",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.7118134498596191
+      },
+      {
+        "title": "[eMagazine] Nhiều dư địa cho đồ gỗ nội thất gia tăng tại thị trường CPTPP",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.7369145750999451
+      },
+      {
+        "title": "[eMagazine] Nhiều dư địa cho đồ gỗ nội thất gia tăng tại thị trường CPTPP",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.7369145750999451
+      },
+      {
+        "title": "Vietcombank: Dẫn đầu hệ thống, tiên phong đổi mới, phát triển bền vững",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.9720696806907654
+      },
+      {
+        "title": "Tăng cường phát triển nền kinh tế số và kinh tế xanh",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.4296545684337616
+      },
+      {
+        "title": "Vietcombank: Dẫn đầu hệ thống, tiên phong đổi mới, phát triển bền vững",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.9720696806907654
+      },
+      {
+        "title": "Tăng cường phát triển nền kinh tế số và kinh tế xanh",
+        "published_at": "2025-08-01 07:00:00",
+        "bar_index": 22,
+        "sentiment_score": 0.4296545684337616
+      },
+      {
+        "title": "Trong tháng 7 kỷ lục của VN-Index, nhà đầu tư cá nhân chốt lời bán ròng 11.000 tỷ",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": -0.9386317729949951
+      },
+      {
+        "title": "3 công ty của ông Phạm Nhật Vượng lọt top lãi nhất sàn chứng khoán",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.5345929861068726
+      },
+      {
+        "title": "Trong tháng 7 kỷ lục của VN-Index, nhà đầu tư cá nhân chốt lời bán ròng 11.000 tỷ",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": -0.9386317729949951
+      },
+      {
+        "title": "Lợi nhuận ngành ngân hàng: Vietcombank vững vàng, Techcombank bứt phá",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9450790882110596
+      },
+      {
+        "title": "3 công ty của ông Phạm Nhật Vượng lọt top lãi nhất sàn chứng khoán",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.5345929861068726
+      },
+      {
+        "title": "Các chuyên gia gợi ý các cổ phiếu tiềm năng trong nhịp điều chỉnh",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.3720276355743408
+      },
+      {
+        "title": "Kinh tế Việt Nam dự báo sẽ vượt Singapore, Thái Lan… mở ra cơ hội lớn cho ngành bán lẻ, song doanh nghiệp đang phải đối mặt với “cú đấm kép”",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9213948249816895
+      },
+      {
+        "title": "Kinh tế Việt Nam dự báo sẽ vượt Singapore, Thái Lan… mở ra cơ hội lớn cho ngành bán lẻ, song doanh nghiệp đang phải đối mặt với “cú đấm kép”",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9213948249816895
+      },
+      {
+        "title": "Các chuyên gia gợi ý các cổ phiếu tiềm năng trong nhịp điều chỉnh",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.3720276355743408
+      },
+      {
+        "title": "Đảng bộ Vietcombank xác định 6 mục tiêu chiến lược cho nhiệm kỳ 2025–2030",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.3677464425563812
+      },
+      {
+        "title": "Vietcombank đặt mục tiêu vào top 200 tài chính thế giới",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9136869311332703
+      },
+      {
+        "title": "Vietcombank đặt mục tiêu vào top 200 tài chính thế giới",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9136869311332703
+      },
+      {
+        "title": "[eMagazine] Xuất khẩu sang thị trường Tây Ban Nha trong giai đoạn mới: Triển vọng và thách thức",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.6487674117088318
+      },
+      {
+        "title": "[eMagazine] Xuất khẩu sang thị trường Tây Ban Nha trong giai đoạn mới: Triển vọng và thách thức",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.6487674117088318
+      },
+      {
+        "title": "Kỷ lục mới của ngành ngân hàng Việt Nam: Tổng tài sản VietinBank, Vietcombank, BIDV và Agribank vượt 10 triệu tỷ đồng, hai nhà băng đạt quy mô 100 tỷ USD",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9731060862541199
+      },
+      {
+        "title": "Nhiều giải pháp kỳ vọng đạt mục tiêu tăng trưởng 8% trở lên",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.8707568645477295
+      },
+      {
+        "title": "Nhiều giải pháp kỳ vọng đạt mục tiêu tăng trưởng 8% trở lên",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.8707568645477295
+      },
+      {
+        "title": "Kỷ lục mới của ngành ngân hàng Việt Nam: Tổng tài sản VietinBank, Vietcombank, BIDV và Agribank vượt 10 triệu tỷ đồng, hai nhà băng đạt quy mô 100 tỷ USD",
+        "published_at": "2025-08-04 07:00:00",
+        "bar_index": 23,
+        "sentiment_score": 0.9731060862541199
+      },
+      {
+        "title": "[Emagazine] Agribank - Giữ vững thị phần top đầu, bao phủ nợ xấu top đầu hệ thống",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9325708746910095
+      },
+      {
+        "title": "[Emagazine] Agribank - Giữ vững thị phần top đầu, bao phủ nợ xấu top đầu hệ thống",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9325708746910095
+      },
+      {
+        "title": "Ngân hàng Nhà nước chỉ đạo ổn định lãi suất",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.22539645433425903
+      },
+      {
+        "title": "Ngân hàng Nhà nước chỉ đạo ổn định lãi suất",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.22539645433425903
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (5/8): \"Chợ đen\" tăng mạnh ở cả 2 chiều mua và bán",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9116250276565552
+      },
+      {
+        "title": "Thanh khoản thị trường chứng khoán thiết lập kỷ lục mới",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.8248605728149414
+      },
+      {
+        "title": "Thấy gì từ diễn biến nợ xấu của các ngân hàng?",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.01989978365600109
+      },
+      {
+        "title": "VN-Index đảo chiều quanh mức đỉnh lịch sử",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9813998341560364
+      },
+      {
+        "title": "Thanh khoản thị trường chứng khoán thiết lập kỷ lục mới",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.8248605728149414
+      },
+      {
+        "title": "Động lực nào giúp cổ phiếu ngân hàng lại bùng nổ đưa VN-Index lên đỉnh lịch sử mới?",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9864652156829834
+      },
+      {
+        "title": "Tỷ trọng kinh tế số trên GDP đạt khoảng 18,72%, tiếp tục là động lực tăng trưởng quan trọng",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9603579640388489
+      },
+      {
+        "title": "Tỷ trọng kinh tế số trên GDP đạt khoảng 18,72%, tiếp tục là động lực tăng trưởng quan trọng",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9603579640388489
+      },
+      {
+        "title": "Thấy gì từ diễn biến nợ xấu của các ngân hàng?",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.01989978365600109
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (5/8): \"Chợ đen\" tăng mạnh ở cả 2 chiều mua và bán",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9116250276565552
+      },
+      {
+        "title": "Chính phủ 'chốt' mục tiêu tăng trưởng kinh tế năm nay",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.753504753112793
+      },
+      {
+        "title": "Động lực nào giúp cổ phiếu ngân hàng lại bùng nổ đưa VN-Index lên đỉnh lịch sử mới?",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.9864652156829834
+      },
+      {
+        "title": "Chính phủ 'chốt' mục tiêu tăng trưởng kinh tế năm nay",
+        "published_at": "2025-08-05 07:00:00",
+        "bar_index": 24,
+        "sentiment_score": 0.753504753112793
+      },
+      {
+        "title": "VN-Index hết năm 2025 chỉ ở ngưỡng 1.550 điểm, chuyên gia chỉ hai nhóm hấp dẫn cho nhà đầu tư ưa mạo hiểm",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.005449611693620682
+      },
+      {
+        "title": "Chủ tịch ngân hàng sau chuyển giao bắt buộc: Năm nay chắc chắn sẽ dừng lỗ",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.03993424028158188
+      },
+      {
+        "title": "Lãi suất tiết kiệm ngân hàng nào cao nhất tháng 8/2025",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.3361417353153229
+      },
+      {
+        "title": "NHNN yêu cầu tổ chức tín dụng ổn định lãi suất tiền gửi, giảm lãi suất cho vay",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.760487973690033
+      },
+      {
+        "title": "Ngân hàng x ử lý tài sản bảo đảm của khoản nợ xấu theo thứ tự nào ?",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.49663978815078735
+      },
+      {
+        "title": "Tăng tốc, bứt phá, nỗ lực hoàn thành thắng lợi các mục tiêu năm 2025 đã đề ra",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9477940201759338
+      },
+      {
+        "title": "Cải cách tài chính công hướng đến tăng trưởng cao trong kỷ nguyên mới - Tạp chí Kinh tế",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.7898260354995728
+      },
+      {
+        "title": "Nhóm nào 'xả hàng' phiên VN-Index như tàu lượn, thanh khoản 86.000 tỉ đồng?",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.6830142736434937
+      },
+      {
+        "title": "Chính phủ triển khai 5 nhiệm vụ, giải pháp trọng tâm để bảo đảm tăng trưởng năm 2025 đạt 8,3 - 8,5%",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.8880795836448669
+      },
+      {
+        "title": "Chính phủ triển khai 5 nhiệm vụ, giải pháp trọng tâm để bảo đảm tăng trưởng năm 2025 đạt 8,3 - 8,5%",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.8880795836448669
+      },
+      {
+        "title": "Bối cảnh thị trường buộc các ngân hàng đẩy mạnh nguồn thu phi lãi",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9213383197784424
+      },
+      {
+        "title": "IMF nâng triển vọng kinh tế toàn cầu năm 2025 và 2026",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.405627578496933
+      },
+      {
+        "title": "7 tháng năm 2025: Xuất nhập khẩu tăng trưởng mạnh, lạm phát được kiểm soát",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9177128672599792
+      },
+      {
+        "title": "5 nhiệm vụ, giải pháp trọng tâm đảm bảo mục tiêu tăng trưởng 8,3 - 8,5%",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.25696176290512085
+      },
+      {
+        "title": "Bối cảnh thị trường buộc các ngân hàng đẩy mạnh nguồn thu phi lãi",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9213383197784424
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (6-8): Đồng USD giữ đà phục hồi",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.8880366683006287
+      },
+      {
+        "title": "GIC đã âm thầm bán ra hơn 50 triệu cổ phiếu VCB (Vietcombank) trong 4 tháng qua",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": -0.9318758249282837
+      },
+      {
+        "title": "5 nhiệm vụ, giải pháp trọng tâm đảm bảo mục tiêu tăng trưởng 8,3 - 8,5%",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.25696176290512085
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (6-8): Đồng USD giữ đà phục hồi",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.8880366683006287
+      },
+      {
+        "title": "Tỷ giá ngoại tệ, tỷ giá USD/VND hôm nay 6/8: USD giảm nhẹ, ông Trump đang tìm ứng cử viên cho chức Chủ tịch Fed",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.01392083428800106
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (6/8): Ngân hàng Nhà nước và \"chợ đen\" đồng loạt giảm",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.32028502225875854
+      },
+      {
+        "title": "Định giá thị trường liệu còn rẻ?",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.008967893198132515
+      },
+      {
+        "title": "Chủ tịch ngân hàng sau chuyển giao bắt buộc: Năm nay chắc chắn sẽ dừng lỗ",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.03993424028158188
+      },
+      {
+        "title": "Quan hệ Putin và Trump đang xấu đi, thỏa thuận Ukraine vẫn để ngỏ",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.000687936320900917
+      },
+      {
+        "title": "Cải cách tài chính công hướng đến tăng trưởng cao trong kỷ nguyên mới - Tạp chí Kinh tế",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.7898260354995728
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 6/8/2025: Gửi 100 triệu, nhận ngay lãi suất 6,8%/năm",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.8572111129760742
+      },
+      {
+        "title": "Quan hệ Putin và Trump đang xấu đi, thỏa thuận Ukraine vẫn để ngỏ",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.000687936320900917
+      },
+      {
+        "title": "GIC đã âm thầm bán ra hơn 50 triệu cổ phiếu VCB (Vietcombank) trong 4 tháng qua",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": -0.9318758249282837
+      },
+      {
+        "title": "7 tháng năm 2025: Xuất nhập khẩu tăng trưởng mạnh, lạm phát được kiểm soát",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9177128672599792
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (6/8): Ngân hàng Nhà nước và \"chợ đen\" đồng loạt giảm",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.32028502225875854
+      },
+      {
+        "title": "Tăng tốc, bứt phá, nỗ lực hoàn thành thắng lợi các mục tiêu năm 2025 đã đề ra",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.9477940201759338
+      },
+      {
+        "title": "Ngân hàng x ử lý tài sản bảo đảm của khoản nợ xấu theo thứ tự nào ?",
+        "published_at": "2025-08-06 07:00:00",
+        "bar_index": 25,
+        "sentiment_score": 0.49663978815078735
+      },
+      {
+        "title": "Thủ tướng: Cần thí điểm bỏ hạn mức tăng trưởng tín dụng từ 2026",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.7920625805854797
+      },
+      {
+        "title": "Thủ tướng: Cần thí điểm bỏ hạn mức tăng trưởng tín dụng từ 2026",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.7920625805854797
+      },
+      {
+        "title": "Tháng 7/2025, các chỉ số ngành trên VNIndex đều ghi nhận sự tăng trưởng",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9662212133407593
+      },
+      {
+        "title": "Cổ phiếu ngân hàng: Nửa tăng mạnh, nửa 'ủ sóng'",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.11593890190124512
+      },
+      {
+        "title": "Thống đốc Nguyễn Thị Hồng: Nếu áp lực tỷ giá tăng mạnh, Ngân hàng Nhà nước sẽ cân nhắc không tiếp tục giảm lãi suất",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": -0.24423958361148834
+      },
+      {
+        "title": "Thống đốc Nguyễn Thị Hồng: Nếu áp lực tỷ giá tăng mạnh, Ngân hàng Nhà nước sẽ cân nhắc không tiếp tục giảm lãi suất",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": -0.24423958361148834
+      },
+      {
+        "title": "Thống đốc NHNN nhìn thẳng việc tiền ‘chảy' mạnh vào bất động sản và chứng khoán",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.2551822364330292
+      },
+      {
+        "title": "Đại hội đại biểu Đảng bộ Ngân hàng TMCP Công Thương Việt Nam lần thứ XI, nhiệm kỳ 2025 - 2030: Cùng đất nước tiến mạnh trong kỷ nguyên phát triển mới",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9559450149536133
+      },
+      {
+        "title": "Thủ tướng yêu cầu thí điểm gỡ bỏ \"room tín dụng\" từ năm 2026",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.43377000093460083
+      },
+      {
+        "title": "Tín dụng vào bất động sản, chứng khoán, NHNN khẳng định luôn theo dõi sát chỉ số an toàn",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.1837102174758911
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 7/8/2025: Lãi tiền gửi kịch trần trở nên ‘xa xỉ'",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.8941608667373657
+      },
+      {
+        "title": "Thủ tướng yêu cầu NHNN khẩn trương thí điểm bỏ 'room' tín dụng",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.3064538538455963
+      },
+      {
+        "title": "Đại hội đại biểu Đảng bộ Ngân hàng TMCP Công Thương Việt Nam lần thứ XI, nhiệm kỳ 2025 - 2030: Cùng đất nước tiến mạnh trong kỷ nguyên phát triển mới",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9559450149536133
+      },
+      {
+        "title": "Tháng 7/2025, các chỉ số ngành trên VNIndex đều ghi nhận sự tăng trưởng",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9662212133407593
+      },
+      {
+        "title": "Ngân hàng rầm rộ cho vay bất động sản",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.6986312866210938
+      },
+      {
+        "title": "Thủ tướng yêu cầu thí điểm gỡ bỏ \"room tín dụng\" từ năm 2026",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.43377000093460083
+      },
+      {
+        "title": "Thống đốc NHNN nhìn thẳng việc tiền ‘chảy' mạnh vào bất động sản và chứng khoán",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.2551822364330292
+      },
+      {
+        "title": "Tín dụng vào bất động sản, chứng khoán, NHNN khẳng định luôn theo dõi sát chỉ số an toàn",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.1837102174758911
+      },
+      {
+        "title": "Chính phủ đặt mục tiêu tăng trưởng năm 2025 đạt 8,3 - 8,5%",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9542258977890015
+      },
+      {
+        "title": "Thanh khoản ngân hàng và bình ổn lãi suất đầu vào để giảm lãi suất cho vay",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.8023554086685181
+      },
+      {
+        "title": "Thủ tướng yêu cầu NHNN khẩn trương thí điểm bỏ 'room' tín dụng",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.3064538538455963
+      },
+      {
+        "title": "Ngân hàng rầm rộ cho vay bất động sản",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.6986312866210938
+      },
+      {
+        "title": "Chính phủ đặt mục tiêu tăng trưởng năm 2025 đạt 8,3 - 8,5%",
+        "published_at": "2025-08-07 07:00:00",
+        "bar_index": 26,
+        "sentiment_score": 0.9542258977890015
+      },
+      {
+        "title": "Thống đốc: Tín dụng vào chứng khoán, bất động sản cao nhưng không gây rủi ro",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.31932711601257324
+      },
+      {
+        "title": "Thống đốc: Tín dụng vào chứng khoán, bất động sản cao nhưng không gây rủi ro",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.31932711601257324
+      },
+      {
+        "title": "80 năm ngành Tài chính: Tự hào truyền thống vẻ vang, sẵn sàng cùng đất nước vươn mình",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9788287281990051
+      },
+      {
+        "title": "Ngân hàng bế tắc với tài sản nhận về từ thi hành án",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.7440568208694458
+      },
+      {
+        "title": "Hiệp hội Ngân hàng kiến nghị tháo gỡ vướng mắc trong việc nắm giữ bất động sản do xử lý nợ xấu",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.06864131987094879
+      },
+      {
+        "title": "Top những ngân hàng \"bơm\" vốn mạnh nhất hệ thống nửa đầu năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9365601539611816
+      },
+      {
+        "title": "Cổ phiếu ngân hàng ‘dậy sóng': Thách thức phía trước từ điều lưu ý của Thống đốc",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.7261015772819519
+      },
+      {
+        "title": "Tỷ giá USD hôm nay 8/8: Tỷ giá trung tâm đi xuống còn 25.228 đồng/USD",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": -0.8153175711631775
+      },
+      {
+        "title": "Lãi suất VND liên ngân hàng tiến lên mức 6,73%/năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9810472726821899
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm gửi gắm kỳ vọng vào ngành Tài chính trong giai đoạn phát triển mới",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.5536805987358093
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm: Ngành Tài chính là lực lượng tiên phong trong đổi mới và phát triển kinh tế quốc gia",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.6958745718002319
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm gửi gắm kỳ vọng vào ngành Tài chính trong giai đoạn phát triển mới",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.5536805987358093
+      },
+      {
+        "title": "Thi đua xây dựng nền Tài chính Quốc gia phát triển bền vững, hiện đại và hội nhập",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9468373656272888
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (8-8): Đồng USD đảo chiều tăng",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8712207078933716
+      },
+      {
+        "title": "80 năm ngành Tài chính: Tự hào truyền thống vẻ vang, sẵn sàng cùng đất nước vươn mình",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9788287281990051
+      },
+      {
+        "title": "Tỷ giá USD hôm nay 8/8: Tỷ giá trung tâm đi xuống còn 25.228 đồng/USD",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": -0.8153175711631775
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm dự Lễ kỷ niệm 80 năm ngày truyền thống ngành tài chính",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8540737628936768
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (8/8): Thế giới và \"chợ đen\" đồng loạt giảm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": -0.29212290048599243
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm và Thủ tướng Phạm Minh Chính dự Lễ kỷ niệm 80 năm Ngày truyền thống ngành Tài chính",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8267909288406372
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm trao Huân chương Độc lập hạng Nhất cho Bộ Tài chính",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8178543448448181
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (8-8): Đồng USD đảo chiều tăng",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8712207078933716
+      },
+      {
+        "title": "Top những ngân hàng \"bơm\" vốn mạnh nhất hệ thống nửa đầu năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9365601539611816
+      },
+      {
+        "title": "Hiệp hội Ngân hàng kiến nghị tháo gỡ vướng mắc trong việc nắm giữ bất động sản do xử lý nợ xấu",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.06864131987094879
+      },
+      {
+        "title": "Ngân hàng bế tắc với tài sản nhận về từ thi hành án",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.7440568208694458
+      },
+      {
+        "title": "Lãi suất VND liên ngân hàng tiến lên mức 6,73%/năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9810472726821899
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 8/8/2025: Nhiều kỳ hạn vượt mốc 6%/năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9589035511016846
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (8/8): Thế giới và \"chợ đen\" đồng loạt giảm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": -0.29212290048599243
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 8/8/2025: Nhiều kỳ hạn vượt mốc 6%/năm",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9589035511016846
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm: Ngành Tài chính là lực lượng tiên phong trong đổi mới và phát triển kinh tế quốc gia",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.6958745718002319
+      },
+      {
+        "title": "CPI 7 tháng năm 2025 tăng 3,26% so với cùng kỳ",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.929796040058136
+      },
+      {
+        "title": "Thi đua xây dựng nền Tài chính Quốc gia phát triển bền vững, hiện đại và hội nhập",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.9468373656272888
+      },
+      {
+        "title": "CPI 7 tháng năm 2025 tăng 3,26% so với cùng kỳ",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.929796040058136
+      },
+      {
+        "title": "Tổng Bí thư: Tạo đột phá thể chế, chiến lược tài chính và đổi mới mô hình tăng trưởng",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.7350935935974121
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm và Thủ tướng Phạm Minh Chính dự Lễ kỷ niệm 80 năm Ngày truyền thống ngành Tài chính",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8267909288406372
+      },
+      {
+        "title": "Tổng Bí thư Tô Lâm dự Lễ kỷ niệm 80 năm ngày truyền thống ngành tài chính",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.8540737628936768
+      },
+      {
+        "title": "Cổ phiếu ngân hàng ‘dậy sóng': Thách thức phía trước từ điều lưu ý của Thống đốc",
+        "published_at": "2025-08-08 07:00:00",
+        "bar_index": 27,
+        "sentiment_score": 0.7261015772819519
+      },
+      {
+        "title": "Sức nóng VN-Index kéo margin lên đỉnh 5 năm",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9840567111968994
+      },
+      {
+        "title": "Hoàn thiện thể chế về kinh tế, tài chính",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.0014346912503242493
+      },
+      {
+        "title": "Ai đang rót tiền kỷ lục vào chứng khoán lúc này?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.00606293510645628
+      },
+      {
+        "title": "Lãi suất tiết kiệm ngân hàng nào cao nhất tháng 8/2025?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.3361417353153229
+      },
+      {
+        "title": "VN-Index có thể hướng tới mốc 1.750 – 1.800 điểm vào năm 2026",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9283314943313599
+      },
+      {
+        "title": "Hoàn thiện thể chế về kinh tế, tài chính",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.0014346912503242493
+      },
+      {
+        "title": "VN-Index có thể hướng tới mốc 1.750 – 1.800 điểm vào năm 2026",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9283314943313599
+      },
+      {
+        "title": "Xử lý tài sản bảo đảm: Ngân hàng \"mắc kẹt\" giữa quyền nắm giữ và khả năng định đoạt - Tạp chí Kinh tế",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8231611251831055
+      },
+      {
+        "title": "Lãi suất tiết kiệm ngân hàng nào cao nhất tháng 8/2025?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.3361417353153229
+      },
+      {
+        "title": "Xử lý tài sản bảo đảm: Ngân hàng \"mắc kẹt\" giữa quyền nắm giữ và khả năng định đoạt - Tạp chí Kinh tế",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8231611251831055
+      },
+      {
+        "title": "Chưa thể “thả phanh” tín dụng trong ngắn hạn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.05077137053012848
+      },
+      {
+        "title": "Chưa thể “thả phanh” tín dụng trong ngắn hạn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.05077137053012848
+      },
+      {
+        "title": "Bộ Tài chính thông tin về thí điểm sàn giao dịch tài sản mã hóa",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.45447811484336853
+      },
+      {
+        "title": "Bộ Tài chính thông tin về thí điểm sàn giao dịch tài sản mã hóa",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.45447811484336853
+      },
+      {
+        "title": "Ngân hàng ồ ạt cho vay bất động sản; Thí điểm bỏ room tín dụng từ năm 2026",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.42461979389190674
+      },
+      {
+        "title": "Cổ phiếu VCB – Hầm trú ẩn giữa rủi ro ngân hàng. Cổ phiếu Vietcombank (VCB) được xem là hầm trú ẩn an ...",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.46114295721054077
+      },
+      {
+        "title": "Góc nhìn chuyên gia: Chứng khoán vào giai đoạn Ổn định và Tăng tốc, nhưng không loại trừ khả năng điều chỉnh ngắn hạn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.2742810845375061
+      },
+      {
+        "title": "Công nghiệp tăng tốc mở rộng quy mô, tham gia sâu vào chuỗi giá trị toàn cầu",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8818293809890747
+      },
+      {
+        "title": "Chính sách tài khóa 2021-2025: Chủ động, linh hoạt, hiệu quả",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.636464536190033
+      },
+      {
+        "title": "Chính sách tài khóa 2021-2025: Chủ động, linh hoạt, hiệu quả",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.636464536190033
+      },
+      {
+        "title": "Ngân hàng ồ ạt cho vay bất động sản; Thí điểm bỏ room tín dụng từ năm 2026",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.42461979389190674
+      },
+      {
+        "title": "Góc nhìn chuyên gia: Chứng khoán vào giai đoạn Ổn định và Tăng tốc, nhưng không loại trừ khả năng điều chỉnh ngắn hạn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.2742810845375061
+      },
+      {
+        "title": "Sun PhuQuoc Airways đón máy bay đầu tiên, ký hợp đồng thu xếp vốn với Vietcombank",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8889726996421814
+      },
+      {
+        "title": "Công nghiệp tăng tốc mở rộng quy mô, tham gia sâu vào chuỗi giá trị toàn cầu",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8818293809890747
+      },
+      {
+        "title": "Chứng khoán lần đầu tiên đạt ngưỡng lịch sử 1.600 điểm",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9787039160728455
+      },
+      {
+        "title": "Hạn chế gia tăng lạm phát kỳ vọng",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.6363218426704407
+      },
+      {
+        "title": "Một quỹ đầu tư bán hơn 55 triệu cổ phiếu Vietcombank",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.32249531149864197
+      },
+      {
+        "title": "Tỷ giá \"ngược dòng\" thế giới, đứng trước nhiều áp lực - Tạp chí Kinh tế",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.013469994068145752
+      },
+      {
+        "title": "Các FTA mới - “chìa khóa” khai phá các thị trường xuất khẩu tiềm năng cho hàng hóa Việt Nam",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8850375413894653
+      },
+      {
+        "title": "Hạn chế gia tăng lạm phát kỳ vọng",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.6363218426704407
+      },
+      {
+        "title": "Lạm phát là tâm điểm khi cuộc tranh luận về việc FED cắt giảm lãi suất nóng lên",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.17810632288455963
+      },
+      {
+        "title": "Tỷ giá \"ngược dòng\" thế giới, đứng trước nhiều áp lực - Tạp chí Kinh tế",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.013469994068145752
+      },
+      {
+        "title": "Lãi suất liên ngân hàng lại tăng mạnh",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9406712651252747
+      },
+      {
+        "title": "Điều hành chính sách tiền tệ trong bối cảnh mới",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.08331859111785889
+      },
+      {
+        "title": "Nợ xấu ngân hàng leo cao kỷ lục, tỷ lệ bao phủ giảm xuống đáy 5 năm",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.9715259075164795
+      },
+      {
+        "title": "Ngân hàng nóng ruột vì bất động sản thu giữ để xử lý nợ xấu “đắp chiếu”",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.9105230569839478
+      },
+      {
+        "title": "TOP 10 ngân hàng lãi lớn từ kinh doanh ngoại hối nửa đầu 2025: Vietcombank tăng hơn 55%, ACB dẫn đầu nhóm cổ phần",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9856143593788147
+      },
+      {
+        "title": "Bất động sản bảo đảm vướng thủ tục, ngân hàng tìm lối ra",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.7598884105682373
+      },
+      {
+        "title": "Lãi suất qua đêm liên ngân hàng tăng mạnh lên trên 6%, Ngân hàng Nhà nước tiếp tục bơm thanh khoản",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9848726987838745
+      },
+      {
+        "title": "Lãi suất qua đêm liên ngân hàng tăng mạnh lên trên 6%, Ngân hàng Nhà nước tiếp tục bơm thanh khoản",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9848726987838745
+      },
+      {
+        "title": "TOP 10 ngân hàng lãi lớn từ kinh doanh ngoại hối nửa đầu 2025: Vietcombank tăng hơn 55%, ACB dẫn đầu nhóm cổ phần",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9856143593788147
+      },
+      {
+        "title": "Tín dụng vào bất động sản, chứng khoán, NHNN khẳng định luôn theo dõi sát chỉ số an toàn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.18371020257472992
+      },
+      {
+        "title": "Bất động sản bảo đảm vướng thủ tục, ngân hàng tìm lối ra",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.7598884105682373
+      },
+      {
+        "title": "Tín dụng vào bất động sản, chứng khoán, NHNN khẳng định luôn theo dõi sát chỉ số an toàn",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.18371020257472992
+      },
+      {
+        "title": "Nhiều chính sách hỗ trợ chứng khoán Việt Nam chinh phục đỉnh cao nhất mọi thời đại",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9779345989227295
+      },
+      {
+        "title": "Lạm phát là tâm điểm khi cuộc tranh luận về việc FED cắt giảm lãi suất nóng lên",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.17810632288455963
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 11/8/2025: Một nhà băng đồng loạt điều chỉnh lãi gửi trực tuyến",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8105841279029846
+      },
+      {
+        "title": "Các ngân hàng có gói hỗ trợ lãi suất nào cho doanh nghiệp?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.06784777343273163
+      },
+      {
+        "title": "Các FTA mới - “chìa khóa” khai phá các thị trường xuất khẩu tiềm năng cho hàng hóa Việt Nam",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8850375413894653
+      },
+      {
+        "title": "Điều hành chính sách tiền tệ trong bối cảnh mới",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.08331859111785889
+      },
+      {
+        "title": "Các ngân hàng có gói hỗ trợ lãi suất nào cho doanh nghiệp?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.06784777343273163
+      },
+      {
+        "title": "Thêm một quốc gia Đông Nam Á công bố tăng trưởng GDP quý 2: Cao hơn cả nền kinh tế lớn nhất khu vực, so với Việt Nam thì sao?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9761962890625
+      },
+      {
+        "title": "Một quỹ đầu tư bán hơn 55 triệu cổ phiếu Vietcombank",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.32249531149864197
+      },
+      {
+        "title": "Ngân hàng nóng ruột vì bất động sản thu giữ để xử lý nợ xấu “đắp chiếu”",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.9105230569839478
+      },
+      {
+        "title": "Chứng khoán lần đầu tiên đạt ngưỡng lịch sử 1.600 điểm",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9787039160728455
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 11/8/2025: Một nhà băng đồng loạt điều chỉnh lãi gửi trực tuyến",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.8105841279029846
+      },
+      {
+        "title": "Thêm một quốc gia Đông Nam Á công bố tăng trưởng GDP quý 2: Cao hơn cả nền kinh tế lớn nhất khu vực, so với Việt Nam thì sao?",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": 0.9761962890625
+      },
+      {
+        "title": "Nợ xấu ngân hàng leo cao kỷ lục, tỷ lệ bao phủ giảm xuống đáy 5 năm",
+        "published_at": "2025-08-11 07:00:00",
+        "bar_index": 28,
+        "sentiment_score": -0.9715259075164795
+      },
+      {
+        "title": "Nhìn lại nền kinh tế Nga trước cuộc gặp giữa Tổng thống Putin và Tổng thống Trump",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.031203005462884903
+      },
+      {
+        "title": "Nhìn lại nền kinh tế Nga trước cuộc gặp giữa Tổng thống Putin và Tổng thống Trump",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.031203005462884903
+      },
+      {
+        "title": "Nới room tín dụng, tiền gửi tiết kiệm có bị ảnh hưởng không?",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": -0.018952691927552223
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (12/8): Thế giới và \"chợ đen\" đồng loạt tăng",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.6996654868125916
+      },
+      {
+        "title": "Tỷ giá USD hôm nay 12/08/2025: Đồng USD tăng nhẹ trên diện rộng",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.49625614285469055
+      },
+      {
+        "title": "Tỷ giá USD hôm nay 12/08/2025: Đồng USD tăng nhẹ trên diện rộng",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.49625614285469055
+      },
+      {
+        "title": "Con đường tài chính khí hậu tích hợp là yêu cầu cấp thiết quốc gia của Việt Nam",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.4301312565803528
+      },
+      {
+        "title": "3 nhóm mặt hàng tiềm năng xuất khẩu sang Campuchia",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.5732583999633789
+      },
+      {
+        "title": "Con đường tài chính khí hậu tích hợp là yêu cầu cấp thiết quốc gia của Việt Nam",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.4301312565803528
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 12/8/2025: Lãi suất huy động 6,8%/năm dành cho ai?",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.3965723216533661
+      },
+      {
+        "title": "Lãi suất ngân hàng hôm nay 12/8/2025: Lãi suất huy động 6,8%/năm dành cho ai?",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.3965723216533661
+      },
+      {
+        "title": "Singapore hồi hộp nâng dự báo tăng trưởng GDP năm 2025",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.958365261554718
+      },
+      {
+        "title": "Dự báo lãi suất huy động ngân hàng giảm nhẹ vào cuối năm 2025",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.34872692823410034
+      },
+      {
+        "title": "Đỉnh mới của giá vàng thế giới sẽ là 4.000 USD/ounce?",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.7804321050643921
+      },
+      {
+        "title": "[eMagazine] Lực đẩy FTA trong biến động thương mại toàn cầu: Thực tiễn tận dụng CPTPP tại thị trường Canada",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.7344755530357361
+      },
+      {
+        "title": "3 nhóm mặt hàng tiềm năng xuất khẩu sang Campuchia",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.5732583999633789
+      },
+      {
+        "title": "Sức sống biên cương: Thị trường Lào - Nhiều tiềm năng cho hàng hóa Việt Nam",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9118703007698059
+      },
+      {
+        "title": "Thương mại Việt Nam – Campuchia: Tăng tốc mạnh, hướng tới mốc 20 tỷ USD",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9826338291168213
+      },
+      {
+        "title": "Nới room tín dụng, tiền gửi tiết kiệm có bị ảnh hưởng không?",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": -0.018952691927552223
+      },
+      {
+        "title": "Dự báo lãi suất huy động ngân hàng giảm nhẹ vào cuối năm 2025",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.34872692823410034
+      },
+      {
+        "title": "Singapore hồi hộp nâng dự báo tăng trưởng GDP năm 2025",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.958365261554718
+      },
+      {
+        "title": "Phấn đấu đạt tăng trưởng GDP 8,3 - 8,5% năm 2025: Bứt phá để giữ vững vị thế dẫn đầu khu vực",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9699891209602356
+      },
+      {
+        "title": "Phấn đấu đạt tăng trưởng GDP 8,3 - 8,5% năm 2025: Bứt phá để giữ vững vị thế dẫn đầu khu vực",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9699891209602356
+      },
+      {
+        "title": "Cơ cấu tổ chức mới của Bộ Tài chính",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.10676631331443787
+      },
+      {
+        "title": "Tỷ giá USD hôm nay (12/8): Thế giới và \"chợ đen\" đồng loạt tăng",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.6996654868125916
+      },
+      {
+        "title": "Thương mại Việt Nam – Campuchia: Tăng tốc mạnh, hướng tới mốc 20 tỷ USD",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9826338291168213
+      },
+      {
+        "title": "Sức sống biên cương: Thị trường Lào - Nhiều tiềm năng cho hàng hóa Việt Nam",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.9118703007698059
+      },
+      {
+        "title": "[eMagazine] Lực đẩy FTA trong biến động thương mại toàn cầu: Thực tiễn tận dụng CPTPP tại thị trường Canada",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.7344755530357361
+      },
+      {
+        "title": "Cơ cấu tổ chức mới của Bộ Tài chính",
+        "published_at": "2025-08-12 07:00:00",
+        "bar_index": 29,
+        "sentiment_score": 0.10676631331443787
+      }
+    ],
+    "data_cutoff": "2025-08-13",
+    "volatility_metrics": {
+      "vol_20d": 16.76,
+      "max_drawdown_pct": 4.15,
+      "trend_pct": 8.61
+    },
+    "sentiment_metrics": {
+      "coverage": 30,
+      "total_articles": 446,
+      "staleness_frac": 0.39,
+      "sentiment_mean": 0.513,
+      "sentiment_std": 0.519
+    },
+    "news_proposal": {
+      "direction": "long",
+      "score": 0.513,
+      "confidence": 1.0,
+      "rationale": "sentiment_mean=+0.513 coverage=30 staleness=0.39 trust=1.000",
+      "quality": {
+        "coverage": 30,
+        "staleness_frac": 0.39,
+        "trust_weight": 1.0
+      }
+    },
+    "baseline_pred": null,
+    "final_pred": 0.01952550862915814,
+    "gate_pred": 0.01952550862915814,
+    "seed_preds": [
+      0.0019500867929309607,
+      0.018039029091596603,
+      0.038587410002946854
+    ],
+    "news_residual": null,
+    "model_evidence": {
+      "final_pred": 0.01952550862915814,
+      "gate_pred": 0.01952550862915814,
+      "gate_on_raw_seed": false,
+      "baseline_pred": null,
+      "seed_preds": [
+        0.00195,
+        0.018039,
+        0.038587
+      ],
+      "seed_variance": 0.00022482,
+      "spread": 0.036637,
+      "all_same_sign": true,
+      "news_residual": null,
+      "truth": 0.007859531790018082,
+      "source": "frozen_prediction_cache"
+    },
+    "gated_action": "long",
+    "gate_tau": 0.01800279183468471,
+    "gate_coverage": 0.25,
+    "gate_val_score": 1.1048372462629592,
+    "gate_reason": "|pred|=0.0195 >= tau=0.0180 -> long @ size=+0.82",
+    "action": "long",
+    "position_scale": 0.8168738954709795,
+    "risk_vetoed": false,
+    "veto_reasons": [],
+    "decision_reasoning": "Risk OK: action=long size=+0.82. vol=16.8% dd=4.2%.",
+    "metalabel_flags": [],
+    "metalabel_vetoed": false,
+    "answer_text": "Khuyến nghị cho VCB (5 ngày): MUA. Kích thước vị thế: +0.82. |pred|=0.0195 >= tau=0.0180 -> long @ size=+0.82. Điểm vận hành: ~54% độ chính xác hướng ở mức bao phủ ~25% (khoảng tin cậy còn chồng lấn tỷ lệ nền ~53.8% trên một mã — giá trị của hệ thống là việc TỪ CHỐI giao dịch có hiệu chuẩn, không phải độ chính xác). Bối cảnh thị trường: biến động 20 ngày 16.8%, sụt giảm tối đa 4.2%.",
+    "grounded_answer": "Khuyến nghị cho VCB (5 ngày): MUA. Kích thước vị thế: +0.82. |pred|=0.0195 >= tau=0.0180 -> long @ size=+0.82. Điểm vận hành: ~54% độ chính xác hướng ở mức bao phủ ~25% (khoảng tin cậy còn chồng lấn tỷ lệ nền ~53.8% trên một mã — giá trị của hệ thống là việc TỪ CHỐI giao dịch có hiệu chuẩn, không phải độ chính xác). Bối cảnh thị trường: biến động 20 ngày 16.8%, sụt giảm tối đa 4.2%.",
+    "critic_status": "failed",
+    "critic_findings": [
+      "action-match: answer does not state the decided action 'MUA'"
+    ],
+    "artifact_versions": {
+      "cmtf_version": "v4",
+      "backbone_version": "v3",
+      "ensemble_seeds": "[1, 42, 123]",
+      "gate_policy": "60f71e5ce5@cov0.25"
+    },
+    "errors": [],
+    "warnings": [],
+    "node_timings": {
+      "orchestrator": 2758.564915418625,
+      "market_agent": 0.0,
+      "news_agent": 0.0020203590393066406,
+      "predict_agent": 0.47566843032836914,
+      "gate_agent": 0.0010006427764892578,
+      "risk_agent": 0.0,
+      "metalabel_agent": 45.81655955314636,
+      "narrator": 33.06687068939209,
+      "critic_agent": 50.82125687599182
+    },
+    "trace": [
+      {
+        "node": "orchestrator",
+        "elapsed_s": 2758.5649,
+        "summary": {
+          "intent": "PREDICTION",
+          "symbols": "[1 items]",
+          "horizon": "5",
+          "route": "symbol+horizon supplied by CLI → PREDICTION"
+        }
+      },
+      {
+        "node": "market_agent",
+        "elapsed_s": 0.0,
+        "summary": {
+          "vol_20d": "16.8%",
+          "max_dd": "4.2%",
+          "trend": "+8.6%"
+        }
+      },
+      {
+        "node": "news_agent",
+        "elapsed_s": 0.002,
+        "summary": {
+          "coverage": "30",
+          "staleness": "39%",
+          "sentiment": "+0.513"
+        }
+      },
+      {
+        "node": "predict_agent",
+        "elapsed_s": 0.4757,
+        "summary": {
+          "gate_pred": "+0.01953",
+          "seed_mean": "+0.01953",
+          "seeds": "[3 items]",
+          "source": "frozen_prediction_cache"
+        }
+      },
+      {
+        "node": "gate_agent",
+        "elapsed_s": 0.001,
+        "summary": {
+          "tau": "+0.01800",
+          "coverage": "0.25",
+          "action": "long",
+          "size": "+0.81687",
+          "reason": "|pred|=0.0195 >= tau=0.0180 -> long @ size=+0.82"
+        }
+      },
+      {
+        "node": "risk_agent",
+        "elapsed_s": 0.0,
+        "summary": {
+          "action": "long",
+          "vetoed": "False",
+          "veto_reasons": "[0 items]",
+          "size": "+0.81687"
+        }
+      },
+      {
+        "node": "metalabel_agent",
+        "elapsed_s": 45.8166,
+        "summary": {}
+      },
+      {
+        "node": "narrator",
+        "elapsed_s": 33.0669,
+        "summary": {
+          "chars": "274"
+        }
+      },
+      {
+        "node": "critic_agent",
+        "elapsed_s": 50.8213,
+        "summary": {
+          "status": "failed",
+          "findings": "[1 items]"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "hypothesis": "H4",
+  "description": "Does the cross-horizon interaction layer (VN_{H}d_xh.json) improve on the MAS baseline, out-of-sample (TEST), on the same rows used for H3?",
+  "horizon": 1,
+  "primary_horizon": 1,
+  "other_horizons": [
+    5,
+    20
+  ],
+  "n_rows": 280,
+  "n_source_sample": "results\\agent_ablation\\1d\\h3_forecaster.json",
+  "n_mas_trades": 38,
+  "calibration_summary": {
+    "multiplier_by_agreement": {
+      "0": 1.0,
+      "1": 1.0,
+      "2": 1.4
+    },
+    "real_lift_over_baseline_at_calibration": 0.0152,
+    "beat_placebo_at_calibration": true
+  },
+  "MAS_baseline": {
+    "coverage": 0.136,
+    "n_trades": 38,
+    "DA": 47.37,
+    "IC": 0.0936,
+    "Sharpe": -0.202,
+    "profit_factor": 0.894,
+    "max_drawdown": 0.26767,
+    "net_PnL@25bps": -0.1503
+  },
+  "MAS_plus_horizon_interaction": {
+    "coverage": 0.136,
+    "n_trades": 38,
+    "DA": 47.37,
+    "IC": 0.0936,
+    "Sharpe": -0.269,
+    "profit_factor": 0.854,
+    "max_drawdown": 0.37474,
+    "net_PnL@25bps": -0.1962
+  },
+  "MAS_plus_interaction_placebo_mean": {
+    "Sharpe": -0.144
+  },
+  "sharpe_delta_xh_minus_baseline": -0.067,
+  "sharpe_delta_beats_placebo": false
+}

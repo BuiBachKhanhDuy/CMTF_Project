@@ -111,40 +111,56 @@ class FeatureEngineer:
         symbol: str = "default",
     ) -> pd.DataFrame:
         """Normalise selected feature columns.
-
-        The scaler is **fit only on training data** (rows where
-        ``index < split_date``) and then applied to the full DataFrame.
-
-        Args:
-            df: Input DataFrame indexed by datetime.
-            feature_cols: Column names to normalise.
-            method: ``'zscore'`` (StandardScaler) or ``'minmax'``.
-            split_date: End of the training period (exclusive).
-                If ``None``, the scaler is fit on the entire DataFrame
-                (**only safe for debugging**).
-            symbol: Used for naming the persisted scaler file.
-
-        Returns:
-            DataFrame with normalised feature columns.
+    
+        The scaler is fit only on training data and ignores rows with missing
+        feature values. Missing values are preserved after transform so they
+        can be dropped explicitly downstream in a controlled way.
         """
         df = df.copy()
-
+    
+        missing_cols = [c for c in feature_cols if c not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing feature columns for normalization: {missing_cols}")
+    
         scaler = StandardScaler() if method == "zscore" else MinMaxScaler()
-
+    
+        # Replace inf with NaN first
+        df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+    
         if split_date is not None:
             train_mask = df.index < pd.Timestamp(split_date)
-            train_data = df.loc[train_mask, feature_cols]
+            train_data = df.loc[train_mask, feature_cols].copy()
         else:
             logger.warning("No split_date provided — fitting scaler on full data (debug mode)")
-            train_data = df[feature_cols]
-
-        scaler.fit(train_data.values)
-        df[feature_cols] = scaler.transform(df[feature_cols].values)
-
+            train_data = df[feature_cols].copy()
+    
+        # Drop rows with any missing feature before fitting scaler
+        train_data_clean = train_data.dropna(axis=0, how="any")
+    
+        if train_data_clean.empty:
+            raise ValueError(
+                "No valid training rows available to fit scaler after dropping NaN/inf values."
+            )
+    
+        dropped_rows = len(train_data) - len(train_data_clean)
+        if dropped_rows > 0:
+            logger.warning(
+                "Dropped {} training rows with NaN/inf before fitting scaler for symbol={}",
+                dropped_rows,
+                symbol,
+            )
+    
+        scaler.fit(train_data_clean.values)
+    
+        # Transform only valid rows; preserve NaNs for explicit downstream handling
+        valid_mask = df[feature_cols].notna().all(axis=1)
+        df_valid = df.loc[valid_mask, feature_cols]
+        df.loc[valid_mask, feature_cols] = scaler.transform(df_valid.values)
+    
         # Persist scaler
         scaler_path = self.artifacts_dir / f"scaler_{symbol}.pkl"
         with open(scaler_path, "wb") as f:
             pickle.dump(scaler, f)
         logger.info("Scaler saved → {}", scaler_path)
-
+    
         return df

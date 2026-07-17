@@ -1,0 +1,37 @@
+{
+  "eval_window": ">= 2025-09-26",
+  "selected_subset": [
+    "cnn_lstm",
+    "gpt4ts",
+    "chronos"
+  ],
+  "n_common_rows": 120,
+  "note": "Leak-free: de-bias + subset + gate fit on early test slice; evaluated on late slice ∩ LLM rows. MAS gated by top-25% |ensemble|; LLM by its own confidence.",
+  "improved_MAS": {
+    "coverage": 0.25,
+    "n_trades": 30,
+    "DA": 56.67,
+    "IC": 0.2463,
+    "Sharpe": 1.537,
+    "profit_factor": 1.745,
+    "net_PnL@25bps": 0.2034
+  },
+  "champion_lstm": {
+    "coverage": 0.25,
+    "n_trades": 30,
+    "DA": 76.67,
+    "IC": 0.3846,
+    "Sharpe": 5.121,
+    "profit_factor": 6.248,
+    "net_PnL@25bps": 0.7009
+  },
+  "LLM_plain_call": {
+    "coverage": 0.25,
+    "n_trades": 30,
+    "DA": 50.0,
+    "IC": -0.0919,
+    "Sharpe": -0.105,
+    "profit_factor": 0.959,
+    "net_PnL@25bps": -0.0998
+  }
+}

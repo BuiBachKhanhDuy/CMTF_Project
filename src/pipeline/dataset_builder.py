@@ -15,31 +15,7 @@ from torch.utils.data import Dataset
 from loguru import logger
 
 from .news_encoder import NEWS_HYBRID_COLUMN, SENTIMENT_TRACE_COLUMNS
-
-
 class CMTFDataset(Dataset):
-    """PyTorch Dataset for the Cross-Modal Temporal Fusion model.
-
-    Each sample is a dict with:
-        - ``'market'``:  ``Tensor[seq_len, n_market_features]``  (float32)
-        - ``'news'``:    ``Tensor[seq_len, 768]``                (float32)
-        - ``'mask'``:    ``Tensor[seq_len]``                     (bool, True = no news)
-        - ``'target'``:  ``Tensor[horizon]``                     (float32)
-
-    Args:
-        df_featured: DataFrame containing OHLCV features, technical
-            indicators, ``news_emb`` (np.ndarray 768-dim per row),
-            ``has_news`` (bool), and forward-return target columns.
-        sequence_len: Number of look-back bars per sample.
-        horizon: Forward prediction horizon (default 1).
-        target_horizon_days: Which forward-return label to learn,
-            e.g. 1 -> ``fwd_ret_1d``, 5 -> ``fwd_ret_5d``.
-    """
-
-    # Columns that are NOT market input features.
-    # NOTE: SENTIMENT_TRACE_COLUMNS (sentiment_mean, sentiment_max_abs, etc.)
-    # are intentionally NOT excluded so they flow into market_cols as additional
-    # predictive features alongside OHLCV + technical indicators.
     _EXCLUDE_COLS = {
         "news_emb",
         NEWS_HYBRID_COLUMN,
@@ -49,6 +25,10 @@ class CMTFDataset(Dataset):
         "news_content",
         "news_missing_flag",
         "symbol",
+        "index",
+        "level_0",
+        "Unnamed: 0",
+        *set(SENTIMENT_TRACE_COLUMNS),
     }
 
     def __init__(
@@ -57,74 +37,170 @@ class CMTFDataset(Dataset):
         sequence_len: int = 30,
         horizon: int = 1,
         target_horizon_days: int = 1,
+        news_representation: str = "text",
+        allow_missing_target: bool = False,
     ) -> None:
-        self.sequence_len = sequence_len
-        self.horizon = horizon
+        self.sequence_len = int(sequence_len)
+        self.horizon = int(horizon)
         self.target_horizon_days = int(target_horizon_days)
+        self.news_representation = str(news_representation)
         self.target_col = f"fwd_ret_{self.target_horizon_days}d"
-        self.df = df_featured.reset_index(drop=False)
 
-        if self.target_col not in self.df.columns:
+        df = df_featured.copy()
+
+        # --------------------------------------------------
+        # Ensure 'time' column
+        # --------------------------------------------------
+        if "time" not in df.columns:
+            if df.index.name == "time":
+                df = df.reset_index()
+            elif isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index().rename(columns={df.index.name or "index": "time"})
+            else:
+                raise ValueError("df_featured must contain a 'time' column or DatetimeIndex")
+
+        # Drop stray cols
+        df = df.drop(columns=[c for c in ("index", "level_0", "Unnamed: 0") if c in df.columns])
+
+        if "symbol" not in df.columns:
+            raise ValueError("Missing 'symbol'")
+        if self.target_col not in df.columns:
             raise ValueError(f"Missing target column: {self.target_col}")
+        if "has_news" not in df.columns:
+            raise ValueError("Missing 'has_news' column")
 
-        fwd_cols = [c for c in self.df.columns if re.match(r"^fwd_ret_\d+d$", str(c))]
+        # --------------------------------------------------
+        # ✅ CRITICAL FIX: drop invalid targets FIRST
+        # (skipped when allow_missing_target=True — live inference needs the most
+        # recent rows precisely BECAUSE their target is NaN; the future hasn't
+        # happened yet, so there's no label to require. See run_pipeline's own
+        # allow_missing_target for the full rationale — this is the same escape
+        # hatch, needed here too since this filter is independent of that one.)
+        # --------------------------------------------------
+        if not allow_missing_target:
+            valid_mask = np.isfinite(df[self.target_col])
+            df = df.loc[valid_mask].reset_index(drop=True)
 
-        # Identify column groups
+        if len(df) == 0:
+            raise ValueError("All rows removed after filtering invalid targets")
+
+        self.df = df
+
+        # --------------------------------------------------
+        # Market features
+        # --------------------------------------------------
+        fwd_cols = [c for c in df.columns if re.match(r"^fwd_ret_\d+d$", str(c))]
+
         self.market_cols = [
-            c
-            for c in self.df.columns
+            c for c in df.columns
             if c not in self._EXCLUDE_COLS
             and c not in fwd_cols
             and c != "time"
-            and self.df[c].dtype in (np.float64, np.float32, np.int64, np.int32, float, int)
+            and pd.api.types.is_numeric_dtype(df[c])
         ]
+
+        if not self.market_cols:
+            raise ValueError("No valid market feature columns")
+
+        self._market = df[self.market_cols].astype(np.float32).to_numpy(copy=True)
+
+        # --------------------------------------------------
+        # News embeddings
+        # --------------------------------------------------
+        if news_representation == "text":
+            news_column = "news_emb"
+        elif news_representation == "hybrid":
+            news_column = NEWS_HYBRID_COLUMN
+        else:
+            raise ValueError("news_representation must be 'text' or 'hybrid'")
+
+        if news_column not in df.columns:
+            raise ValueError(f"Missing news column: {news_column}")
+
+        news_list = df[news_column].tolist()
+
+        validated = []
+        expected_dim = None
+
+        for i, emb in enumerate(news_list):
+            arr = np.asarray(emb, dtype=np.float32)
+
+            if arr.ndim != 1:
+                raise ValueError(f"Row {i}: expected 1D embedding, got {arr.shape}")
+
+            if expected_dim is None:
+                expected_dim = arr.shape[0]
+            elif arr.shape[0] != expected_dim:
+                raise ValueError("Inconsistent embedding dimension")
+
+            validated.append(arr)
+
+        self._news = np.stack(validated).astype(np.float32)
+
+        if self._news.ndim != 2:
+            raise ValueError("News embedding must be 2D")
+
+        self.news_dim = self._news.shape[1]
+
+        # Optional dimension checks
+        if news_representation == "text" and self.news_dim != 768:
+            raise ValueError(f"Expected 768, got {self.news_dim}")
+
+        if news_representation == "hybrid" and self.news_dim != 773:
+            raise ValueError(f"Expected 773, got {self.news_dim}")
+
+        # --------------------------------------------------
+        # Mask & target (AFTER filtering!)
+        # --------------------------------------------------
+        self._mask = (~df["has_news"].astype(bool)).to_numpy(copy=True)
+        self._target = df[self.target_col].astype(np.float32).to_numpy(copy=True)
+
+        # --------------------------------------------------
+        # Sequence bounds
+        # --------------------------------------------------
+        self._valid_start = self.sequence_len - 1
+        self._valid_end = len(df)
+
+        if self._valid_end <= self._valid_start:
+            raise ValueError(
+                f"Not enough data: len={len(df)} < seq_len={self.sequence_len}"
+            )
+
         logger.info(
-            "CMTFDataset | {} market features | seq_len={} | horizon={} | target={}",
+            "Dataset ready | n_samples={} | seq_len={} | features={} | news_dim={}",
+            len(self),
+            self.sequence_len,
             len(self.market_cols),
-            sequence_len,
-            horizon,
-            self.target_col,
+            self.news_dim,
         )
 
-        # Pre-compute numpy arrays for speed
-        self._market = self.df[self.market_cols].values.astype(np.float32)
-
-        # News embeddings → (N, 768) array
-        news_column = NEWS_HYBRID_COLUMN if NEWS_HYBRID_COLUMN in self.df.columns else "news_emb"
-        news_emb_list = self.df[news_column].tolist()
-        self._news = np.stack(news_emb_list).astype(np.float32)  # (N, 768)
-
-        # Mask: True where there is NO news (inverted has_news)
-        self._mask = (~self.df["has_news"].astype(bool)).values  # True = no news
-
-        # Target
-        self._target = self.df[self.target_col].values.astype(np.float32)
-
-        # Valid indices (need seq_len history and horizon forward target)
-        self._valid_start = self.sequence_len - 1
-        # Last valid index: need target at i + horizon - 1, so i + horizon - 1 < len
-        self._valid_end = len(self.df) - self.horizon
-
+    # --------------------------------------------------
+    # Length
+    # --------------------------------------------------
     def __len__(self) -> int:
-        length = self._valid_end - self._valid_start
-        return max(length, 0)
+        return self._valid_end - self._valid_start
 
+    # --------------------------------------------------
+    # Get item
+    # --------------------------------------------------
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
+
         actual_idx = self._valid_start + idx
+
         start = actual_idx - self.sequence_len + 1
-        end = actual_idx + 1  # exclusive
+        end = actual_idx + 1
 
-        market = torch.from_numpy(self._market[start:end].copy())        # (seq_len, F)
-        news = torch.from_numpy(self._news[start:end].copy())            # (seq_len, 768)
-        mask = torch.from_numpy(self._mask[start:end].copy())            # (seq_len,)
+        market = torch.from_numpy(self._market[start:end])
+        news = torch.from_numpy(self._news[start:end])
+        mask = torch.from_numpy(self._mask[start:end])
 
-        # Target: forward returns for `horizon` steps starting at actual_idx
-        target_vals = self._target[actual_idx : actual_idx + self.horizon]
-        target = torch.from_numpy(target_vals.copy())                     # (horizon,)
+        target = torch.tensor(self._target[actual_idx], dtype=torch.float32)
 
         return {
-            "market": market,
-            "news": news,
-            "mask": mask,
-            "target": target,
+            "market": market,        # [seq_len, features]
+            "news": news,            # [seq_len, news_dim]
+            "mask": mask,            # [seq_len]
+            "target": target,        # scalar
         }

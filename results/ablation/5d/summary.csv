@@ -1,0 +1,2 @@
+table,horizon,best_forecast_model,best_forecast_setting,best_forecast_DA,best_forecast_IC,best_forecast_RMSE,best_trading_model,best_trading_setting,best_trading_sharpe,best_trading_f1,degenerate_rows_excluded
+fusion_comparison,5,cmtf,cmtf(cnn_lstm),46.1,0.0714,0.04818,gpt4ts,gpt4ts::none,0.66,0.455,1

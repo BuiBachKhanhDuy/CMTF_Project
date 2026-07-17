@@ -1,0 +1,43 @@
+{
+  "n_rows": 280,
+  "n_source_sample": "results\\agent_ablation\\5d\\h3_forecaster.json",
+  "pre_registered_categories": [
+    "earnings_or_guidance",
+    "ma_ownership_change",
+    "regulatory_or_policy_action",
+    "leadership_or_scandal",
+    "capital_or_dividend_action"
+  ],
+  "n_mas_trades_classified": 78,
+  "n_metalabel_vetoed": 40,
+  "MAS_baseline": {
+    "coverage": 0.279,
+    "n_trades": 78,
+    "DA": 53.85,
+    "IC": 0.0234,
+    "Sharpe": -0.145,
+    "profit_factor": 0.947,
+    "max_drawdown": 0.65894,
+    "net_PnL@25bps": -0.2747
+  },
+  "MAS_plus_metalabel": {
+    "coverage": 0.136,
+    "n_trades": 38,
+    "DA": 60.53,
+    "IC": 0.1293,
+    "Sharpe": 0.357,
+    "profit_factor": 1.141,
+    "max_drawdown": 0.26541,
+    "net_PnL@25bps": 0.0101
+  },
+  "Plain_LLM": {
+    "coverage": 0.936,
+    "n_trades": 262,
+    "DA": 53.05,
+    "IC": 0.077,
+    "Sharpe": 0.689,
+    "profit_factor": 1.313,
+    "max_drawdown": 0.79218,
+    "net_PnL@25bps": 0.475
+  }
+}

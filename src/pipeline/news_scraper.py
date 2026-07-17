@@ -1,7 +1,7 @@
 """CMTF Data Pipeline — Web News Scraper module.
 
 Simplified banking-only scraper:
-- Symbols: VCB, BID
+- Symbols: VCB, BID, CTG, TCB, MBB, ACB, VPB
 - Sources: CafeF banking category + VnExpress + Vietstock symbol news
 """
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 _NEWS_CACHE_DIR = Path("./cache/news")
 _NEWS_TRACE_DIR = Path("./artifacts/news_trace")
-_SUPPORTED_BANK_SYMBOLS = ("VCB", "BID")
+_SUPPORTED_BANK_SYMBOLS = ("VCB", "BID", "CTG", "TCB", "MBB", "ACB", "VPB")
 _REQUEST_DELAY = 1.5
 _MAX_ARTICLES_PER_SOURCE = 500
 _MARKET_CLOSE_HOUR = 15
@@ -36,6 +36,11 @@ _MARKET_CLOSE_HOUR = 15
 _VNEXPRESS_KEYWORDS: dict[str, list[str]] = {
     "VCB": ["Vietcombank", "Ngan+hang+Vietcombank", "tin+tuc+Vietcombank", "VCB", "Ngan+hang+Ngoai+thuong"],
     "BID": ["BIDV", "Ngan+hang+BIDV", "tin+tuc+BIDV", "BID", "Ngan+hang+Dau+tu", "Dau+tu+va+Phat+trien", "co+phieu+BIDV", "BIDV+Viet+Nam"],
+    "CTG": ["Vietinbank", "VietinBank", "Ngan+hang+Cong+Thuong", "CTG", "tin+tuc+Vietinbank", "co+phieu+CTG"],
+    "TCB": ["Techcombank", "Ngan+hang+Techcombank", "TCB", "tin+tuc+Techcombank", "co+phieu+TCB"],
+    "MBB": ["MB+Bank", "Quan+doi", "MBBank", "Ngan+hang+Quan+doi", "MBB", "tin+tuc+MB+Bank", "co+phieu+MBB"],
+    "ACB": ["ACB", "Ngan+hang+A+Chau", "Asia+Commercial+Bank", "tin+tuc+ACB", "co+phieu+ACB"],
+    "VPB": ["VPBank", "Viet+Nam+Thinh+Vuong", "VPB", "tin+tuc+VPBank", "co+phieu+VPB"],
 }
 
 # Sector-wide / macro keywords that affect ALL banking stocks
@@ -54,6 +59,11 @@ _VNEXPRESS_SECTOR_KEYWORDS: list[str] = [
 _SYMBOL_BRAND_NAMES: dict[str, list[str]] = {
     "VCB": ["Vietcombank", "VCB", "Ngoại thương", "Ngoai thuong"],
     "BID": ["BIDV", "BID", "Đầu tư", "Dau tu", "Ngân hàng Đầu tư"],
+    "CTG": ["Vietinbank", "VietinBank", "CTG", "Công Thương", "Cong Thuong"],
+    "TCB": ["Techcombank", "TCB", "Kỹ Thương", "Ky Thuong"],
+    "MBB": ["MB Bank", "MBBank", "MBB", "Quân đội", "Quan doi"],
+    "ACB": ["ACB", "Á Châu", "A Chau", "Asia Commercial"],
+    "VPB": ["VPBank", "VPB", "Thịnh Vượng", "Thinh Vuong"],
 }
 
 # Sector keywords in readable form (for CafeF relevance filtering)
@@ -177,15 +187,55 @@ def _dedup_articles(
 
     The keep/drop decision is quality-aware and deterministic: higher-quality
     articles are processed first so duplicates map to the best available copy.
+
+    Strategy:
+    1. Exact URL dedup (O(n)) — fast pass removes obvious duplicates.
+    2. Fuzzy title dedup (O(n²)) — capped at _FUZZY_DEDUP_CAP articles to
+       avoid quadratic blow-up when thousands of shared macro articles are
+       combined with symbol-specific ones.
     """
-    ranked_articles = sorted(
-        articles,
-        key=_article_quality_score,
-        reverse=True,
-    )
+    _FUZZY_DEDUP_CAP = 3000  # max articles for O(n²) fuzzy pass
+
+    # --- Pass 1: exact URL / article_id dedup (O(n)) ---
+    seen_urls: set[str] = set()
+    seen_ids: set[str] = set()
+    url_unique: list[dict[str, Any]] = []
+    url_dups: list[dict[str, Any]] = []
+    for art in articles:
+        url = str(art.get("source_url", art.get("url", "")))
+        aid = str(art.get("article_id", ""))
+        key = url or aid
+        if key and key in seen_urls:
+            url_dups.append({
+                "article_id": aid,
+                "source": art.get("source", ""),
+                "source_url": url,
+                "title": art.get("title", ""),
+                "published_date": art.get("published_date"),
+                "filter_reason": "duplicate_url",
+                "matched_article_id": "",
+                "dedup_score": 100.0,
+            })
+            continue
+        if key:
+            seen_urls.add(key)
+        if aid and aid not in seen_ids:
+            seen_ids.add(aid)
+        url_unique.append(art)
+
+    # --- Pass 2: fuzzy title dedup (O(n²), capped) ---
+    if len(url_unique) > _FUZZY_DEDUP_CAP:
+        # Too many articles for fuzzy pass — skip it, return URL-deduped list
+        logger.debug(
+            "Skipping fuzzy dedup ({} articles > cap {}); URL dedup only",
+            len(url_unique), _FUZZY_DEDUP_CAP,
+        )
+        return url_unique, url_dups
+
+    ranked_articles = sorted(url_unique, key=_article_quality_score, reverse=True)
 
     unique: list[dict[str, Any]] = []
-    duplicate_rows: list[dict[str, Any]] = []
+    duplicate_rows: list[dict[str, Any]] = list(url_dups)
 
     for art in ranked_articles:
         title = str(art.get("title", ""))
@@ -227,6 +277,39 @@ def _cache_path(symbol: str, start: str = "", end: str = "") -> Path:
     return _NEWS_CACHE_DIR / f"{symbol}_{safe_start}_{safe_end}_news.json"
 
 
+_CACHE_FILE_RE = re.compile(r"^([A-Z]+)_(\d{8})_(\d{8})_news\.json$")
+
+
+def _find_overlapping_cache(symbol: str, start: str, end: str) -> tuple[Path, pd.Timestamp, pd.Timestamp] | None:
+    """Find the on-disk cache for ``symbol`` whose [cached_start, cached_end] window best
+    covers [start, end], regardless of exact filename match.
+
+    Every live-inference query uses a slightly different ``end`` (today's date, or
+    whatever cutoff the user asked about), so the old exact-filename cache lookup missed
+    every cache that already covered the request — forcing a full multi-source,
+    multi-year re-scrape for every single query (the live-inference slowness). Any cache
+    whose start is <= the requested start is a candidate; among those we prefer the one
+    with the largest end (most coverage), which is either a full cover (>= requested end,
+    fast path — no scraping at all) or a partial cover (< requested end, only the tail
+    needs a fresh incremental scrape).
+    """
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    best: tuple[Path, pd.Timestamp, pd.Timestamp] | None = None
+    for p in _NEWS_CACHE_DIR.glob(f"{symbol}_*_news.json"):
+        m = _CACHE_FILE_RE.match(p.name)
+        if not m:
+            continue
+        cached_start = pd.to_datetime(m.group(2), format="%Y%m%d")
+        cached_end = pd.to_datetime(m.group(3), format="%Y%m%d")
+        if cached_start > start_ts:
+            continue  # doesn't cover the requested start
+        if best is None or cached_end > best[2]:
+            best = (p, cached_start, cached_end)
+    if best is None:
+        return None
+    return best
+
+
 def _load_cache(symbol: str, start: str = "", end: str = "") -> list[dict[str, Any]] | None:
     p = _cache_path(symbol, start, end)
     if p.exists():
@@ -237,6 +320,15 @@ def _load_cache(symbol: str, start: str = "", end: str = "") -> list[dict[str, A
         except Exception:
             logger.warning("Corrupt news cache for {} — ignoring", symbol)
     return None
+
+
+def _load_articles_json(p: Path) -> list[dict[str, Any]] | None:
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data
+    except Exception:
+        logger.warning("Corrupt news cache {} — ignoring", p.name)
+        return None
 
 
 def _save_cache(symbol: str, start: str, end: str, articles: list[dict[str, Any]]) -> None:
@@ -731,6 +823,200 @@ def _scrape_vnexpress_sector(
     return list(all_articles)
 
 
+# ------------------------------------------------------------------
+# Google News RSS scraper — broad macro / geopolitical coverage
+# ------------------------------------------------------------------
+
+# Symbol-specific queries for Google News
+_GOOGLE_NEWS_SYMBOL_KEYWORDS: dict[str, list[str]] = {
+    "VCB": ["Vietcombank cổ phiếu", "VCB ngân hàng kết quả"],
+    "BID": ["BIDV cổ phiếu", "BID ngân hàng đầu tư kết quả"],
+    "CTG": ["Vietinbank cổ phiếu", "CTG ngân hàng công thương kết quả"],
+    "TCB": ["Techcombank cổ phiếu", "TCB ngân hàng kỹ thương kết quả"],
+    "MBB": ["MB Bank cổ phiếu", "MBB ngân hàng quân đội kết quả"],
+    "ACB": ["ACB cổ phiếu", "ngân hàng Á Châu kết quả"],
+    "VPB": ["VPBank cổ phiếu", "VPB ngân hàng thịnh vượng kết quả"],
+}
+
+# Macro / sector / geopolitical queries shared across all symbols.
+# These capture events that broadly affect Vietnamese banking stocks:
+# SBV rate decisions, inflation, GDP, US Fed, war/trade disruptions,
+# government policy — all classes of news the user requested.
+_GOOGLE_NEWS_MACRO_KEYWORDS: list[str] = [
+    "ngân hàng nhà nước lãi suất Việt Nam",     # SBV rate decisions
+    "tỷ giá USD VND Việt Nam",                   # USD/VND exchange rate
+    "lạm phát CPI Việt Nam kinh tế",             # Inflation / CPI
+    "GDP kinh tế Việt Nam tăng trưởng",          # Economic growth
+    "Fed tăng lãi suất ngân hàng thế giới",      # US Fed — affects EM markets
+    "chứng khoán ngân hàng Việt Nam VN-Index",   # Banking stocks / market
+    "chính phủ Việt Nam chính sách tài chính",   # Govt fiscal policy
+    "chiến tranh Nga Ukraine kinh tế thế giới",  # War / commodity shock
+    "xuất khẩu nhập khẩu thương mại Việt Nam",  # Trade balance
+    "tín dụng nợ xấu ngân hàng Việt Nam",       # Credit / NPL sector
+]
+
+# Module-level cache so shared macro queries are fetched once per process
+_google_news_macro_cache: dict[str, list[dict[str, Any]]] = {}
+
+# Shorter delay for Google News RSS (public API, no HTML parsing)
+_GOOGLE_NEWS_REQUEST_DELAY = 0.5
+
+
+def _generate_quarterly_chunks(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Return (chunk_start, chunk_end) pairs in 3-month (quarterly) increments."""
+    import calendar
+
+    chunks: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    cur = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    while cur <= end:
+        # Three months ahead
+        adv_month = cur.month + 2
+        adv_year = cur.year
+        while adv_month > 12:
+            adv_month -= 12
+            adv_year += 1
+        last_day = calendar.monthrange(adv_year, adv_month)[1]
+        chunk_end = min(
+            pd.Timestamp(year=adv_year, month=adv_month, day=last_day, hour=23, minute=59),
+            end,
+        )
+        chunks.append((cur, chunk_end))
+        # Advance by 3 months
+        next_month = cur.month + 3
+        next_year = cur.year
+        while next_month > 12:
+            next_month -= 12
+            next_year += 1
+        cur = pd.Timestamp(year=next_year, month=next_month, day=1)
+    return chunks
+
+
+def _fetch_google_news_rss_keyword(
+    keyword: str,
+    chunk_start: pd.Timestamp,
+    chunk_end: pd.Timestamp,
+    seen_urls: set[str],
+) -> list[dict[str, Any]]:
+    """Fetch one Google News RSS query for a single keyword + date chunk."""
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+    from urllib.parse import quote
+    import requests as _requests
+
+    after = chunk_start.strftime("%Y-%m-%d")
+    before = chunk_end.strftime("%Y-%m-%d")
+    query = f"{keyword} after:{after} before:{before}"
+    url = (
+        f"https://news.google.com/rss/search"
+        f"?q={quote(query)}&hl=vi&gl=VN&ceid=VN:vi"
+    )
+
+    articles: list[dict[str, Any]] = []
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml",
+        }
+        resp = _requests.get(url, headers=headers, timeout=20)
+        time.sleep(_GOOGLE_NEWS_REQUEST_DELAY)
+        root = ET.fromstring(resp.content)
+        for item in root.findall(".//item"):
+            title_raw = item.findtext("title", "")
+            link = item.findtext("link", "")
+            pub_date_str = item.findtext("pubDate", "")
+            description = item.findtext("description", "") or ""
+
+            if not title_raw or not link or link in seen_urls:
+                continue
+
+            # Google News appends " - Source Name" to titles; strip it
+            title = re.sub(r"\s*-\s*[^-]{2,40}$", "", title_raw).strip() or title_raw
+
+            try:
+                pub_dt = parsedate_to_datetime(pub_date_str)
+                pub_date = pd.Timestamp(pub_dt.replace(tzinfo=None))
+            except Exception:
+                continue
+
+            if pub_date < chunk_start or pub_date > chunk_end:
+                continue
+
+            # Strip HTML tags from description for plain-text content
+            content = (title + " " + re.sub(r"<[^>]+>", "", description)).strip()
+
+            seen_urls.add(link)
+            articles.append(
+                {
+                    "article_id": _build_article_id(
+                        {"source": "google_news", "url": link, "title": title}
+                    ),
+                    "title": title,
+                    "url": link,
+                    "source_url": link,
+                    "published_date": str(pub_date),
+                    "content": content,
+                    "source": "google_news",
+                }
+            )
+    except Exception as exc:
+        logger.debug(
+            "Google News RSS failed | keyword='{}' chunk={}/{}: {}",
+            keyword, after, before, exc,
+        )
+    return articles
+
+
+def _scrape_google_news_rss(
+    symbol: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> list[dict[str, Any]]:
+    """Scrape Google News RSS for *symbol*-specific + broad macro/geopolitical news.
+
+    Uses quarterly date chunks so each query returns at most ~100 articles
+    and historical coverage reaches back to 2022.  The shared macro queries
+    are cached module-level so only the first symbol incurs the fetch cost.
+    """
+    chunks = _generate_quarterly_chunks(start_date, end_date)
+    cache_key = f"{start_date.date()}_{end_date.date()}"
+
+    # --- Shared macro queries (fetched once, reused for every symbol) ---
+    if cache_key not in _google_news_macro_cache:
+        logger.info("Google News RSS: fetching {} macro keywords × {} quarterly chunks …",
+                    len(_GOOGLE_NEWS_MACRO_KEYWORDS), len(chunks))
+        seen: set[str] = set()
+        macro_arts: list[dict[str, Any]] = []
+        for kw in _GOOGLE_NEWS_MACRO_KEYWORDS:
+            for cs, ce in chunks:
+                macro_arts.extend(_fetch_google_news_rss_keyword(kw, cs, ce, seen))
+        _google_news_macro_cache[cache_key] = macro_arts
+        logger.info("Google News RSS macro cache: {} articles", len(macro_arts))
+
+    shared = list(_google_news_macro_cache[cache_key])
+
+    # --- Symbol-specific queries ---
+    sym_keywords = _GOOGLE_NEWS_SYMBOL_KEYWORDS.get(symbol.upper(), [symbol])
+    seen_sym: set[str] = set()
+    sym_arts: list[dict[str, Any]] = []
+    for kw in sym_keywords:
+        for cs, ce in chunks:
+            sym_arts.extend(_fetch_google_news_rss_keyword(kw, cs, ce, seen_sym))
+
+    all_articles = sym_arts + shared
+    logger.info(
+        "Google News RSS for {}: {} symbol-specific + {} macro = {} total",
+        symbol, len(sym_arts), len(shared), len(all_articles),
+    )
+    return all_articles
+
+
 class NewsScraper:
     """Banking web news scraper with symbol-specific + sector-wide macro coverage."""
 
@@ -746,6 +1032,7 @@ class NewsScraper:
         use_cache: bool = True,
         export_trace: bool = True,
         similarity_threshold: float = 85.0,
+        news_filter_by_symbol: bool = True,
     ) -> pd.DataFrame:
         """Fetch banking news for one supported bank symbol."""
         symbol = str(symbol).upper().strip()
@@ -754,6 +1041,9 @@ class NewsScraper:
                 f"Unsupported symbol '{symbol}'. Supported symbols: {_SUPPORTED_BANK_SYMBOLS}"
             )
 
+        prior_articles: list[dict[str, Any]] = []
+        fetch_start = start  # narrowed below if a prior cache covers part of the range
+
         if use_cache:
             cached = _load_cache(symbol, start, end)
             if cached is not None:
@@ -761,9 +1051,43 @@ class NewsScraper:
                 if not df.empty:
                     return df
 
-        start_ts = pd.Timestamp(start)
+            # No exact-filename cache hit (every live-inference query uses a slightly
+            # different `end`, e.g. today's date, so an exact match almost never exists
+            # past the first call). Look for ANY prior cache that overlaps this request —
+            # if one fully covers it, skip scraping entirely; if one partially covers it,
+            # reuse those articles and only scrape the small incremental tail. This is
+            # what turns a live query from a full multi-year, multi-source re-scrape into
+            # a near-instant cache hit (full cover) or a few-day incremental fetch
+            # (partial cover).
+            overlap = _find_overlapping_cache(symbol, start, end)
+            if overlap is not None:
+                cache_path, cached_start, cached_end = overlap
+                end_ts_req = pd.Timestamp(end)
+                prior = _load_articles_json(cache_path)
+                if prior is not None:
+                    if cached_end >= end_ts_req:
+                        df = self._articles_to_dataframe(prior, start, end)
+                        if not df.empty:
+                            logger.info(
+                                "News cache FULL COVER for {} from {} (needed {}..{}) — "
+                                "no scrape needed",
+                                symbol, cache_path.name, start, end,
+                            )
+                            return df
+                    else:
+                        prior_articles = prior
+                        buffer_days = 5
+                        fetch_start = str((cached_end - pd.Timedelta(days=buffer_days)).date())
+                        logger.info(
+                            "News cache PARTIAL COVER for {} from {} ({}..{}) — "
+                            "incremental scrape only for {}..{} ({} prior articles reused)",
+                            symbol, cache_path.name, cached_start.date(), cached_end.date(),
+                            fetch_start, end, len(prior_articles),
+                        )
+
+        start_ts = pd.Timestamp(fetch_start)
         end_ts = pd.Timestamp(end)
-        all_articles: list[dict[str, Any]] = []
+        all_articles: list[dict[str, Any]] = list(prior_articles)
 
         if "vnexpress" in sources:
             try:
@@ -782,7 +1106,7 @@ class NewsScraper:
                     logger.info("Scraping CafeF banking source for {} ...", symbol)
                     cafef_raw = _scrape_cafef_banking(start_ts, end_ts)
                     _cafef_banking_cache[cafef_key] = cafef_raw
-                cafef_filtered = _filter_cafef_by_relevance(cafef_raw, symbol)
+                cafef_filtered = _filter_cafef_by_relevance(cafef_raw, symbol) if news_filter_by_symbol else cafef_raw
                 all_articles.extend(cafef_filtered)
             except Exception:
                 logger.warning("CafeF banking scraping failed for {} — continuing", symbol)
@@ -793,6 +1117,13 @@ class NewsScraper:
                 all_articles.extend(_scrape_vietstock(symbol, start_ts, end_ts))
             except Exception:
                 logger.warning("Vietstock scraping failed for {} — continuing", symbol)
+
+        if "google_news" in sources:
+            try:
+                logger.info("Scraping Google News RSS for {} ...", symbol)
+                all_articles.extend(_scrape_google_news_rss(symbol, start_ts, end_ts))
+            except Exception:
+                logger.warning("Google News RSS scraping failed for {} — continuing", symbol)
 
         # Add sector-wide banking/macro news (shared across all symbols)
         if "vnexpress" in sources:

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "primary_horizon": 5,
+    "other_horizons": [
+      1,
+      20
+    ],
+    "multiplier_by_agreement": {
+      "0": 0.6,
+      "1": 0.6,
+      "2": 0.6
+    },
+    "n_by_agreement": {
+      "0": 63,
+      "1": 64,
+      "2": 172
+    }
+  },
+  "symbol": "VN",
+  "cell_id": "13",
+  "config_hash": "ed960ffa26",
+  "cmtf_version": "v4",
+  "backbone_version": "v3",
+  "calibrated_on": "validation",
+  "n_common_val_rows": 763,
+  "n_traded": 299,
+  "multiplier_grid": [
+    0.6,
+    0.8,
+    1.0,
+    1.2,
+    1.4
+  ],
+  "min_bucket_n": 20,
+  "pooled_sharpe_real_optimized": 0.5778,
+  "pooled_sharpe_baseline_111": 0.5778,
+  "real_lift_over_baseline": 0.0,
+  "placebo_multiplier_by_agreement_example": {
+    "0": 0.6,
+    "1": 0.6,
+    "2": 0.6
+  },
+  "pooled_sharpe_placebo_optimized_mean": 0.5778,
+  "pooled_sharpe_placebo_optimized_std": 0.0,
+  "pooled_sharpe_placebo_baseline_111": 0.5778,
+  "placebo_lift_over_baseline_mean": -0.0,
+  "n_placebo_draws": 10,
+  "placebo_seed": 0,
+  "real_lift_beats_placebo_lift": true,
+  "calibration_date": "2026-07-16T17:25:15Z"
+}

@@ -1,0 +1,134 @@
+[33m[1mWARNING [0m Deterministic algorithms: enabled
+[33m[1mWARNING [0m \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+[33m[1mWARNING [0m   \U0001f680 ABLATION REGISTRY RUN
+[33m[1mWARNING [0m \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+[33m[1mWARNING [0m Cells: ['13']
+[33m[1mWARNING [0m Horizons: [1, 20]
+[33m[1mWARNING [0m Seeds: [1, 42, 123]
+[33m[1mWARNING [0m Device: cpu
+[33m[1mWARNING [0m Gate coverage (fixed): 25%
+[33m[1mWARNING [0m \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+Horizons:   0%|                                                                | 0/2 [00:00<?, ?h/s][33m[1mWARNING [0m 
+\U0001f4ca Processing horizon: 1D
+\U0001f4e6 Vnai 2.5.0 is available
+Current: 2.4.9 (Python 3.11 (venv))
+Update: c:\Users\bachkhan\Documents\ChatbotThesis\.venv\Scripts\python.exe -m pip install vnai --upgrade
+Release: https://pypi.org/project/vnai/#history
+[33m[1mWARNING [0m VCB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m BID — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m CTG — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m TCB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m MBB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m ACB — 79 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m VPB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m Cross-symbol coverage | sym=VCB covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=CTG covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=ACB covered_bars=45195 total_bars=45630 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=BID covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=TCB covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=MBB covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=VPB covered_bars=45345 total_bars=45780 coverage=0.990
+[33m[1mWARNING [0m VCB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m VCB original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m VCB train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m VCB val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m VCB test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m CTG pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m CTG original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m CTG train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m CTG val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m CTG test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m ACB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1521, 30, 768)
+[33m[1mWARNING [0m ACB original_matched | zero_bar_ratio=0.001 all_mask_ratio=0.001 all_zero_window_ratio=0.000 shape=(1521, 30, 768)
+[33m[1mWARNING [0m ACB train | raw_mask_count=1085 split_count=1085
+[33m[1mWARNING [0m ACB val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m ACB test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m BID pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m BID original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m BID train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m BID val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m BID test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m TCB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m TCB original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m TCB train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m TCB val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m TCB test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m MBB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m MBB original_matched | zero_bar_ratio=0.004 all_mask_ratio=0.004 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m MBB train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m MBB val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m MBB test | raw_mask_count=306 split_count=306
+[33m[1mWARNING [0m VPB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m VPB original_matched | zero_bar_ratio=0.004 all_mask_ratio=0.004 all_zero_window_ratio=0.000 shape=(1526, 30, 768)
+[33m[1mWARNING [0m VPB train | raw_mask_count=1090 split_count=1090
+[33m[1mWARNING [0m VPB val | raw_mask_count=128 split_count=128
+[33m[1mWARNING [0m VPB test | raw_mask_count=306 split_count=306
+
+  Cells (1D):   0%|                                                         | 0/1 [00:00<?, ?cell/s][A
+  Cells (1D): 100%|################################################| 1/1 [03:25<00:00, 205.44s/cell][A
+                                                                                                    [A[33m[1mWARNING [0m   \u2713 per-seed metrics \u2192 results\ablation_registry\1d\per_seed.csv
+[33m[1mWARNING [0m   \u2713 aggregated metrics \u2192 aggregated.csv / aggregated.parquet
+[33m[1mWARNING [0m   \u2713 report \u2192 results\ablation_registry\1d\report.md
+Horizons:  50%|###########################5                           | 1/2 [04:23<04:23, 263.12s/h][33m[1mWARNING [0m 
+\U0001f4ca Processing horizon: 20D
+[33m[1mWARNING [0m VCB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m BID — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m CTG — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m TCB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m MBB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m ACB — 79 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m VPB — 74 missing trading days detected (of 1630 expected)
+[33m[1mWARNING [0m Cross-symbol coverage | sym=VCB covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=CTG covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=ACB covered_bars=44625 total_bars=45060 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=BID covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=TCB covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=MBB covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m Cross-symbol coverage | sym=VPB covered_bars=44775 total_bars=45210 coverage=0.990
+[33m[1mWARNING [0m VCB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m VCB original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m VCB train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m VCB val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m VCB test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m CTG pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m CTG original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m CTG train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m CTG val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m CTG test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m ACB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1502, 30, 768)
+[33m[1mWARNING [0m ACB original_matched | zero_bar_ratio=0.001 all_mask_ratio=0.001 all_zero_window_ratio=0.000 shape=(1502, 30, 768)
+[33m[1mWARNING [0m ACB train | raw_mask_count=1066 split_count=1066
+[33m[1mWARNING [0m ACB val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m ACB test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m BID pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m BID original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m BID train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m BID val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m BID test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m TCB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m TCB original_matched | zero_bar_ratio=0.003 all_mask_ratio=0.003 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m TCB train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m TCB val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m TCB test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m MBB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m MBB original_matched | zero_bar_ratio=0.004 all_mask_ratio=0.004 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m MBB train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m MBB val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m MBB test | raw_mask_count=287 split_count=287
+[33m[1mWARNING [0m VPB pooled_all | zero_bar_ratio=0.010 all_mask_ratio=0.010 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m VPB original_matched | zero_bar_ratio=0.004 all_mask_ratio=0.004 all_zero_window_ratio=0.000 shape=(1507, 30, 768)
+[33m[1mWARNING [0m VPB train | raw_mask_count=1071 split_count=1071
+[33m[1mWARNING [0m VPB val | raw_mask_count=109 split_count=109
+[33m[1mWARNING [0m VPB test | raw_mask_count=287 split_count=287
+
+  Cells (20D):   0%|                                                        | 0/1 [00:00<?, ?cell/s][A
+  Cells (20D): 100%|###############################################| 1/1 [03:03<00:00, 183.11s/cell][A
+                                                                                                    [A[33m[1mWARNING [0m   \u2713 per-seed metrics \u2192 results\ablation_registry\20d\per_seed.csv
+[33m[1mWARNING [0m   \u2713 aggregated metrics \u2192 aggregated.csv / aggregated.parquet
+[33m[1mWARNING [0m   \u2713 report \u2192 results\ablation_registry\20d\report.md
+Horizons: 100%|#######################################################| 2/2 [08:14<00:00, 244.44s/h]Horizons: 100%|#######################################################| 2/2 [08:14<00:00, 247.24s/h]
+[33m[1mWARNING [0m 
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+[33m[1mWARNING [0m   \u2705 ABLATION REGISTRY RUN COMPLETE
+[33m[1mWARNING [0m \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+EXIT=0

@@ -1,0 +1,11 @@
+{
+  "cell_id": "cnn_lstm__early__all__scalars",
+  "config_hash": "5825e4e843",
+  "seed": 42,
+  "horizon": 20,
+  "scaling_version": "unitstd_v2",
+  "target_scale": 10.485982457846596,
+  "shuffle_news": false,
+  "data_sig": "1d34fa2564fe1a71b151586b9e495e71",
+  "news_sig": "aadce86e8782328dcd395380f7313e99"
+}

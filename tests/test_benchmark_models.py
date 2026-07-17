@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from run_chronos_benchmark import (
-    _run_optuna_hpo,
+from run_model_benchmark import (
+    _split_hash,
     extract_per_symbol_data,
     impute_market_window_splits,
     impute_tabular_splits,
@@ -75,7 +76,18 @@ class TestSplitByDate:
         splits = split_by_date(data, times, "2023-06-30", "2023-09-30")
 
         for split_name in ("train", "val", "test"):
-            assert set(splits[split_name].keys()) == set(data.keys())
+            assert set(data.keys()).issubset(set(splits[split_name].keys()))
+            assert "times" in splits[split_name]
+            assert len(splits[split_name]["times"]) == len(splits[split_name]["targets"])
+
+    def test_split_hash_changes_with_time_bounds(self):
+        data, times = self._make_data()
+        splits_a = split_by_date(data, times, "2023-06-30", "2023-09-30")
+        splits_b = split_by_date(data, times, "2023-07-31", "2023-09-30")
+
+        hash_a = _split_hash(splits_a, "VCB", 1)
+        hash_b = _split_hash(splits_b, "VCB", 1)
+        assert hash_a != hash_b
 
 
 # ======================================================================
@@ -219,11 +231,6 @@ class TestBaselineHpoFallback:
             "run_rf_hpo",
             lambda *args, **kwargs: pytest.fail("RF HPO should not run"),
         )
-        monkeypatch.setattr(
-            baseline_hpo,
-            "run_finetuned_chronos_hpo",
-            lambda *args, **kwargs: pytest.fail("Chronos HPO should not run"),
-        )
 
         params = baseline_hpo.load_or_run_baseline_hpo(
             tmp_path,
@@ -241,138 +248,47 @@ class TestBaselineHpoFallback:
         assert params == baseline_hpo.get_default_baseline_hpo_params()
 
 
-class TestCmtfHpo:
-    def test_uses_actual_hybrid_news_dim(self, tmp_path, monkeypatch):
-        import run_chronos_benchmark as benchmark
-
-        captured_news_dims: list[int] = []
-
-        class FakeChronosCMTF:
-            def __init__(self, _backbone, news_dim, **kwargs):
-                captured_news_dims.append(int(news_dim))
-
-            def fit_tokenized(self, *args, **kwargs):
-                return {"train_loss": [0.0], "val_loss": [0.0]}
-
-            def predict_tokenized(self, token_ids, attention_mask, news_embs, **kwargs):
-                return np.zeros(news_embs.shape[0], dtype=np.float32)
-
-        def fake_load_or_train_ft_chronos_model(*args, **kwargs):
-            return object(), None, "fakehash"
-
-        monkeypatch.setattr(benchmark, "ChronosCMTFPredictor", FakeChronosCMTF)
-        monkeypatch.setattr(benchmark, "_load_or_train_ft_chronos_model", fake_load_or_train_ft_chronos_model)
-        monkeypatch.setattr(
-            benchmark,
-            "compute_composite_metrics",
-            lambda *args, **kwargs: {"CompositeScore": 0.0},
-        )
-        monkeypatch.setattr(benchmark, "_cmtf_hpo_cache_file", lambda target_h: tmp_path / f"best_params_{target_h}d.json")
-
-        news_dim = 773
-        all_symbol_splits = {
-            "VCB": {
-                "train": {
-                    "news_embs": np.zeros((2, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(2, dtype=np.float32),
-                    "market_windows": np.zeros((2, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((2, 4), dtype=np.float32),
-                    "news_masks": np.zeros((2, 3), dtype=bool),
-                },
-                "val": {
-                    "news_embs": np.zeros((1, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(1, dtype=np.float32),
-                    "market_windows": np.zeros((1, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((1, 4), dtype=np.float32),
-                    "news_masks": np.zeros((1, 3), dtype=bool),
-                },
-                "test": {
-                    "news_embs": np.zeros((1, 3, news_dim), dtype=np.float32),
-                    "targets": np.zeros(1, dtype=np.float32),
-                    "market_windows": np.zeros((1, 3, 4), dtype=np.float32),
-                    "market_tabular": np.zeros((1, 4), dtype=np.float32),
-                    "news_masks": np.zeros((1, 3), dtype=bool),
-                },
-            }
-        }
-        all_symbol_tokens = {
-            "VCB": {
-                "train_ids": np.ones((2, 3), dtype=np.int64),
-                "train_mask": np.ones((2, 3), dtype=np.int64),
-                "val_ids": np.ones((1, 3), dtype=np.int64),
-                "val_mask": np.ones((1, 3), dtype=np.int64),
-                "test_ids": np.ones((1, 3), dtype=np.int64),
-                "test_mask": np.ones((1, 3), dtype=np.int64),
-            }
-        }
-
-        params = _run_optuna_hpo(
-            chronos=object(),
-            all_symbol_splits=all_symbol_splits,
-            all_symbol_tokens=all_symbol_tokens,
-            all_symbol_anchor_val_preds={"VCB": np.zeros(1, dtype=np.float32)},
-            target_h=1,
-            use_tabular=True,
-            device="cpu",
-            n_trials=1,
-            seq_len=3,
-            ft_backbone_params={"lr": 1e-4},
-        )
-
-        assert captured_news_dims == [news_dim]
-        assert set(params) == {"fusion_dim", "lr", "dir_penalty_weight", "dropout"}
 
 
-# ======================================================================
-# CrossModalFusionHead (pure PyTorch, no Chronos)
-# ======================================================================
 
 
-class TestCrossModalFusionHead:
-    def test_output_shape(self):
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
+class TestDieboldMarianoTest:
+    def test_identical_predictions_p_value_1(self):
+        from src.benchmark.metrics import diebold_mariano_test
 
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, fusion_dim=8, n_heads=2, dropout=0.0,
-            seq_len=5,
-        )
-        import torch
+        y = np.array([0.01, -0.02, 0.03, -0.01, 0.02, -0.03, 0.01, -0.01])
+        preds = np.array([0.005, -0.01, 0.02, -0.005, 0.01, -0.02, 0.005, -0.005])
+        result = diebold_mariano_test(y, preds, preds, horizon=1)
+        assert result["p_value"] == pytest.approx(1.0)
+        assert result["DM_stat"] == pytest.approx(0.0)
 
-        market = torch.randn(4, 32)
-        news = torch.randn(4, 5, 16)
-        pred = head(market, news)
-        assert pred.shape == (4,)
+    def test_better_model_positive_stat(self):
+        from src.benchmark.metrics import diebold_mariano_test
 
-    def test_news_default_token_replaces_zeros(self):
-        """All-zero news rows should be replaced by the learned default token."""
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
-        import torch
+        rng = np.random.RandomState(42)
+        y = rng.randn(100) * 0.01
+        preds_a = y + rng.randn(100) * 0.02  # worse
+        preds_b = y + rng.randn(100) * 0.005  # better
+        result = diebold_mariano_test(y, preds_a, preds_b, horizon=1)
+        # DM_stat should be positive (A has higher loss)
+        assert result["DM_stat"] > 0
 
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, fusion_dim=8, n_heads=2, dropout=0.0,
-            seq_len=3,
-        )
-        market = torch.randn(2, 32)
-        # First sample: real news; second sample: all zeros (no news)
-        news = torch.zeros(2, 3, 16)
-        news[0] = torch.randn(3, 16)
 
-        pred = head(market, news)
-        assert pred.shape == (2,)
-        # Both should produce finite outputs (no NaN from zero input)
-        assert torch.isfinite(pred).all()
+class TestPairedBootstrapDA:
+    def test_identical_predictions_zero_delta(self):
+        from src.benchmark.metrics import paired_bootstrap_da
 
-    def test_tabular_dim(self):
-        from src.benchmark.chronos_cmtf import CrossModalFusionHead
-        import torch
+        y = np.array([0.01, -0.02, 0.03, -0.01, 0.02, -0.03])
+        preds = np.array([0.005, -0.01, 0.02, 0.005, 0.01, -0.02])
+        result = paired_bootstrap_da(y, preds, preds, n_bootstrap=1000)
+        assert abs(result["delta_da"]) < 0.5
+        # CI should include 0
+        assert result["ci_low"] <= 0.0 <= result["ci_high"]
 
-        head = CrossModalFusionHead(
-            market_dim=32, news_dim=16, tabular_dim=8,
-            fusion_dim=8, n_heads=2, dropout=0.0,
-            seq_len=5,
-        )
-        market = torch.randn(3, 32)
-        news = torch.randn(3, 5, 16)
-        tab = torch.randn(3, 8)
-        pred = head(market, news, tabular_emb=tab)
-        assert pred.shape == (3,)
+    def test_returns_expected_keys(self):
+        from src.benchmark.metrics import paired_bootstrap_da
+
+        y = np.array([0.01, -0.02, 0.03])
+        p = np.array([0.005, -0.01, 0.02])
+        result = paired_bootstrap_da(y, p, p, n_bootstrap=100)
+        assert set(result.keys()) == {"delta_da", "ci_low", "ci_high", "p_value"}

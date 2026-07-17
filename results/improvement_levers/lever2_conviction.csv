@@ -1,0 +1,4 @@
+cell,Sharpe_flat,Sharpe_conviction,Sharpe_rankconv,delta_conv,delta_rank
+cmtf_real,-0.099,0.341,0.222,0.44,0.321
+cmtf_placebo,0.447,0.262,0.268,-0.185,-0.179
+market_only,0.564,0.165,0.212,-0.399,-0.352

@@ -1,0 +1,88 @@
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                 ┃
+┃  ⚠️ THÔNG BÁO QUAN TRỌNG                                                        ┃
+┃                                                                                 ┃
+┃  Phát hành vnstock 4.0.1 cung cấp sửa lỗi quan trọng và bổ sung giao diện API   ┃
+┃  thống nhất (Unified UI), tăng tính ổn định của code.                           ┃
+┃  Cập nhật: pip install vnstock -U                                               ┃
+┃  AI Agent Guide: https://github.com/vnstock-hq/vnstock-agent-guide/             ┃
+┃                                                                                 ┃
+┃  ────────────────────────────────────────────────────────────────────────────── ┃
+┃                                                                                 ┃
+┃  🚀 VNSTOCK INSIDERS PROGRAM - NÂNG TẦM TRẢI NGHIỆM CỦA BẠN! 🚀                 ┃
+┃                                                                                 ┃
+┃  Nếu bạn cảm thấy khó chịu với các thông báo và quảng cáo:                      ┃
+┃                                                                                 ┃
+┃  ✨ Ẩn toàn bộ thông báo và quảng cáo phiền hà                                  ┃
+┃  🔓 Mở rộng khả năng sử dụng API tối đa                                         ┃
+┃  ⚡ Tăng tốc tải dữ liệu từ 5-8 lần                                              ┃
+┃  📈 Tăng giới hạn truy cập API lên đến 5 lần                                    ┃
+┃  🤖 Dùng AI Agent viết code hiệu quả với tài liệu Agent Guide                    ┃
+┃                                                                                 ┃
+┃  🔗 Tham gia ngay: https://vnstocks.com/insiders-program#tiers                  ┃
+┃                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+{
+  "hypothesis": "H5",
+  "description": "Does the reasoning agent's single-pass widen-and-rerun reflection improve decisions vs the MAS baseline (no reasoning agent), on real historical (symbol,date) rows?",
+  "horizon": 5,
+  "n_requested": 100,
+  "n_run": 98,
+  "n_dropped": 0,
+  "sample_seed": 0,
+  "n_triggered": 5,
+  "n_changed_decision": 0,
+  "trigger_rate": 0.051,
+  "all_rows": {
+    "n_rows": 98,
+    "baseline": {
+      "coverage": 0.071,
+      "n_trades": 7,
+      "DA": 57.14,
+      "IC": 0.0,
+      "Sharpe": -1.676,
+      "profit_factor": 0.439,
+      "max_drawdown": 0.16626,
+      "net_PnL@25bps": -0.1236
+    },
+    "reasoning": {
+      "coverage": 0.071,
+      "n_trades": 7,
+      "DA": 57.14,
+      "IC": 0.0,
+      "Sharpe": -1.676,
+      "profit_factor": 0.439,
+      "max_drawdown": 0.16626,
+      "net_PnL@25bps": -0.1236
+    }
+  },
+  "triggered_rows": {
+    "n_rows": 5,
+    "baseline": {
+      "coverage": 0.4,
+      "n_trades": 2,
+      "DA": 100.0,
+      "IC": NaN,
+      "Sharpe": 13.262,
+      "profit_factor": Infinity,
+      "max_drawdown": 0.0,
+      "net_PnL@25bps": 0.0149
+    },
+    "reasoning": {
+      "coverage": 0.4,
+      "n_trades": 2,
+      "DA": 100.0,
+      "IC": NaN,
+      "Sharpe": 13.262,
+      "profit_factor": Infinity,
+      "max_drawdown": 0.0,
+      "net_PnL@25bps": 0.0149
+    }
+  },
+  "changed_decision_rows": {
+    "n_rows": 0,
+    "baseline": null,
+    "reasoning": null
+  },
+  "out_path": "results\\agent_ablation\\5d\\h5_reasoning_eval.json"
+}
