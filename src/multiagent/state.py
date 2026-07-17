@@ -40,6 +40,8 @@ class MultiAgentState(TypedDict, total=False):
     target_horizon: str  # e.g. "5d"
     aspect_filter: str  # optional topic filter for research/news
     route_reason: str  # why this branch was chosen (never a silent default — R1)
+    date_start: str | None  # explicit calendar range the query named (LLM/regex-understood, never a hardcoded default)
+    date_end: str | None
 
     # --- Orchestrator output (data fetch) ---
     close_window: np.ndarray  # (seq_len,)
@@ -65,8 +67,11 @@ class MultiAgentState(TypedDict, total=False):
     gate_pred: float  # RAW magnitude the gate consumes (single-seed or mean per config)
     seed_preds: list[float]
     news_residual: float
-    attn_weights: np.ndarray  # (seq_len,) mean attention
-    news_weight: float
+    attn_weights: np.ndarray | None  # (seq_len,) cross-attention per trailing day, 3-seed mean
+    news_weight: np.ndarray | None  # (seq_len,) recency gate per trailing day, 3-seed mean
+    # Grounded top-k attended days (see raw_prediction.summarize_attention) —
+    # narrator/critic cite/verify THIS, never the raw tensor directly.
+    attention_top_days: list[dict[str, Any]] | None
     predict_confidence: float  # demoted to metadata — the gate does NOT use this
     model_evidence: dict[str, Any]  # full evidence payload (incl. agreement annotations)
     model_proposal: dict[str, Any]  # direction, score, confidence, rationale
@@ -77,6 +82,18 @@ class MultiAgentState(TypedDict, total=False):
     gate_coverage: float
     gate_val_score: float
     gate_reason: str
+    # Honest, per-horizon operating-point disclosure (validation-set gated DA% / base
+    # rate DA% at this horizon's own calibrated tau — see gate_io.calibrate_from_cache).
+    # None only if the loaded policy predates schema v2 (narrator/critic fall back to
+    # a number-free disclosure rather than a stale literal from a different horizon).
+    gate_disclosure_da_pct: float | None
+    gate_disclosure_base_rate_pct: float | None
+
+    # --- Horizon interaction agent output (symmetric conviction adjustment, NOT a
+    # veto — see horizon_interaction_agent.py for why this is the one node in the
+    # chain allowed to scale position_scale up as well as down) ---
+    horizon_agreement_score: int | None  # 0/1/2 other horizons agreeing in sign
+    horizon_interaction_multiplier: float | None  # None if artifact missing/degraded
 
     # --- Risk agent output (one-way safety veto only) ---
     action: str  # final action: "long" | "short" | "abstain"
@@ -88,6 +105,12 @@ class MultiAgentState(TypedDict, total=False):
     # --- Metalabel agent output (one-way qualitative event-flag veto) ---
     metalabel_flags: list[str]
     metalabel_vetoed: bool
+
+    # --- Reasoning agent output (single-pass reflection, NEVER sets action/
+    # position_scale itself — see reasoning_agent.py) ---
+    reasoning_triggered_reasons: list[str]  # empty ⇒ evidence was already sufficient
+    reasoning_notes: str | None  # grounded, critic-checkable disclosure
+    reasoning_evidence_widened: bool  # True only when a real second pass happened
 
     # --- Rank agent output (COMPARISON branch) ---
     ranking: list[dict[str, Any]]  # one row per symbol, sorted by conviction

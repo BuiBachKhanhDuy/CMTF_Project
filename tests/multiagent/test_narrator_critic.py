@@ -73,3 +73,57 @@ class TestCriticNode:
         out = critic_agent_node({**s, "answer_text": grounded_template(s),
                                  "grounded_answer": grounded_template(s)}, CFG_EVAL)
         assert out["critic_status"] == "ok"
+
+
+# --- Per-horizon disclosure numbers (regression: these used to be a hardcoded 5D
+# literal — ~54% DA / ~25% coverage / ~53.8% base rate — attached to every answer
+# regardless of state["target_horizon_days"]) ---
+
+_HORIZON_DISCLOSURE = {
+    # (gated DA%, base-rate DA%, coverage) — deliberately far enough apart (beyond the
+    # critic's 5% relative-tolerance grounding check) that the old hardcoded 5D
+    # literals (54.0 / 53.8 / 25%) can never accidentally pass as "close enough" to a
+    # different horizon's real numbers.
+    1: (70.0, 40.0, 0.30),
+    5: (54.0, 53.8, 0.25),
+    20: (58.0, 45.0, 0.20),
+}
+
+
+def _state_with_disclosure(horizon, action="abstain"):
+    da, base, cov = _HORIZON_DISCLOSURE[horizon]
+    s = _abstain_state() if action == "abstain" else _long_state()
+    s["target_horizon_days"] = horizon
+    s["gate_coverage"] = cov
+    s["gate_disclosure_da_pct"] = da
+    s["gate_disclosure_base_rate_pct"] = base
+    return s
+
+
+class TestPerHorizonDisclosure:
+    def test_disclosure_note_is_horizon_specific(self):
+        for horizon in (1, 5, 20):
+            da, base, cov = _HORIZON_DISCLOSURE[horizon]
+            t = grounded_template(_state_with_disclosure(horizon))
+            assert f"{da:.0f}%" in t
+            assert f"{base:.1f}%" in t
+            if horizon != 5:
+                assert "53.8" not in t  # the old 5D-only literal must not leak into other horizons
+
+    def test_critic_accepts_horizon_specific_disclosure(self):
+        for horizon in (1, 5, 20):
+            s = _state_with_disclosure(horizon)
+            assert verify_answer(grounded_template(s), s) == []
+
+    def test_critic_rejects_stale_5d_literal_on_other_horizons(self):
+        s = _state_with_disclosure(1, action="abstain")  # 1D state: da=60.0, base=52.0
+        bad = "Khuyến nghị KHÔNG GIAO DỊCH. Điểm vận hành 54% ở bao phủ 25%, tỷ lệ nền 53.8%."
+        findings = verify_answer(bad, s)
+        assert any("ungrounded" in f for f in findings)
+
+    def test_narrator_no_disclosure_data_uses_honest_fallback_not_stale_literal(self):
+        s = _abstain_state()  # no gate_disclosure_* fields at all
+        t = grounded_template(s)
+        assert "TỪ CHỐI" in t
+        for stale in ("53.8", "54%", "25%"):
+            assert stale not in t

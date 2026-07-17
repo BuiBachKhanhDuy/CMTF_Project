@@ -27,11 +27,41 @@ _ACTION_VI = {"long": "MUA", "short": "BÁN", "abstain": "KHÔNG GIAO DỊCH", "
 # Honest, universe-limited operating-point disclosure (plan §0/§3.10): the single-name
 # gated accuracy is within CI of the base rate, so the calibrated ABSTENTION — not an
 # accuracy number — is the product. Never headline an inflated figure.
-_COVERAGE_CI_NOTE = (
-    "Điểm vận hành: ~54% độ chính xác hướng ở mức bao phủ ~25% "
-    "(khoảng tin cậy còn chồng lấn tỷ lệ nền ~53.8% trên một mã — "
-    "giá trị của hệ thống là việc TỪ CHỐI giao dịch có hiệu chuẩn, không phải độ chính xác)."
-)
+#
+# Computed PER HORIZON from state (gate_agent surfaces it from the frozen
+# VN_{H}d.json's own validation-set numbers — see gate_io.calibrate_from_cache) rather
+# than a fixed literal: 1D/5D/20D each calibrate to a different accuracy/coverage/base
+# rate, so a single hardcoded string would misreport the operating point for two of the
+# three horizons. Falls back to a number-free (but still honest) disclosure when the
+# loaded policy predates schema v2 and has no disclosure numbers yet.
+def _disclosure_note(state: MultiAgentState) -> str:
+    da = state.get("gate_disclosure_da_pct")
+    base = state.get("gate_disclosure_base_rate_pct")
+    cov = state.get("gate_coverage")
+    if da is None or base is None or cov is None:
+        return (
+            "Điểm vận hành: chưa có số liệu hiệu chuẩn công khai cho horizon này — "
+            "giá trị của hệ thống là việc TỪ CHỐI giao dịch có hiệu chuẩn, không phải độ chính xác."
+        )
+    return (
+        f"Điểm vận hành: ~{da:.0f}% độ chính xác hướng ở mức bao phủ ~{cov * 100:.0f}% "
+        f"(khoảng tin cậy còn chồng lấn tỷ lệ nền ~{base:.1f}% trên tập kiểm định — "
+        f"giá trị của hệ thống là việc TỪ CHỐI giao dịch có hiệu chuẩn, không phải độ chính xác)."
+    )
+
+
+def _attention_note(state: MultiAgentState) -> str:
+    """Cite the single most-attended trailing day — a real internal signal from the
+    model's cross-attention (see raw_prediction.summarize_attention), not an LLM's
+    guess at "why". Empty string (nothing to cite) when unavailable, never fabricated."""
+    top_days = state.get("attention_top_days")
+    if not top_days:
+        return ""
+    top = top_days[0]
+    days_before, weight = top["days_before_cutoff"], top["weight"]
+    when = "ngày gần nhất" if days_before == 0 else f"{days_before} ngày trước"
+    return f" Mô hình tập trung chú ý nhiều nhất vào dữ liệu {when} (trọng số {weight:.0%})."
+
 
 _SYSTEM_PROMPT = (
     "Bạn là chuyên gia phân tích tài chính Việt Nam. Viết một đoạn giải thích ngắn gọn "
@@ -56,14 +86,20 @@ def grounded_template(state: MultiAgentState) -> str:
             parts.append(f"Bị chặn bởi kiểm soát rủi ro ({', '.join(state.get('veto_reasons', []))}).")
         else:
             parts.append(f"Mô hình thiếu độ tin cậy: {state.get('gate_reason', '')}.")
-        parts.append(_COVERAGE_CI_NOTE)
+        parts.append(_disclosure_note(state))
     else:
         parts.append(f"Kích thước vị thế: {size:+.2f}. {state.get('gate_reason', '')}.")
-        parts.append(_COVERAGE_CI_NOTE)
+        parts.append(_disclosure_note(state))
     parts.append(
         f"Bối cảnh thị trường: biến động 20 ngày {vm.get('vol_20d', 0):.1f}%, "
         f"sụt giảm tối đa {vm.get('max_drawdown_pct', 0):.1f}%."
+        + _attention_note(state)
     )
+    # NOTE: reasoning_agent runs AFTER critic_agent (it needs a real critic_status to
+    # check), so `reasoning_notes` is never present yet when narrator/critic run —
+    # reasoning_agent appends its own disclosure directly onto the final answer_text/
+    # grounded_answer post-critic instead (see reasoning_agent.py's module docstring
+    # for why that's safe without a second grounding pass).
     return " ".join(parts)
 
 
@@ -80,7 +116,8 @@ def _evidence_prompt(state: MultiAgentState) -> str:
         f"Dự báo (ensemble): {me.get('final_pred', 0):.5f}  gate_pred: {me.get('gate_pred', 0):.5f}",
         f"Biến động 20d: {vm.get('vol_20d', 0):.1f}%  Sụt giảm: {vm.get('max_drawdown_pct', 0):.1f}%",
         f"Tin tức: coverage={sm.get('coverage', 0)} staleness={sm.get('staleness_frac', 0):.0%}",
-        f"LƯU Ý bắt buộc: {_COVERAGE_CI_NOTE}",
+        f"Chú ý mô hình (attention): {state.get('attention_top_days') or 'không có'}",
+        f"LƯU Ý bắt buộc: {_disclosure_note(state)}",
     ])
 
 

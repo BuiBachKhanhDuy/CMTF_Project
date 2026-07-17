@@ -1,0 +1,19 @@
+
+1D: READY
+  ✓ gate policy ok (results\gate_policies\VN_1d.json)
+  ✓ core predictions ok (cell 0)
+  ✓ matched predictions ok (cell 8)
+  ✓ deploy checkpoints ok (3 seed(s): ['1', '123', '42'])
+
+5D: READY
+  ✓ gate policy ok (results\gate_policies\VN_5d.json)
+  ✓ core predictions ok (cell 0)
+  ✓ matched predictions ok (cell 8)
+  ✓ deploy checkpoints ok (3 seed(s): ['1', '123', '42'])
+
+20D: READY
+  ✓ gate policy ok (results\gate_policies\VN_20d.json)
+  ✓ core predictions ok (cell 0)
+  ✓ matched predictions ok (cell 8)
+  ✓ deploy checkpoints ok (3 seed(s): ['1', '123', '42'])
+EXIT=0

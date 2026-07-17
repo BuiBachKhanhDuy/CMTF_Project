@@ -483,6 +483,7 @@ class HybridFusionPredictor(nn.Module):
         self.last_attn_weights: torch.Tensor | None = None
         self.last_attended_news: torch.Tensor | None = None
         self.last_recency_gate: torch.Tensor | None = None
+        self.last_news_gate: torch.Tensor | None = None
 
         self.to(self.device)
 
@@ -654,6 +655,7 @@ class HybridFusionPredictor(nn.Module):
         pooled_news: torch.Tensor | None = None,
     ) -> torch.Tensor:
         sigmoid_gate = self.news_gate(market_emb)
+        self.last_news_gate = sigmoid_gate.detach()
         if self.gate_mode == "learned" and self.learned_gate_head is not None and pooled_news is not None:
             gate_input = torch.cat([market_emb, pooled_news], dim=-1)
             alpha = self.learned_gate_head(gate_input)  # (B, 1), broadcasts over feature dim
@@ -1357,6 +1359,47 @@ class HybridFusionPredictor(nn.Module):
         )
         # Always return the full news-using fusion prediction (no lambda guard).
         return final_raw.astype(np.float32)
+
+    def predict_with_attention(
+        self,
+        market_windows: np.ndarray,
+        news_embs: np.ndarray,
+        news_mask: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+        """Like `predict()`, but also returns per-trailing-day attention/recency-gate
+        summaries for explainability — genuine internal signals the forward pass
+        already computes (`self.last_attn_weights`/`self.last_recency_gate`), never a
+        post-hoc approximation.
+
+        Returns (final_raw, attn_by_day, recency_gate_by_day):
+        - attn_by_day: (B, S) — cross-attention averaged over the market-query
+          dimension, with the prepended null-news token dropped, so index i is the
+          model's attention on trailing day i. None if `use_cross_attention=False`.
+        - recency_gate_by_day: (B, S) — the market-conditioned recency gate applied
+          to each trailing day's news token. None if unavailable.
+
+        Caveat: `self.last_attn_weights`/`self.last_recency_gate` reflect only the
+        LAST internal batch of `predict()`'s forward pass — call this with n <=
+        batch_size rows (live_inference.py always calls with a single row) or the
+        returned attention will silently only describe the final batch.
+        """
+        if len(market_windows) > 256:  # matches predict()'s default batch_size
+            raise ValueError(
+                "predict_with_attention does not support >256 rows in one call — "
+                "the cached attention tensors would only reflect the last internal "
+                "batch. Call once per row (or per <=256-row chunk) instead."
+            )
+        final_raw = self.predict(market_windows, news_embs, news_mask)
+
+        attn_by_day = None
+        if self.last_attn_weights is not None:
+            attn_by_day = self.last_attn_weights.mean(dim=1)[:, 1:].cpu().numpy()
+
+        recency_by_day = None
+        if self.last_recency_gate is not None:
+            recency_by_day = self.last_recency_gate.squeeze(-1).cpu().numpy()
+
+        return final_raw, attn_by_day, recency_by_day
 
     def predict_market_only(self, market_windows: np.ndarray) -> np.ndarray:
         return self.market_encoder.predict_market_only(market_windows)

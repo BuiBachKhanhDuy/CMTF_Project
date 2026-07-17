@@ -1,0 +1,93 @@
+📦 Vnai 2.5.0 is available
+Current: 2.4.9 (Python 3.11 (venv))
+Update: c:\Users\bachkhan\Documents\ChatbotThesis\.venv\Scripts\python.exe -m pip install vnai --upgrade
+Release: https://pypi.org/project/vnai/#history
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                 ┃
+┃  ⚠️ THÔNG BÁO QUAN TRỌNG                                                        ┃
+┃                                                                                 ┃
+┃  Phát hành vnstock 4.0.1 cung cấp sửa lỗi quan trọng và bổ sung giao diện API   ┃
+┃  thống nhất (Unified UI), tăng tính ổn định của code.                           ┃
+┃  Cập nhật: pip install vnstock -U                                               ┃
+┃  AI Agent Guide: https://github.com/vnstock-hq/vnstock-agent-guide/             ┃
+┃                                                                                 ┃
+┃  ────────────────────────────────────────────────────────────────────────────── ┃
+┃                                                                                 ┃
+┃  🚀 VNSTOCK INSIDERS PROGRAM - NÂNG TẦM TRẢI NGHIỆM CỦA BẠN! 🚀                 ┃
+┃                                                                                 ┃
+┃  Nếu bạn cảm thấy khó chịu với các thông báo và quảng cáo:                      ┃
+┃                                                                                 ┃
+┃  ✨ Ẩn toàn bộ thông báo và quảng cáo phiền hà                                  ┃
+┃  🔓 Mở rộng khả năng sử dụng API tối đa                                         ┃
+┃  ⚡ Tăng tốc tải dữ liệu từ 5-8 lần                                              ┃
+┃  📈 Tăng giới hạn truy cập API lên đến 5 lần                                    ┃
+┃  🤖 Dùng AI Agent viết code hiệu quả với tài liệu Agent Guide                    ┃
+┃                                                                                 ┃
+┃  🔗 Tham gia ngay: https://vnstocks.com/insiders-program#tiers                  ┃
+┃                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+Encoding news:   0%|          | 0/10810 [00:00<?, ?it/s]Encoding news:   7%|▋         | 791/10810 [00:00<00:01, 7826.67it/s]Encoding news:  15%|█▍        | 1574/10810 [00:00<00:01, 7824.75it/s]Encoding news:  22%|██▏       | 2357/10810 [00:00<00:01, 7346.21it/s]Encoding news:  29%|██▊       | 3095/10810 [00:00<00:01, 7125.51it/s]Encoding news:  35%|███▌      | 3810/10810 [00:00<00:01, 6872.13it/s]Encoding news:  42%|████▏     | 4500/10810 [00:00<00:00, 6564.23it/s]Encoding news:  48%|████▊     | 5159/10810 [00:00<00:00, 5980.58it/s]Encoding news:  53%|█████▎    | 5766/10810 [00:00<00:00, 5620.86it/s]Encoding news:  59%|█████▊    | 6335/10810 [00:01<00:00, 5158.48it/s]Encoding news:  63%|██████▎   | 6859/10810 [00:01<00:00, 5074.69it/s]Encoding news:  69%|██████▉   | 7469/10810 [00:01<00:00, 5341.77it/s]Encoding news:  75%|███████▍  | 8060/10810 [00:01<00:00, 5493.92it/s]Encoding news:  80%|███████▉  | 8616/10810 [00:01<00:00, 5432.84it/s]Encoding news:  85%|████████▌ | 9225/10810 [00:01<00:00, 5612.56it/s]Encoding news:  91%|█████████ | 9791/10810 [00:01<00:00, 5299.67it/s]Encoding news:  96%|█████████▌| 10332/10810 [00:01<00:00, 5321.83it/s]Encoding news: 100%|██████████| 10810/10810 [00:01<00:00, 5619.53it/s]
+{
+  "hypothesis": "H5",
+  "description": "Does the reasoning agent's single-pass widen-and-rerun reflection improve decisions vs the MAS baseline (no reasoning agent), on real historical (symbol,date) rows?",
+  "horizon": 5,
+  "n_requested": 140,
+  "n_run": 140,
+  "n_dropped": 0,
+  "sample_seed": 0,
+  "n_triggered": 1,
+  "n_changed_decision": 0,
+  "trigger_rate": 0.0071,
+  "all_rows": {
+    "n_rows": 140,
+    "baseline": {
+      "coverage": 0.207,
+      "n_trades": 29,
+      "DA": 51.72,
+      "IC": 0.1004,
+      "Sharpe": 0.674,
+      "profit_factor": 1.334,
+      "max_drawdown": 0.22037,
+      "net_PnL@25bps": 0.0217
+    },
+    "reasoning": {
+      "coverage": 0.207,
+      "n_trades": 29,
+      "DA": 51.72,
+      "IC": 0.1004,
+      "Sharpe": 0.674,
+      "profit_factor": 1.334,
+      "max_drawdown": 0.22037,
+      "net_PnL@25bps": 0.0217
+    }
+  },
+  "triggered_rows": {
+    "n_rows": 1,
+    "baseline": {
+      "coverage": 1.0,
+      "n_trades": 1,
+      "DA": 0.0,
+      "IC": NaN,
+      "Sharpe": -5379598.675,
+      "profit_factor": 0.0,
+      "max_drawdown": 0.0,
+      "net_PnL@25bps": -0.0033
+    },
+    "reasoning": {
+      "coverage": 1.0,
+      "n_trades": 1,
+      "DA": 0.0,
+      "IC": NaN,
+      "Sharpe": -5379598.675,
+      "profit_factor": 0.0,
+      "max_drawdown": 0.0,
+      "net_PnL@25bps": -0.0033
+    }
+  },
+  "changed_decision_rows": {
+    "n_rows": 0,
+    "baseline": null,
+    "reasoning": null
+  },
+  "out_path": "results\\agent_ablation\\5d\\h5_reasoning_eval.json"
+}

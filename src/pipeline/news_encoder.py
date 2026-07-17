@@ -26,40 +26,46 @@ _NEWS_DIM = 768
 _DEFAULT_MODEL_NAME = "dangvantuan/vietnamese-embedding"
 _EMBEDDINGS_CACHE_DIR = Path("./cache/embeddings")
 
-# Per-ROW embedding cache (keyed on that row's own symbol/date/text content, not the
-# whole dataframe). The whole-dataframe cache above (`encode_dataframe`'s cache_key)
-# invalidates completely whenever ANY row changes — extending the pipeline's `end`
-# date by even one day changes len(df)/date range/content hash, forcing a full
-# re-encode of the entire historical corpus (confirmed: ~35-45 min for ~11k rows on
-# CPU) every time a live-inference query needs one new day. This layer sits between
-# that whole-df cache and the model: rows whose own content is unchanged are served
-# from here regardless of what else changed in the surrounding dataframe, so a
-# live-inference rebuild only ever pays for genuinely NEW rows.
-_ROW_CACHE_PATH = _EMBEDDINGS_CACHE_DIR / "row_cache_v1.joblib"
+# Per-ARTICLE embedding cache (keyed on the article's own text content only — not on
+# which bar/row it was assigned to, and not on the whole dataframe). The whole-
+# dataframe cache above (`encode_dataframe`'s cache_key) invalidates completely
+# whenever ANY row changes — extending the pipeline's `end` date by even one day
+# changes len(df)/date range/content hash, forcing a full re-encode of the entire
+# historical corpus (confirmed: ~35-45 min for ~11k rows on CPU) every time a live-
+# inference query needs one new day.
+#
+# An earlier version of this cache was keyed per ROW (symbol+date+the row's full text
+# list). In practice that had a poor hit rate: a bar's list of assigned articles
+# shifts slightly between scrapes (a newly-discovered article changes the set, or
+# just its order), so the row's hash rarely matched even when almost all of its
+# individual articles were unchanged. Caching per INDIVIDUAL ARTICLE TEXT instead is
+# robust to exactly that: the same article's own text is byte-identical no matter
+# which bar's window it ends up in or what else is in that window, so it hits
+# regardless of how the surrounding row's article set is reshuffled. Pooling (mean,
+# or sentiment-weighted) is cheap and always redone fresh per row; only the
+# per-article embedding lookup benefits from the cache, so this also works when
+# sentiment-weighted pooling is enabled (the earlier row-level cache had to disable
+# itself there, since the pooling weights are part of what makes a row's output
+# unique).
+_ARTICLE_CACHE_PATH = _EMBEDDINGS_CACHE_DIR / "article_cache_v1.joblib"
 
 
-def _row_cache_key(symbol: Any, date: Any, texts: list[str]) -> str:
-    h = hashlib.sha256()
-    h.update(b"news_row_cache_v1")
-    h.update(str(symbol).encode())
-    h.update(str(date).encode())
-    for t in texts:
-        h.update(str(t).encode())
-    return h.hexdigest()
+def _article_cache_key(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
 
 
-def _load_row_cache() -> dict[str, dict[str, Any]]:
-    if _ROW_CACHE_PATH.exists():
+def _load_article_cache() -> dict[str, np.ndarray]:
+    if _ARTICLE_CACHE_PATH.exists():
         try:
-            return joblib.load(_ROW_CACHE_PATH)
+            return joblib.load(_ARTICLE_CACHE_PATH)
         except Exception:
-            logger.warning("Corrupt row embedding cache — starting fresh")
+            logger.warning("Corrupt article embedding cache — starting fresh")
     return {}
 
 
-def _save_row_cache(cache: dict[str, dict[str, Any]]) -> None:
+def _save_article_cache(cache: dict[str, np.ndarray]) -> None:
     _EMBEDDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(cache, _ROW_CACHE_PATH, compress=3)
+    joblib.dump(cache, _ARTICLE_CACHE_PATH, compress=3)
 SENTIMENT_FEATURE_COLUMNS = (
     "sentiment_mean",
     "sentiment_max_abs",
@@ -130,6 +136,7 @@ class NewsEncoder:
         texts: list[str],
         null_mask: bool = False,
         weights: list[float] | None = None,
+        article_cache: dict[str, np.ndarray] | None = None,
     ) -> dict[str, Any]:
         """Encode a list of news texts for one time window.
 
@@ -141,6 +148,11 @@ class NewsEncoder:
                 magnitude-weighted pooling when ``use_weighted_pooling``
                 is True. Must be the same length as ``texts`` after
                 filtering. Falls back to mean-pooling on mismatch.
+            article_cache: Optional shared dict (mutated in place) mapping a hash of
+                an article's own text to its already-computed embedding. Individual
+                article text is stable regardless of which bar/window it's assigned
+                to, so this survives dataset rebuilds that only shift which articles
+                land in which window (see module docstring above `_article_cache_key`).
 
         Returns:
             Dict with keys:
@@ -161,20 +173,18 @@ class NewsEncoder:
                 "has_news": False,
             }
 
-        # Truncate long texts to stay within the model's max token limit.
-        # PhoBERT's tokenizer does not auto-truncate, so we cut at the
-        # character level (rough proxy ≈ 1.5 chars/token for Vietnamese).
-        max_chars = int(self.model.max_seq_length * 1.5)
-        valid_texts = [t[:max_chars] for t in valid_texts]
+        if article_cache is not None:
+            keys = [_article_cache_key(t) for t in valid_texts]
+            miss_idx = [i for i, k in enumerate(keys) if k not in article_cache]
+            if miss_idx:
+                miss_texts = [valid_texts[i] for i in miss_idx]
+                miss_embeddings = self._encode_texts(miss_texts)
+                for i, emb in zip(miss_idx, miss_embeddings):
+                    article_cache[keys[i]] = emb
+            embeddings = np.stack([article_cache[k] for k in keys])
+        else:
+            embeddings = self._encode_texts(valid_texts)
 
-        # Enable tokenizer-level truncation as a safety net
-        self.model.tokenizer.model_max_length = self.model.max_seq_length
-        embeddings = self.model.encode(
-            valid_texts,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
         # Weighted pool: weight by sentiment magnitude so polarised articles
         # dominate over neutral ones. Falls back to mean-pool on any mismatch.
         if (
@@ -187,6 +197,22 @@ class NewsEncoder:
         else:
             pooled = np.mean(embeddings, axis=0).astype(np.float32)
         return {"embedding": pooled, "has_news": True}
+
+    def _encode_texts(self, texts: list[str]) -> np.ndarray:
+        """Raw model encode, no caching. Handles truncation for the model's token limit."""
+        # PhoBERT's tokenizer does not auto-truncate, so we cut at the character
+        # level (rough proxy ≈ 1.5 chars/token for Vietnamese).
+        max_chars = int(self.model.max_seq_length * 1.5)
+        truncated = [t[:max_chars] for t in texts]
+
+        # Enable tokenizer-level truncation as a safety net
+        self.model.tokenizer.model_max_length = self.model.max_seq_length
+        return self.model.encode(
+            truncated,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        )
 
     # ------------------------------------------------------------------
     # DataFrame-level encoding
@@ -262,16 +288,8 @@ class NewsEncoder:
         hybrid_embeddings: list[np.ndarray] = []
         sentiment_records: list[dict[str, float]] = []
 
-        # Per-row cache is only safe to use in the simple (no sentiment-weighted
-        # pooling) path: sentiment scores feed into `encode_window` as pooling
-        # weights, and caching would need to key on those too. Sentiment fusion is
-        # off by default in production (`news_sentiment_enabled=False`), so this
-        # covers the common case; the sentiment-enabled path re-encodes as before.
-        use_row_cache = use_cache and self.sentiment_inferencer is None
-        row_cache = _load_row_cache() if use_row_cache else {}
-        row_cache_hits = 0
-        has_symbol_col = "symbol" in df.columns
-        has_time_col = "time" in df.columns
+        article_cache = _load_article_cache() if use_cache else None
+        cache_size_before = len(article_cache) if article_cache is not None else 0
 
         logger.info("Encoding news for {} rows …", len(df))
         for pos in tqdm(range(len(df)), desc="Encoding news"):
@@ -283,29 +301,12 @@ class NewsEncoder:
             # (not content articles), so only use when lengths agree.
             row_texts = texts if isinstance(texts, list) else []
             row_weights = sentiment_scores_by_row[pos]
-
-            row_key = None
-            if use_row_cache:
-                sym = df.iloc[pos]["symbol"] if has_symbol_col else ""
-                tm = df.iloc[pos]["time"] if has_time_col else pos
-                row_key = _row_cache_key(sym, tm, row_texts if not is_null else [])
-                cached_row = row_cache.get(row_key)
-                if cached_row is not None:
-                    result = {"embedding": cached_row["embedding"], "has_news": cached_row["has_news"]}
-                    row_cache_hits += 1
-                else:
-                    result = self.encode_window(
-                        texts=row_texts,
-                        null_mask=bool(is_null),
-                        weights=row_weights if len(row_weights) == len(row_texts) else None,
-                    )
-                    row_cache[row_key] = {"embedding": result["embedding"], "has_news": result["has_news"]}
-            else:
-                result = self.encode_window(
-                    texts=row_texts,
-                    null_mask=bool(is_null),
-                    weights=row_weights if len(row_weights) == len(row_texts) else None,
-                )
+            result = self.encode_window(
+                texts=row_texts,
+                null_mask=bool(is_null),
+                weights=row_weights if len(row_weights) == len(row_texts) else None,
+                article_cache=article_cache,
+            )
             embeddings.append(result["embedding"])
             has_news_flags.append(result["has_news"])
 
@@ -322,14 +323,15 @@ class NewsEncoder:
                     ]
                 ).astype(np.float32)
                 hybrid_embeddings.append(hybrid_vec)
-        if use_row_cache:
-            new_rows = len(df) - row_cache_hits
+
+        if article_cache is not None:
+            new_articles = len(article_cache) - cache_size_before
             logger.info(
-                "Row embedding cache: {}/{} rows reused, {} newly encoded",
-                row_cache_hits, len(df), new_rows,
+                "Article embedding cache: {} known articles, {} newly encoded this run",
+                len(article_cache), new_articles,
             )
-            if new_rows > 0:
-                _save_row_cache(row_cache)
+            if new_articles > 0:
+                _save_article_cache(article_cache)
 
         df["news_emb"] = embeddings
         df["has_news"] = has_news_flags

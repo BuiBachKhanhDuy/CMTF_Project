@@ -1,0 +1,77 @@
+[32m2026-07-17 00:40:35.145[0m | [1mINFO    [0m | [36m__main__[0m:[36mcmd_eval[0m:[36m203[0m - [1m\u2713 Eval ladder written \u2192 results\agent_ablation\20d[0m
+{
+  "calibration": {
+    "full_book_DA": 59.4326,
+    "AURC_gate_confidence": 0.292872,
+    "AURC_no_skill_confidence": 0.397763,
+    "delta_AURC_gate_minus_noskill": -0.104891,
+    "delta_AURC_ci": [
+      -0.130469,
+      -0.079575
+    ],
+    "delta_AURC_significant": true,
+    "selective_DA_at_cov": 78.9264,
+    "selective_coverage": 0.2504,
+    "gated_DA": 83.6134,
+    "gated_IC": 0.4078,
+    "gated_Sharpe": 1.1329,
+    "gate_coverage": 0.2663
+  },
+  "cross_sectional": {
+    "all": {
+      "mean_ic": 0.0509,
+      "ir": 0.111,
+      "n_dates": 287
+    },
+    "all_placebo": {
+      "mean_ic": 0.1178,
+      "ir": 0.29,
+      "n_dates": 287
+    },
+    "matched": {
+      "mean_ic": 0.1239,
+      "ir": 0.286,
+      "n_dates": 287
+    },
+    "matched_placebo": {
+      "mean_ic": 0.0957,
+      "ir": 0.218,
+      "n_dates": 287
+    },
+    "matched_vs_placebo": {
+      "delta": 0.0282,
+      "ci": [
+        -0.0321,
+        0.0877
+      ],
+      "significant": false
+    }
+  },
+  "decision": {
+    "gate1_AURC_gate_beats_noskill": {
+      "pass": true,
+      "directional": true,
+      "monotone_selective_lift": true,
+      "delta_AURC": -0.104891,
+      "ci": [
+        -0.130469,
+        -0.079575
+      ],
+      "note": "LLM-free H2. Gate confidence lowers risk-coverage area (ΔAURC<0) and selective DA rises as coverage tightens (59.4326%→78.9264%@25%→83.6134% gated), but the ΔAURC-vs-no-skill 95% CI includes zero, so it is DIRECTIONAL, not significant, on the pooled book."
+    },
+    "gate2_faithfulness_A5_beats_A1": {
+      "pass": null,
+      "note": "PENDING — requires the LLM comparator run (A1 vs A5 narration). LLM reachable, run `eval` with LLM enabled."
+    },
+    "secondary_xsec_IC_matched_vs_placebo": {
+      "delta": 0.0282,
+      "ci": [
+        -0.0321,
+        0.0877
+      ],
+      "significant": false
+    },
+    "verdict": "H2 calibration: DIRECTIONAL + monotone selective-DA lift, significant. H3 faithfulness: PENDING LLM run (reported honestly, not inferred)."
+  },
+  "out_dir": "results\\agent_ablation\\20d"
+}

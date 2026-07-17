@@ -1,0 +1,126 @@
+{
+  "experiment": "forecaster_h3 (A1 independent LLM vs A5 gated MAS)",
+  "interpretation": "A1 = a plain LLM call given the same raw prices+news (no model output); A5 = the gated MAS. Metric = directional accuracy on the most-confident top-k of each (abstains excluded — an abstain is not a wrong bet). A well-calibrated confidence ⇒ DA rises as coverage tightens.",
+  "horizon": 1,
+  "n_requested": 280,
+  "n_run": 280,
+  "n_dropped": 0,
+  "sample_seed": 0,
+  "model": "qwen2.5:7b-instruct",
+  "base_rate_up_moves": 48.57,
+  "committed": {
+    "A1_LLM": {
+      "DA": 50.55,
+      "coverage": 0.968,
+      "n_trades": 271
+    },
+    "A5_MAS": {
+      "DA": 47.37,
+      "coverage": 0.136,
+      "n_trades": 38
+    }
+  },
+  "matched_coverage_selective_DA": {
+    "25pct": {
+      "A1_DA": 54.29,
+      "A1_n": 70,
+      "A5_DA": 48.57,
+      "A5_n": 70
+    },
+    "50pct": {
+      "A1_DA": 56.43,
+      "A1_n": 140,
+      "A5_DA": 49.29,
+      "A5_n": 140
+    },
+    "100pct": {
+      "A1_DA": 50.55,
+      "A1_n": 271,
+      "A5_DA": 47.14,
+      "A5_n": 280
+    }
+  },
+  "top25pct_DA_delta_A5_minus_A1": -3.87,
+  "top25pct_DA_delta_ci_95": [
+    -21.43,
+    12.86
+  ],
+  "top25pct_DA_delta_significant": false,
+  "full_metrics": {
+    "natural_operating_points": {
+      "A5_MAS_conviction_sized": {
+        "label": "MAS (gate, conviction-sized)",
+        "coverage": 0.136,
+        "n_trades": 38,
+        "committed_DA": 47.37,
+        "rank_IC": -0.0671,
+        "Sharpe": -0.1666,
+        "win_rate": 47.37,
+        "profit_factor": 0.894,
+        "max_drawdown": 0.26767,
+        "PnL_per_trade": -0.001456,
+        "total_PnL_after_cost": {
+          "0bps": -0.05533,
+          "10bps": -0.09333,
+          "25bps": -0.15033
+        }
+      },
+      "A1_LLM_flat_unit": {
+        "label": "LLM (flat unit)",
+        "coverage": 0.968,
+        "n_trades": 271,
+        "committed_DA": 50.55,
+        "rank_IC": 0.0583,
+        "Sharpe": 1.2208,
+        "win_rate": 50.55,
+        "profit_factor": 1.262,
+        "max_drawdown": 0.4077,
+        "PnL_per_trade": 0.001529,
+        "total_PnL_after_cost": {
+          "0bps": 0.41425,
+          "10bps": 0.14325,
+          "25bps": -0.26325
+        }
+      },
+      "A1_LLM_confidence_weighted": {
+        "label": "LLM (confidence-weighted)",
+        "coverage": 0.968,
+        "n_trades": 271,
+        "committed_DA": 50.55,
+        "rank_IC": 0.0571,
+        "Sharpe": 1.2377,
+        "win_rate": 50.55,
+        "profit_factor": 1.271,
+        "max_drawdown": 0.25809,
+        "PnL_per_trade": 0.001,
+        "total_PnL_after_cost": {
+          "0bps": 0.2711,
+          "10bps": 0.0001,
+          "25bps": -0.4064
+        }
+      }
+    },
+    "matched_coverage": {
+      "coverage_matched_to_MAS": 0.136,
+      "A5_MAS": {
+        "coverage": 0.139,
+        "committed_DA": 46.15,
+        "Sharpe": -0.1666
+      },
+      "A1_LLM_flat": {
+        "coverage": 0.139,
+        "committed_DA": 53.85,
+        "Sharpe": -0.5216
+      }
+    },
+    "regression": {
+      "n_with_llm_pred": 280,
+      "A5_MAS_RMSE": 0.01963,
+      "A1_LLM_RMSE": 0.021,
+      "A5_MAS_MAE": 0.01315,
+      "A1_LLM_MAE": 0.01535,
+      "note": "Lower is better. CMTF optimises rank/decision skill, not point error."
+    },
+    "note": "Sharpe is a sign-based proxy WITHOUT transaction costs (project convention); the cost columns show that the LLM's higher coverage pays proportionally more cost. DA alone is not comparable across different coverages — read coverage + Sharpe + cost + drawdown together. Regression (RMSE/MAE) is reported for completeness and may favour either system."
+  }
+}

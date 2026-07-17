@@ -1,12 +1,12 @@
 {
   "all": {
-    "mean_ic": 0.0004,
-    "ir": 0.001,
+    "mean_ic": -0.0004,
+    "ir": -0.001,
     "n_dates": 302
   },
   "all_placebo": {
-    "mean_ic": 0.0168,
-    "ir": 0.041,
+    "mean_ic": 0.0159,
+    "ir": 0.038,
     "n_dates": 302
   },
   "matched": {
@@ -15,15 +15,15 @@
     "n_dates": 302
   },
   "matched_placebo": {
-    "mean_ic": -0.0011,
-    "ir": -0.003,
+    "mean_ic": -0.0021,
+    "ir": -0.005,
     "n_dates": 302
   },
   "matched_vs_placebo": {
-    "delta": 0.0413,
+    "delta": 0.0422,
     "ci": [
-      -0.0077,
-      0.0906
+      -0.0071,
+      0.0914
     ],
     "significant": false
   }

@@ -231,6 +231,38 @@ def cmd_metalabel_eval(args):
     logger.info("✓ metalabel-eval → {}", summary["out_path"])
 
 
+def cmd_h4_interaction_eval(args):
+    """H4: MAS baseline vs MAS+horizon-interaction (+ permutation placebo), same 280-row sample."""
+    from .h4_interaction_eval import run_h4_interaction_eval
+    summary = run_h4_interaction_eval(horizon=args.horizon)
+    print(json.dumps(summary, indent=2, ensure_ascii=False, default=_json_serializable))
+    logger.info("✓ h4-interaction-eval → {}", summary["out_path"])
+
+
+def cmd_h5_reasoning_eval(args):
+    """H5: MAS baseline vs MAS+reasoning-agent, real sampled rows (not a static sample).
+
+    Runs with evaluation_mode=False (real Ollama, routed through
+    `ensure_local_no_proxy` so the corporate proxy doesn't intercept the local
+    call) by default: under evaluation_mode=True, `narrator_agent_node` always
+    returns answer_text="", so `critic_agent_node`'s regeneration/failure branch
+    (`if answer.strip() and findings`) can never fire — critic_status is always
+    "ok", permanently disabling the reasoning agent's `critic_verification_failed`
+    trigger. metalabel_agent's real event-flag classification is also skipped
+    under eval mode, so its veto never has a chance to change the decision either.
+    Both matter for a real H5 result, not just the deterministic
+    cross-horizon-disagreement/thin-news-coverage triggers. Pass --eval-mode to
+    fall back to the fast, fully deterministic (but structurally limited) run.
+    """
+    from .config import MultiAgentConfig
+    from .h5_reasoning_eval import run_reasoning_eval
+    cfg = MultiAgentConfig(evaluation_mode=args.eval_mode)
+    summary = run_reasoning_eval(horizon=args.horizon, n=args.n, seed=args.seed, config=cfg)
+    printable = {k: v for k, v in summary.items() if k != "records"}
+    print(json.dumps(printable, indent=2, ensure_ascii=False, default=_json_serializable))
+    logger.info("✓ h5-reasoning-eval → {}", summary["out_path"])
+
+
 def cmd_improved_eval(args):
     """Improved (de-biased, subset-selected) MAS vs LLM, leak-free time-split."""
     from .improved_ensemble import compare_mas_vs_llm, build_improved_mas
@@ -254,6 +286,10 @@ def cmd_calibrate(args):
 
     Reads the cached VALIDATION predictions of the pre-registered CMTF_CORE cell
     (never TEST — leak-free) and writes the frozen policy the gate_agent loads.
+
+    ``--adaptive`` uses the existing coverage-grid search (`calibrate_gate`)
+    instead of the fixed `--coverage` (default 25%) convention — see
+    `gate_io.calibrate_from_cache`'s docstring for why this can matter per horizon.
     """
     from .config import MultiAgentConfig
     from .gate_io import calibrate_from_cache
@@ -269,6 +305,7 @@ def cmd_calibrate(args):
         cmtf_version=config.cmtf_version,
         backbone_version=config.backbone_version,
         conviction=config.use_conviction_sizing,
+        adaptive=getattr(args, "adaptive", False),
     )
     logger.info(
         "✓ Calibrated GatePolicy {}d → {} | tau={:.5f} coverage={:.3f} conviction_scale={:.5f} "
@@ -280,6 +317,72 @@ def cmd_calibrate(args):
         "tau": policy.tau, "conviction": policy.conviction,
         "conviction_scale": policy.conviction_scale, "coverage": policy.coverage,
         "val_score": policy.val_score}, **meta}, indent=2, ensure_ascii=False))
+
+
+_OTHER_HORIZONS_FOR_CALIBRATION = {1: (5, 20), 5: (1, 20), 20: (1, 5)}
+
+
+def cmd_calibrate_interaction(args):
+    """Freeze the cross-horizon HorizonInteractionPolicy (VN_{H}d_xh.json).
+
+    Reads cached VALIDATION predictions for ``--horizon`` (primary) and the other two
+    horizons, aligned by (symbol, date) — never TEST — and writes the frozen
+    multiplier-by-agreement table the horizon_interaction_agent loads.
+    """
+    from .config import MultiAgentConfig
+    from .horizon_interaction_io import calibrate_interaction_from_cache
+
+    config = MultiAgentConfig()
+    policy, meta, out_path = calibrate_interaction_from_cache(
+        pred_dir="cache/predictions",
+        gate_dir=config.gate_policy_dir,
+        interaction_dir=config.horizon_interaction_dir,
+        primary_horizon=args.horizon,
+        other_horizons=_OTHER_HORIZONS_FOR_CALIBRATION[args.horizon],
+        cmtf_version=config.cmtf_version,
+        backbone_version=config.backbone_version,
+    )
+    logger.info(
+        "✓ Calibrated HorizonInteractionPolicy {}d → {} | multiplier_by_agreement={} | "
+        "real_lift={:.4f} placebo_lift_mean={:.4f} beats_placebo={}",
+        args.horizon, out_path, policy.multiplier_by_agreement,
+        meta["real_lift_over_baseline"], meta["placebo_lift_over_baseline_mean"],
+        meta["real_lift_beats_placebo_lift"],
+    )
+    print(json.dumps({"path": str(out_path), "policy": {
+        "primary_horizon": policy.primary_horizon, "other_horizons": list(policy.other_horizons),
+        "multiplier_by_agreement": policy.multiplier_by_agreement,
+        "n_by_agreement": policy.n_by_agreement}, **meta}, indent=2, ensure_ascii=False))
+
+
+def cmd_check_deploy(args):
+    """Verify a horizon (or all three) has everything the graph needs — a proactive
+    deploy-time check, not a substitute for the per-request fail-loud errors."""
+    from .config import MultiAgentConfig
+    from .readiness import check_all_horizons, check_horizon_readiness
+
+    config = MultiAgentConfig()
+    horizons = [1, 5, 20] if (args.all or args.horizon is None) else [args.horizon]
+    reports = check_all_horizons(config) if len(horizons) == 3 else {
+        h: check_horizon_readiness(h, config) for h in horizons
+    }
+
+    all_ready = True
+    for h in horizons:
+        r = reports[h]
+        all_ready = all_ready and r.ready
+        status = "READY" if r.ready else "NOT READY"
+        print(f"\n{h}D: {status}")
+        for ok, detail in (
+            (r.gate_policy_ok, r.gate_policy_detail),
+            (r.core_predictions_ok, r.core_predictions_detail),
+            (r.matched_predictions_ok, r.matched_predictions_detail),
+            (r.deploy_checkpoints_ok, r.deploy_checkpoints_detail),
+        ):
+            print(f"  {'✓' if ok else '✗'} {detail}")
+
+    if not all_ready:
+        sys.exit(1)
 
 
 def main():
@@ -359,12 +462,49 @@ def main():
     p_me.add_argument("--horizon", type=int, default=5, choices=[1, 5, 20])
     p_me.set_defaults(func=cmd_metalabel_eval)
 
+    # h4-interaction-eval subcommand (H4: cross-horizon interaction)
+    p_h4 = subparsers.add_parser("h4-interaction-eval",
+                                 help="H4: MAS baseline vs MAS+horizon-interaction (+ placebo), same 280-row sample")
+    p_h4.add_argument("--horizon", type=int, default=5, choices=[1, 5, 20])
+    p_h4.set_defaults(func=cmd_h4_interaction_eval)
+
+    # h5-reasoning-eval subcommand (H5: reasoning agent)
+    p_h5 = subparsers.add_parser("h5-reasoning-eval",
+                                 help="H5: MAS baseline vs MAS+reasoning-agent, real sampled rows")
+    p_h5.add_argument("--horizon", type=int, default=5, choices=[1, 5, 20])
+    p_h5.add_argument("--n", type=int, default=60, help="Sample size (stratified across symbols)")
+    p_h5.add_argument("--seed", type=int, default=0)
+    p_h5.add_argument("--eval-mode", action="store_true",
+                       help="Deterministic LLM-free run (fast, but critic/metalabel triggers can't fire)")
+    p_h5.set_defaults(func=cmd_h5_reasoning_eval)
+
     # calibrate subcommand
     p_calib = subparsers.add_parser(
         "calibrate", help="Freeze the validation-calibrated GatePolicy (VN_{H}d.json)")
     p_calib.add_argument("--horizon", type=int, required=True, choices=[1, 5, 20],
                          help="Forecast horizon in days")
+    p_calib.add_argument("--adaptive", action="store_true",
+                         help="Pick this horizon's own best-scoring coverage on validation "
+                              "(calibrate_gate grid search) instead of the fixed 25%% default")
     p_calib.set_defaults(func=cmd_calibrate)
+
+    # calibrate-interaction subcommand
+    p_calib_xh = subparsers.add_parser(
+        "calibrate-interaction",
+        help="Freeze the cross-horizon HorizonInteractionPolicy (VN_{H}d_xh.json)")
+    p_calib_xh.add_argument("--horizon", type=int, required=True, choices=[1, 5, 20],
+                            help="Primary horizon (the other two are consulted for agreement)")
+    p_calib_xh.set_defaults(func=cmd_calibrate_interaction)
+
+    # check-deploy subcommand
+    p_check = subparsers.add_parser(
+        "check-deploy",
+        help="Verify a horizon has everything the graph needs (gate policy, frozen "
+             "predictions, live-inference deploy checkpoints)")
+    p_check.add_argument("--horizon", type=int, choices=[1, 5, 20],
+                         help="Check a single horizon (omit with --all to check all three)")
+    p_check.add_argument("--all", action="store_true", help="Check 1D, 5D, and 20D")
+    p_check.set_defaults(func=cmd_check_deploy)
 
     args = parser.parse_args()
     if not args.command:

@@ -39,11 +39,28 @@ def _allowed_numbers(state: MultiAgentState) -> list[float]:
               vm.get("trend_pct"), sm.get("coverage"), state.get("target_horizon_days")):
         if isinstance(v, (int, float)):
             vals.append(float(v))
-    # Coverage/CI disclosure constants that legitimately appear in the template.
+    # Coverage/CI disclosure numbers that legitimately appear in the template — these
+    # must come from STATE (this horizon's own frozen policy, via gate_agent), never a
+    # literal: 1D/5D/20D each disclose different accuracy/base-rate numbers, and a
+    # blanket hardcoded list would silently accept a wrong-horizon number as
+    # "grounded" (e.g. a 1D answer citing 5D's 53.8% base rate). `target_horizon_days`
+    # is already appended above, so no separate horizon literals are added here.
     gc = state.get("gate_coverage")
     if isinstance(gc, (int, float)):
         vals.append(round(float(gc) * 100, 0))  # coverage as %
-    vals += [54.0, 25.0, 53.8, 20.0, 200.0, 1.0, 5.0]  # disclosure/horizon constants
+    for v in (state.get("gate_disclosure_da_pct"), state.get("gate_disclosure_base_rate_pct")):
+        if isinstance(v, (int, float)):
+            vals.append(round(float(v), 1))
+    # Attention explainability numbers (raw_prediction.summarize_attention) — real
+    # model-internal signal, not an LLM guess, so it gets the same grounding
+    # discipline as every other disclosed number. Both the raw fraction and the
+    # rounded percent form are allowed since the narrator cites the percent form
+    # but an LLM narration might cite either.
+    for d in (state.get("attention_top_days") or []):
+        vals.append(float(d["days_before_cutoff"]))
+        vals.append(round(float(d["weight"]), 4))
+        vals.append(round(float(d["weight"]) * 100, 1))
+    vals += [20.0, 200.0]  # fixed 20-day trailing-vol window; "<200 từ" prompt-length instruction
     return vals
 
 

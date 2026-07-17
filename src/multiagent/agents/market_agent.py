@@ -36,6 +36,79 @@ def _compute_volatility_metrics(close_window: np.ndarray) -> dict[str, float]:
     }
 
 
+def compute_range_stats(frame, symbol: str, date_start: str, date_end: str) -> dict[str, Any]:
+    """Real market statistics over an EXPLICIT calendar date range — no hardcoded
+    lookback window. Splits the requested range at the boundary of what's actually
+    known (the last date with a real forward return in ``frame``): the portion
+    within that boundary is analyzed from real historical data; anything past it
+    cannot be known from data alone and must come from the model's own forecast,
+    which the caller is told about via ``coverage``/``needs_prediction_from``
+    rather than this function inventing a number for it.
+
+    Args:
+        frame: the dataset parquet loaded via resolve_price_parquet (has
+            `symbol` column, DatetimeIndex, and `fwd_ret_1d`).
+        symbol, date_start, date_end: the exact range the query named.
+    """
+    import numpy as np
+    import pandas as pd
+
+    s = frame[frame["symbol"] == symbol].sort_index()
+    if s.empty:
+        return {"coverage": "none", "n_days": 0}
+
+    start_ts, end_ts = pd.Timestamp(date_start), pd.Timestamp(date_end)
+    known = s["fwd_ret_1d"].dropna()
+    last_known = known.index.max() if not known.empty else None
+
+    if last_known is None or start_ts > last_known:
+        return {
+            "coverage": "none", "n_days": 0,
+            "needs_prediction_from": str(start_ts.date()),
+            "requested_start": str(start_ts.date()), "requested_end": str(end_ts.date()),
+        }
+
+    covered_end = min(end_ts, last_known)
+    window = known[(known.index >= start_ts) & (known.index <= covered_end)]
+    daily = window.to_numpy(dtype=float)
+    if len(daily) == 0:
+        return {
+            "coverage": "none", "n_days": 0,
+            "needs_prediction_from": str(start_ts.date()),
+            "requested_start": str(start_ts.date()), "requested_end": str(end_ts.date()),
+        }
+
+    # `fwd_ret_1d` is a LOG return (log(close[t+1]/close[t]), see
+    # feature_engineer.py). Log returns compound by SUMMING then exponentiating —
+    # `prod(1+r)` is the formula for SIMPLE returns and is wrong here (it overstated
+    # a -7.63% month as -8.20%). Cumulative simple return = exp(sum(log_r)) - 1.
+    cum_return = float((np.exp(np.sum(daily)) - 1.0) * 100)
+    # Volatility: std of daily log returns, annualized — correct as-is for logs.
+    vol = float(np.std(daily) * np.sqrt(252) * 100) if len(daily) > 1 else 0.0
+    # Drawdown: build the real price-relative curve from the log returns
+    # (exp of the cumulative sum), then measure the largest peak-to-trough drop as
+    # a simple percentage — not a drop in log space.
+    curve = np.exp(np.cumsum(daily))
+    peak = np.maximum.accumulate(curve)
+    max_dd = float(((peak - curve) / peak).max() * 100) if len(curve) else 0.0
+    coverage = "full" if covered_end >= end_ts else "partial"
+
+    return {
+        "coverage": coverage,
+        "n_days": int(len(daily)),
+        "return_pct": round(cum_return, 2),
+        "volatility_pct": round(vol, 2),
+        "max_drawdown_pct": round(max_dd, 2),
+        "covered_start": str(window.index.min().date()),
+        "covered_end": str(covered_end.date()),
+        "requested_start": str(start_ts.date()),
+        "requested_end": str(end_ts.date()),
+        "needs_prediction_from": (
+            str((covered_end + pd.Timedelta(days=1)).date()) if coverage == "partial" else None
+        ),
+    }
+
+
 def market_agent_node(
     state: MultiAgentState,
     config: MultiAgentConfig | None = None,

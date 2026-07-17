@@ -12,7 +12,9 @@
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m pytest tests/multiagent/ src/benchmark/calibration.py -q)",
       "Bash(.venv/Scripts/python.exe -m py_compile src/multiagent/*.py src/multiagent/agents/*.py src/benchmark/calibration.py src/benchmark/cross_sectional_ic.py)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \"from src.multiagent.graph import build_graph; g=build_graph\\(\\); print\\('nodes:', sorted\\(n for n in g.get_graph\\(\\).nodes if not n.startswith\\('__'\\)\\)\\)\")",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m src.multiagent --help)"
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m src.multiagent --help)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('chat.py', encoding='utf-8'\\).read\\(\\)\\)\")",
+      "Bash(python3 -m py_compile chat.py)"
     ]
   }
 }

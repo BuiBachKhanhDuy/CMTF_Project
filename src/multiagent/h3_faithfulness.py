@@ -42,9 +42,6 @@ _NUM_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
 # this doesn't silently point at a stale/missing file after a fresh clone or any
 # pipeline config change.
 
-# Disclosure/framing constants the honest narration is allowed to cite (plan §0/§3.10).
-_DISCLOSURE_CONSTS = [54.0, 25.0, 53.8, 200.0]
-
 _A5_SYSTEM = (
     "Bạn là chuyên gia phân tích tài chính. CHỈ được dùng các con số xuất hiện trong "
     "bảng dữ kiện được cung cấp; TUYỆT ĐỐI không thêm bất kỳ con số nào khác (không bịa "
@@ -58,21 +55,30 @@ _A1_SYSTEM = (
 
 
 def _fact_sheet(symbol: str, horizon: int, gate_pred: float, action: str,
-                tau: float, coverage: float) -> tuple[str, list[float]]:
-    """A compact fact sheet (text) + the set of numbers it legitimately contains."""
+                tau: float, coverage: float, gated_da: float | None = None,
+                base_rate_da: float | None = None) -> tuple[str, list[float]]:
+    """A compact fact sheet (text) + the set of numbers it legitimately contains.
+
+    ``gated_da``/``base_rate_da``: this horizon's own validation-set disclosure
+    numbers (from the frozen VN_{H}d.json's meta — see gate_io.calibrate_from_cache),
+    never a hardcoded literal from a different horizon's measurement. Omitted from
+    the sheet (not fabricated as 0) when the loaded policy predates schema v2.
+    """
     action_vi = {"long": "MUA", "short": "BÁN", "abstain": "KHÔNG GIAO DỊCH"}[action]
-    text = (
-        f"Mã: {symbol}\n"
-        f"Kỳ hạn dự báo: {horizon} ngày\n"
-        f"Tín hiệu mô hình (gate_pred): {gate_pred:.4f}\n"
-        f"Ngưỡng kích hoạt (tau): {tau:.4f}\n"
-        f"Khuyến nghị của hệ thống: {action_vi}\n"
-        f"Độ bao phủ giao dịch: {coverage:.0%}\n"
-        f"Lưu ý: độ chính xác hướng ~54% ở bao phủ ~25% (chồng lấn tỷ lệ nền ~53.8%)."
-    )
-    allowed = [round(gate_pred, 4), round(tau, 4), float(horizon),
-               round(coverage * 100, 0)] + _DISCLOSURE_CONSTS
-    return text, allowed
+    lines = [
+        f"Mã: {symbol}",
+        f"Kỳ hạn dự báo: {horizon} ngày",
+        f"Tín hiệu mô hình (gate_pred): {gate_pred:.4f}",
+        f"Ngưỡng kích hoạt (tau): {tau:.4f}",
+        f"Khuyến nghị của hệ thống: {action_vi}",
+        f"Độ bao phủ giao dịch: {coverage:.0%}",
+    ]
+    allowed = [round(gate_pred, 4), round(tau, 4), float(horizon), round(coverage * 100, 0)]
+    if gated_da is not None and base_rate_da is not None:
+        lines.append(f"Lưu ý: độ chính xác hướng ~{gated_da:.0f}% ở bao phủ ~{coverage:.0%} "
+                     f"(chồng lấn tỷ lệ nền ~{base_rate_da:.1f}%).")
+        allowed += [round(gated_da, 1), round(base_rate_da, 1)]
+    return "\n".join(lines), allowed
 
 
 def _hallucinated_numbers(answer: str, allowed: list[float]) -> list[str]:
@@ -94,15 +100,16 @@ def _hallucinated_numbers(answer: str, allowed: list[float]) -> list[str]:
 # MAS, compared on directional accuracy and calibration (AURC). Plan §10.2, §10.8.
 # ---------------------------------------------------------------------------
 
-_FORECASTER_SYSTEM = (
-    "Bạn là nhà phân tích định lượng. Dựa CHỈ trên dữ liệu thị trường được cung cấp, "
-    "hãy dự báo lợi nhuận 5 ngày tới của cổ phiếu. Trả lời DUY NHẤT một JSON: "
-    '{"direction": "long" | "short" | "abstain", "confidence": <0..1>, '
-    '"pred_return_pct": <số, ví dụ 1.5 = +1.5%>, "reason": "<ngắn>"}. '
-    "direction=long nếu kỳ vọng tăng, short nếu giảm, abstain nếu không đủ tin cậy. "
-    "confidence là độ tin cậy chủ quan (0=không chắc, 1=rất chắc). "
-    "pred_return_pct là ước lượng % thay đổi giá 5 ngày tới (LUÔN cung cấp)."
-)
+def _forecaster_system(horizon: int) -> str:
+    return (
+        "Bạn là nhà phân tích định lượng. Dựa CHỈ trên dữ liệu thị trường được cung cấp, "
+        f"hãy dự báo lợi nhuận {horizon} ngày tới của cổ phiếu. Trả lời DUY NHẤT một JSON: "
+        '{"direction": "long" | "short" | "abstain", "confidence": <0..1>, '
+        '"pred_return_pct": <số, ví dụ 1.5 = +1.5%>, "reason": "<ngắn>"}. '
+        "direction=long nếu kỳ vọng tăng, short nếu giảm, abstain nếu không đủ tin cậy. "
+        "confidence là độ tin cậy chủ quan (0=không chắc, 1=rất chắc). "
+        f"pred_return_pct là ước lượng % thay đổi giá {horizon} ngày tới (LUÔN cung cấp)."
+    )
 
 
 def _load_price_frame(horizon: int = 5):
@@ -205,7 +212,7 @@ def run_forecaster_h3(horizon: int = 5, n: int = 56, seed: int = 0,
         fp = store.get(sym, date)
         # A1: independent LLM forecaster (sees only the brief).
         a1_dir, a1_conf, a1_pred_ret = _parse_forecast(
-            llm.invoke([("system", _FORECASTER_SYSTEM), ("human", brief)]).content)
+            llm.invoke([("system", _forecaster_system(horizon)), ("human", brief)]).content)
         a1_sign = {"long": 1.0, "short": -1.0, "abstain": 0.0}[a1_dir]
         # A5: the gated MAS decision (frozen prediction + calibrated gate).
         a5_trade = abs(fp.gate_pred) >= policy.tau
@@ -461,9 +468,11 @@ def run_faithfulness(horizon: int = 5, n: int = 60, seed: int = 0,
     cfg = config or DEFAULT_CONFIG
     ensure_local_no_proxy(cfg.ollama_base_url)
     store = get_store(horizon, cfg)
-    policy, _ = load_gate_policy(policy_path(cfg.gate_policy_dir, horizon, "VN"),
-                                 expect_cmtf_version=cfg.cmtf_version,
-                                 expect_backbone_version=cfg.backbone_version)
+    policy, meta = load_gate_policy(policy_path(cfg.gate_policy_dir, horizon, "VN"),
+                                    expect_cmtf_version=cfg.cmtf_version,
+                                    expect_backbone_version=cfg.backbone_version)
+    gated_da = meta.get("val_gated_DA%")
+    base_rate_da = meta.get("val_base_rate_DA%")
     llm = ChatOllama(model=cfg.ollama_model, base_url=cfg.ollama_base_url,
                      temperature=0.2, timeout=cfg.ollama_timeout)
 
@@ -472,7 +481,8 @@ def run_faithfulness(horizon: int = 5, n: int = 60, seed: int = 0,
     for i, (sym, date) in enumerate(rows):
         fp = store.get(sym, date)
         action = "abstain" if abs(fp.gate_pred) < policy.tau else ("long" if fp.gate_pred > 0 else "short")
-        sheet, allowed = _fact_sheet(sym, horizon, fp.gate_pred, action, policy.tau, policy.coverage)
+        sheet, allowed = _fact_sheet(sym, horizon, fp.gate_pred, action, policy.tau, policy.coverage,
+                                     gated_da=gated_da, base_rate_da=base_rate_da)
 
         a1 = llm.invoke([("system", _A1_SYSTEM), ("human", sheet)]).content.strip()
         a5 = llm.invoke([("system", _A5_SYSTEM), ("human", sheet)]).content.strip()

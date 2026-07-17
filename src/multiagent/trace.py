@@ -50,12 +50,20 @@ def summarize_node(node: str, state_before: dict, update: dict) -> dict[str, str
         return {"tau": _fmt(s.get("gate_tau")), "coverage": f"{s.get('gate_coverage', 0):.2f}",
                 "action": _fmt(s.get("gated_action")), "size": _fmt(s.get("position_scale")),
                 "reason": _fmt(s.get("gate_reason"))}
+    if node == "horizon_interaction_agent":
+        return {"agreement": _fmt(s.get("horizon_agreement_score")),
+                "multiplier": _fmt(s.get("horizon_interaction_multiplier")),
+                "size": _fmt(s.get("position_scale"))}
     if node == "risk_agent":
         return {"action": _fmt(s.get("action")), "vetoed": _fmt(s.get("risk_vetoed")),
                 "veto_reasons": _fmt(s.get("veto_reasons")), "size": _fmt(s.get("position_scale"))}
     if node == "metalabel_agent":
         return {"action": _fmt(s.get("action")), "flags": _fmt(s.get("metalabel_flags")),
                 "vetoed": _fmt(s.get("metalabel_vetoed")), "size": _fmt(s.get("position_scale"))}
+    if node == "reasoning_agent":
+        return {"triggered": _fmt(s.get("reasoning_triggered_reasons")),
+                "widened": _fmt(s.get("reasoning_evidence_widened")),
+                "size": _fmt(s.get("position_scale"))}
     if node == "narrator":
         txt = s.get("answer_text") or ""
         return {"chars": _fmt(len(txt))}

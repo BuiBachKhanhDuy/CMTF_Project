@@ -55,9 +55,11 @@ class MultiAgentConfig:
     gate_on_raw_seed: bool = False
 
     # --- Live inference (product) ---
-    # When a (symbol, date) is not in the frozen research cache, run a real forward
-    # pass of the deployed champion (cache/deploy_models) instead of raising. This is
-    # what makes the system realtime. Frozen cache is still used for known dates.
+    # predict_agent ALWAYS runs a real forward pass of the deployed champion
+    # (cache/deploy_models) — never the frozen `.npy` cache — so the model's internal
+    # attention/recency-gate tensors are genuinely available for every request. This
+    # flag is a hard kill switch: if False, prediction is disabled entirely (raises)
+    # rather than falling back to anything ad hoc.
     enable_live_inference: bool = True
 
     # --- Routing / news scope ---
@@ -67,6 +69,17 @@ class MultiAgentConfig:
     # --- Risk: one-way safety veto (never a decision-maker) ---
     hard_block_vol: float = 40.0  # 20d annualised vol %; above → veto a trade to abstain
     hard_block_drawdown: float = 20.0  # max drawdown %; above → veto a trade to abstain
+
+    # --- Horizon interaction (symmetric conviction adjustment, NOT a veto) ---
+    # A missing/stale artifact degrades to a no-op multiplier (1.0) + warning, never a
+    # crash — this is an enhancement layer, not a decision boundary (unlike the gate).
+    enable_horizon_interaction: bool = True
+    horizon_interaction_dir: Path = field(default_factory=lambda: Path("results/horizon_interaction"))
+
+    # --- Reasoning reflection (single pass, decision-preserving — see reasoning_agent.py) ---
+    reasoning_min_news_coverage: int = 3  # below this, a trade is flagged "thin evidence"
+    reasoning_widen_lookback_days_to: int = 20  # chat.py: wider trailing news window (free — already-loaded data)
+    reasoning_widen_sequence_len_to: int = 60  # chat.py: wider trailing volatility window (free — already-loaded data)
 
     # --- Critic ---
     critic_max_retries: int = 2

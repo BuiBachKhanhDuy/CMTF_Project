@@ -41,18 +41,28 @@ class LivePrediction:
     seed_preds: list[float]
     truth: float | None       # realised return if the date is old enough, else None
     n_symbols_in_universe: int
+    attn_weights: np.ndarray | None = None    # (S,) per-trailing-day attention, 3-seed mean
+    recency_gate: np.ndarray | None = None    # (S,) per-trailing-day recency gate, 3-seed mean
+
+
+def deploy_checkpoint_paths(horizon: int, deploy_dir: str | Path = _DEPLOY_DIR) -> list[Path]:
+    """Glob the deploy checkpoints for this horizon — the single source of truth for
+    "does a live-inference champion exist for this horizon", shared with
+    ``readiness.py`` so the two can never drift out of sync on the glob pattern.
+    ``deploy_dir`` is overridable (readiness tests point it at a tmp_path fixture)."""
+    return sorted(Path(p) for p in glob.glob(str(Path(deploy_dir) / f"cmtf_lstm_{horizon}d_seed*.pt")))
 
 
 def _deploy_models(horizon: int):
     """Load every cached deploy-seed champion for this horizon (full nn.Module objects)."""
-    paths = sorted(glob.glob(str(_DEPLOY_DIR / f"cmtf_lstm_{horizon}d_seed*.pt")))
+    paths = deploy_checkpoint_paths(horizon)
     if not paths:
         raise ArtifactMissingError(
             f"No deployed champion at {_DEPLOY_DIR}/cmtf_lstm_{horizon}d_seed*.pt — "
             f"run `SAVE_DEPLOY_MODEL=1 python run_ablation_registry.py --cells 0 "
             f"--horizons {horizon} --seeds 1 42 123` to train + persist it."
         )
-    return [(Path(p).stem, torch.load(p, map_location="cpu", weights_only=False)) for p in paths]
+    return [(p.stem, torch.load(str(p), map_location="cpu", weights_only=False)) for p in paths]
 
 
 @lru_cache(maxsize=4)
@@ -96,7 +106,7 @@ def _locate_row(splits, symbol: str, cutoff: str):
     return int(idx[0]) if len(idx) else None
 
 
-def resolve_price_parquet(horizon: int = 5) -> Path:
+def resolve_price_parquet(horizon: int = 5, allow_missing_target: bool = False) -> Path:
     """Return the current dataset parquet path for ``horizon``, computed the same
     way ``run_pipeline`` computes its own cache key — never a hardcoded hash.
 
@@ -110,19 +120,32 @@ def resolve_price_parquet(horizon: int = 5) -> Path:
     same config `run_pipeline` uses guarantees this always points at the one file
     that's actually current, and fails loudly (not silently on a wrong/stale file)
     if it doesn't exist yet.
+
+    ``allow_missing_target=True`` resolves the ``_livewide`` variant instead — the
+    standard (default) parquet drops an ENTIRE row when this horizon's own target
+    is NaN (correct for training), which also throws away that row's perfectly
+    valid ``fwd_ret_1d`` for the last ~horizon days before the pipeline's raw end.
+    A real market-data range query (e.g. "analyze March 2026") only needs
+    ``fwd_ret_1d``, so that coupling makes recent-but-real days look unavailable.
+    Built on demand if missing (unlike the standard variant, which must already
+    exist from a real research run) since it reuses already-warm news/embedding
+    caches and is comparatively cheap.
     """
     from run_ablation_benchmark import _build_pipeline_config
-    from src.pipeline.orchestrator import _config_hash, _DATASET_CACHE_DIR
+    from src.pipeline.orchestrator import _config_hash, _DATASET_CACHE_DIR, run_pipeline
 
     config = _build_pipeline_config(horizon)
     cfg_hash = _config_hash(config)
-    path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}.parquet"
+    suffix = "_livewide" if allow_missing_target else ""
+    path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}{suffix}.parquet"
     if not path.exists():
-        raise ArtifactMissingError(
-            f"No dataset parquet at {path} for the current pipeline config (horizon="
-            f"{horizon}d). Run the pipeline once to build it, e.g.: "
-            f"`python run_ablation_registry.py --cells 0 --horizons {horizon} --seeds 1`."
-        )
+        if not allow_missing_target:
+            raise ArtifactMissingError(
+                f"No dataset parquet at {path} for the current pipeline config (horizon="
+                f"{horizon}d). Run the pipeline once to build it, e.g.: "
+                f"`python run_ablation_registry.py --cells 0 --horizons {horizon} --seeds 1`."
+            )
+        run_pipeline(config, allow_missing_target=True)
     return path
 
 
@@ -139,9 +162,10 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
        cross-symbol news). ``data_end`` lets the caller extend the fetch explicitly.
     """
     from src.benchmark.ablation_registry import get_cell
+    from .gate_io import core_cell_for
 
     cfg = config or DEFAULT_CONFIG
-    cell = get_cell("0")  # the deployed champion cell (CMTF_CORE, all-scope)
+    cell = get_cell(core_cell_for(horizon))  # this horizon's validated champion cell
 
     # Tier 1: cached research range (fast, bit-exact).
     splits, market_cols = _pipeline_splits(horizon, None)
@@ -170,11 +194,19 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
     mw_te, ne_te, nm_te = _prep_test_arrays(cell, splits, market_cols)
 
     seed_preds = []
+    attn_by_seed, recency_by_seed = [], []
     for _name, model in _deploy_models(horizon):
-        p = model.predict(mw_te[i:i + 1], ne_te[i:i + 1],
-                           nm_te[i:i + 1] if nm_te is not None else None)
+        p, attn, recency = model.predict_with_attention(
+            mw_te[i:i + 1], ne_te[i:i + 1], nm_te[i:i + 1] if nm_te is not None else None,
+        )
         seed_preds.append(float(np.asarray(p).ravel()[0]))
+        if attn is not None:
+            attn_by_seed.append(attn[0])
+        if recency is not None:
+            recency_by_seed.append(recency[0])
     gate_pred = float(np.mean(seed_preds))
+    attn_weights = np.mean(attn_by_seed, axis=0) if attn_by_seed else None
+    recency_gate = np.mean(recency_by_seed, axis=0) if recency_by_seed else None
 
     # NaN here means the row was kept via allow_missing_target (a genuinely live/
     # current date has no realised return yet) — report as None, never as NaN.
@@ -187,4 +219,5 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
         symbol=symbol, date=str(cutoff), horizon=horizon, gate_pred=gate_pred,
         seed_preds=seed_preds, truth=truth,
         n_symbols_in_universe=int(len(np.unique(np.asarray(splits["test"]["symbols"])))),
+        attn_weights=attn_weights, recency_gate=recency_gate,
     )

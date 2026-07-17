@@ -32,8 +32,8 @@ from src.benchmark.calibration import (
 from src.benchmark.decision_policy import evaluate_policy
 
 from .config import DEFAULT_CONFIG, MultiAgentConfig
-from .frozen_predictions import CORE_CELL_ID, MATCHED_CELL_ID, get_store
-from .gate_io import load_gate_policy, policy_path
+from .frozen_predictions import MATCHED_CELL_ID, get_store
+from .gate_io import core_cell_for, load_gate_policy, policy_path
 
 OUT_ROOT = Path("results/agent_ablation")
 
@@ -64,7 +64,7 @@ def run_ladder(horizon: int = 5, config: MultiAgentConfig | None = None,
     out_dir = OUT_ROOT / f"{horizon}d"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pred, truth = _ensemble_from_store(horizon, cfg, CORE_CELL_ID)
+    pred, truth = _ensemble_from_store(horizon, cfg, core_cell_for(horizon))
     policy, _meta = load_gate_policy(
         policy_path(cfg.gate_policy_dir, horizon, "VN"),
         expect_cmtf_version=cfg.cmtf_version, expect_backbone_version=cfg.backbone_version,

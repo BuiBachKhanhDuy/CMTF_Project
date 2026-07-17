@@ -377,6 +377,7 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
                 sequence_len=seq_len,
                 horizon=horizon,
                 target_horizon_days=target_horizon_days,
+                allow_missing_target=allow_missing_target,
             )
             logger.info("Pipeline complete (from cache) | dataset length = {}", len(dataset))
             return dataset
@@ -519,6 +520,7 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
         sequence_len=seq_len,
         horizon=horizon,
         target_horizon_days=target_horizon_days,
+        allow_missing_target=allow_missing_target,
     )
 
     _save_dataset_cache(df_all, cache_path)

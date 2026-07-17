@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import DEFAULT_CONFIG, MultiAgentConfig
-from .gate_io import CORE_CELL_ID
+from .gate_io import CORE_CELL_ID, core_cell_for
 from .loaders import ArtifactMissingError
 
 PRED_DIR = Path("cache/predictions")
@@ -51,12 +51,12 @@ class FrozenPredictionStore:
     """Serves frozen CMTF predictions keyed by (symbol, date) for one horizon."""
 
     def __init__(self, horizon: int, config: MultiAgentConfig | None = None,
-                 pred_dir: Path | str = PRED_DIR, cell_id: str = CORE_CELL_ID):
+                 pred_dir: Path | str = PRED_DIR, cell_id: str | None = None):
         self.cfg = config or DEFAULT_CONFIG
         self.horizon = int(horizon)
         self.pred_dir = Path(pred_dir)
-        self.cell_id = cell_id
-        self._config_hash = self._resolve_hash(cell_id)
+        self.cell_id = cell_id if cell_id is not None else core_cell_for(self.horizon)
+        self._config_hash = self._resolve_hash(self.cell_id)
         self._symbols, self._days, self._seed_stack, self._truth = self._load()
         # (symbol, date) → row index
         self._index: dict[tuple[str, np.datetime64], int] = {}
@@ -78,7 +78,7 @@ class FrozenPredictionStore:
             if not f.exists():
                 raise ArtifactMissingError(
                     f"Missing frozen-prediction artifact {f} — re-run the registry "
-                    f"(cell {CORE_CELL_ID}) so the (symbol, date) index is cached."
+                    f"(cell {self.cell_id}) so the (symbol, date) index is cached."
                 )
         symbols = np.load(str(sym_f), allow_pickle=True)
         days = np.asarray(np.load(str(tim_f), allow_pickle=True)).astype("datetime64[D]")
@@ -92,7 +92,7 @@ class FrozenPredictionStore:
             if not f.exists():
                 raise ArtifactMissingError(
                     f"Missing frozen seed prediction {f} — re-run the registry "
-                    f"(cell {CORE_CELL_ID}, seed {seed})."
+                    f"(cell {self.cell_id}, seed {seed})."
                 )
             seed_arrays.append(np.load(str(f)).astype(np.float64))
         seed_stack = np.stack(seed_arrays, axis=0)  # (n_seeds, n_rows)
@@ -145,9 +145,14 @@ _STORE_CACHE: dict[tuple[int, str], FrozenPredictionStore] = {}
 
 
 def get_store(horizon: int, config: MultiAgentConfig | None = None,
-              cell_id: str = CORE_CELL_ID) -> FrozenPredictionStore:
-    """Cached accessor for the per-(horizon, cell) frozen-prediction store."""
-    key = (horizon, cell_id)
+              cell_id: str | None = None) -> FrozenPredictionStore:
+    """Cached accessor for the per-(horizon, cell) frozen-prediction store.
+
+    ``cell_id=None`` (default) resolves to this horizon's validated champion cell
+    (``core_cell_for`` — cell 13 for 5D/20D, cell 0 for 1D; see `gate_io.py`).
+    """
+    resolved_cell_id = cell_id if cell_id is not None else core_cell_for(horizon)
+    key = (horizon, resolved_cell_id)
     if key not in _STORE_CACHE:
-        _STORE_CACHE[key] = FrozenPredictionStore(horizon, config, cell_id=cell_id)
+        _STORE_CACHE[key] = FrozenPredictionStore(horizon, config, cell_id=resolved_cell_id)
     return _STORE_CACHE[key]

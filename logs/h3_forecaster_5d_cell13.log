@@ -1,0 +1,14 @@
+[32m2026-07-17 00:32:16.559[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 25/280 | LLM 47.8% DA (23 trades) | MAS 41.2% DA (17 trades)[0m
+[32m2026-07-17 00:40:19.492[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 50/280 | LLM 37.0% DA (46 trades) | MAS 54.8% DA (31 trades)[0m
+[32m2026-07-17 00:47:01.497[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 75/280 | LLM 47.8% DA (69 trades) | MAS 55.8% DA (43 trades)[0m
+[32m2026-07-17 00:54:09.114[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 100/280 | LLM 52.2% DA (90 trades) | MAS 55.1% DA (49 trades)[0m
+[32m2026-07-17 01:01:41.384[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 125/280 | LLM 56.5% DA (115 trades) | MAS 53.4% DA (58 trades)[0m
+[32m2026-07-17 01:08:56.726[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 150/280 | LLM 58.6% DA (140 trades) | MAS 50.0% DA (68 trades)[0m
+[32m2026-07-17 01:16:04.248[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 175/280 | LLM 56.8% DA (162 trades) | MAS 53.8% DA (78 trades)[0m
+[32m2026-07-17 01:23:34.267[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 200/280 | LLM 54.8% DA (186 trades) | MAS 53.3% DA (92 trades)[0m
+[32m2026-07-17 01:30:39.015[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 225/280 | LLM 53.4% DA (208 trades) | MAS 53.5% DA (101 trades)[0m
+[32m2026-07-17 01:37:52.265[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 250/280 | LLM 51.1% DA (229 trades) | MAS 55.8% DA (113 trades)[0m
+[32m2026-07-17 01:44:56.162[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 275/280 | LLM 52.8% DA (254 trades) | MAS 58.7% DA (121 trades)[0m
+[32m2026-07-17 01:46:22.595[0m | [1mINFO    [0m | [36msrc.multiagent.h3_faithfulness[0m:[36mrun_forecaster_h3[0m:[36m234[0m - [1mH3 forecaster 280/280 | LLM 52.9% DA (259 trades) | MAS 58.7% DA (121 trades)[0m
+[32m2026-07-17 01:46:23.097[0m | [1mINFO    [0m | [36m__main__[0m:[36mcmd_h3[0m:[36m223[0m - [1m\u2713 H3 (forecaster) \u2192 results\agent_ablation\5d\h3_forecaster.json[0m
+EXIT=0

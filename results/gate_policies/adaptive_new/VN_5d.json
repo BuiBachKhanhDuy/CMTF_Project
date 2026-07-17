@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "policy": {
+    "tau": 0.013172659557312727,
+    "conviction": true,
+    "conviction_scale": 0.019923138121763866,
+    "coverage": 0.39976958525345624,
+    "val_score": 1.2562138660794406
+  },
+  "symbol": "VN",
+  "horizon": 5,
+  "cell_id": "0",
+  "config_hash": "60f71e5ce5",
+  "cmtf_version": "v4",
+  "backbone_version": "v3",
+  "calibrated_on": "validation",
+  "calibration_coverage": 0.39976958525345624,
+  "gate_on_raw_seed": false,
+  "calibration_seed": null,
+  "n_val": 868,
+  "calibration_date": "2026-07-16T16:31:09Z",
+  "val_gated_DA%": 75.5556,
+  "val_gated_coverage": 0.3998,
+  "val_base_rate_DA%": 50.79,
+  "val_gated_Sharpe": 2.3611,
+  "val_gated_IC": 0.4664
+}

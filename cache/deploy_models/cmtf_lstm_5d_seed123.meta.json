@@ -1,0 +1,33 @@
+{
+  "config_hash": "ed960ffa26",
+  "cell_id": "cmtf__cmtf__all__scalars__enc=lstm__om=anchored_fusion__fstyle=learned__mq=multi__xattn=1__pe=0__k=5__gate=1__galpha=1.00__ts=0__aux=1__vreg=1__iprod=0__idiff=0__nprod=0__csim=0__pnews=0__vcoeff=0.0010__fmd=64__fhd=32__pnd=128__nh=4__do=0.1__spw=0.01__elr=0.1__auxw=0.1__s1r=0.33__me=50__fe=40__mp=8__fp=8",
+  "market_encoder_name": "lstm",
+  "horizon": 5,
+  "seed": 123,
+  "input_dim": 19,
+  "seq_len": 30,
+  "raw_news_dim": 768,
+  "market_cols": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_lower",
+    "bb_mid",
+    "bb_upper",
+    "atr_14",
+    "vol_ratio",
+    "log_ret",
+    "vnindex_ret",
+    "vnindex_vol_ratio",
+    "vnindex_mom_5d",
+    "vnindex_mom_20d"
+  ],
+  "target_scale": 21.04444852699262,
+  "news_scope": "all"
+}

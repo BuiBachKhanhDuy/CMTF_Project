@@ -1,0 +1,11 @@
+{
+  "cell_id": "cmtf__cmtf__all__scalars__enc=lstm__om=anchored_fusion__fstyle=learned__mq=multi__xattn=1__pe=0__k=3__gate=1__galpha=1.00__ts=0__aux=1__vreg=0__iprod=0__idiff=0__nprod=0__csim=0__pnews=0__vcoeff=0.0010__fmd=64__fhd=32__pnd=128__nh=4__do=0.1__spw=0.01__elr=0.1__auxw=0.1__s1r=0.33__me=50__fe=40__mp=8__fp=8",
+  "config_hash": "50db677101",
+  "seed": 123,
+  "horizon": 1,
+  "scaling_version": "unitstd_v2",
+  "target_scale": 47.03168725658993,
+  "shuffle_news": false,
+  "data_sig": "46a4caab38a5dcc6a499404852367931",
+  "news_sig": "7c487617615339c4b66ce7ebdb6f625e"
+}

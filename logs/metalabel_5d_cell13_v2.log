@@ -1,0 +1,16 @@
+[32m2026-07-17 03:00:15.383[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 20/280 | vetoes so far: 7[0m
+[32m2026-07-17 03:06:36.807[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 40/280 | vetoes so far: 12[0m
+[32m2026-07-17 03:12:41.310[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 60/280 | vetoes so far: 18[0m
+[32m2026-07-17 03:15:19.760[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 80/280 | vetoes so far: 20[0m
+[32m2026-07-17 03:18:48.721[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 100/280 | vetoes so far: 24[0m
+[32m2026-07-17 03:22:25.309[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 120/280 | vetoes so far: 29[0m
+[32m2026-07-17 03:27:13.944[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 140/280 | vetoes so far: 33[0m
+[32m2026-07-17 03:30:45.504[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 160/280 | vetoes so far: 36[0m
+[32m2026-07-17 03:36:44.425[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 180/280 | vetoes so far: 42[0m
+[32m2026-07-17 03:41:43.357[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 200/280 | vetoes so far: 45[0m
+[32m2026-07-17 03:45:17.437[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 220/280 | vetoes so far: 51[0m
+[32m2026-07-17 03:50:45.655[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 240/280 | vetoes so far: 54[0m
+[32m2026-07-17 03:55:07.771[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 260/280 | vetoes so far: 57[0m
+[32m2026-07-17 03:57:18.772[0m | [1mINFO    [0m | [36msrc.multiagent.metalabel_eval[0m:[36mrun_metalabel_eval[0m:[36m101[0m - [1mmetalabel_eval 280/280 | vetoes so far: 59[0m
+[32m2026-07-17 03:57:18.880[0m | [1mINFO    [0m | [36m__main__[0m:[36mcmd_metalabel_eval[0m:[36m231[0m - [1m\u2713 metalabel-eval \u2192 results\agent_ablation\5d\metalabel_eval.json[0m
+EXIT=0

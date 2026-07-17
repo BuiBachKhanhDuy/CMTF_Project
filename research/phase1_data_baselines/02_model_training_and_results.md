@@ -327,10 +327,12 @@ untuned defaults, which is a relevant caveat when comparing their relative ranki
 
 **No results are reported here yet.** Before writing this section, the repository's entire git
 history was searched for a committed baseline-comparison output matching the current 7-symbol,
-2020–2026 configuration; none exists. The only committed benchmark artifacts
-(`results/chronos_benchmark_*.csv`, last updated in commit `45e8c0a`) are a 2-symbol (VCB, BID),
-2022–2026 run that predates the `unitstd_v2` correctness fix, and are already marked "do not cite"
-in `docs/reference/phase2_benchmark_report_HISTORICAL.md`. Reusing or extrapolating from that run
+2020–2026 configuration; none exists. The only prior benchmark artifacts
+(`results/chronos_benchmark_*.csv`, content last changed in commit `45e8c0a`, deleted entirely in
+the later commit `7f00f3a` — they exist only in git history now, not in the working tree or HEAD)
+were a 2-symbol (VCB, BID), 2022–2026 run that predates the `unitstd_v2` correctness fix, and are
+already marked "do not cite" in `docs/reference/phase2_benchmark_report_HISTORICAL.md`. Reusing or
+extrapolating from that run
 here would misrepresent the current pipeline's performance, so this section is left as an explicit
 placeholder rather than filled with numbers that cannot be attributed to the current codebase.
 

@@ -10,115 +10,115 @@
   "base_rate_up_moves": 50.36,
   "committed": {
     "A1_LLM": {
-      "DA": 53.05,
-      "coverage": 0.936,
-      "n_trades": 262
+      "DA": 52.9,
+      "coverage": 0.925,
+      "n_trades": 259
     },
     "A5_MAS": {
-      "DA": 53.85,
-      "coverage": 0.279,
-      "n_trades": 78
+      "DA": 58.68,
+      "coverage": 0.432,
+      "n_trades": 121
     }
   },
   "matched_coverage_selective_DA": {
     "25pct": {
-      "A1_DA": 45.71,
+      "A1_DA": 50.0,
       "A1_n": 70,
-      "A5_DA": 52.86,
+      "A5_DA": 65.71,
       "A5_n": 70
     },
     "50pct": {
-      "A1_DA": 60.71,
+      "A1_DA": 62.86,
       "A1_n": 140,
-      "A5_DA": 53.57,
+      "A5_DA": 57.14,
       "A5_n": 140
     },
     "100pct": {
-      "A1_DA": 53.05,
-      "A1_n": 262,
-      "A5_DA": 48.21,
+      "A1_DA": 52.9,
+      "A1_n": 259,
+      "A5_DA": 50.71,
       "A5_n": 280
     }
   },
-  "top25pct_DA_delta_A5_minus_A1": 0.54,
+  "top25pct_DA_delta_A5_minus_A1": 10.49,
   "top25pct_DA_delta_ci_95": [
-    -17.14,
-    18.57
+    -7.14,
+    27.14
   ],
   "top25pct_DA_delta_significant": false,
   "full_metrics": {
     "natural_operating_points": {
       "A5_MAS_conviction_sized": {
         "label": "MAS (gate, conviction-sized)",
-        "coverage": 0.279,
-        "n_trades": 78,
-        "committed_DA": 53.85,
-        "rank_IC": 0.0486,
-        "Sharpe": -0.0672,
-        "win_rate": 53.85,
-        "profit_factor": 0.947,
-        "max_drawdown": 0.65894,
-        "PnL_per_trade": -0.001022,
+        "coverage": 0.432,
+        "n_trades": 121,
+        "committed_DA": 58.68,
+        "rank_IC": 0.2318,
+        "Sharpe": 0.5042,
+        "win_rate": 58.68,
+        "profit_factor": 1.389,
+        "max_drawdown": 0.58603,
+        "PnL_per_trade": 0.006309,
         "total_PnL_after_cost": {
-          "0bps": -0.07972,
-          "10bps": -0.15772,
-          "25bps": -0.27472
+          "0bps": 0.76334,
+          "10bps": 0.64234,
+          "25bps": 0.46084
         }
       },
       "A1_LLM_flat_unit": {
         "label": "LLM (flat unit)",
-        "coverage": 0.936,
-        "n_trades": 262,
-        "committed_DA": 53.05,
-        "rank_IC": 0.077,
-        "Sharpe": 0.6528,
-        "win_rate": 53.05,
-        "profit_factor": 1.313,
-        "max_drawdown": 0.79218,
-        "PnL_per_trade": 0.004313,
+        "coverage": 0.925,
+        "n_trades": 259,
+        "committed_DA": 52.9,
+        "rank_IC": 0.078,
+        "Sharpe": 0.6765,
+        "win_rate": 52.9,
+        "profit_factor": 1.331,
+        "max_drawdown": 0.7922,
+        "PnL_per_trade": 0.00449,
         "total_PnL_after_cost": {
-          "0bps": 1.13002,
-          "10bps": 0.86802,
-          "25bps": 0.47502
+          "0bps": 1.16294,
+          "10bps": 0.90394,
+          "25bps": 0.51544
         }
       },
       "A1_LLM_confidence_weighted": {
         "label": "LLM (confidence-weighted)",
-        "coverage": 0.936,
-        "n_trades": 262,
-        "committed_DA": 53.05,
-        "rank_IC": 0.0591,
-        "Sharpe": 0.6424,
-        "win_rate": 53.05,
-        "profit_factor": 1.311,
-        "max_drawdown": 0.51435,
-        "PnL_per_trade": 0.00273,
+        "coverage": 0.925,
+        "n_trades": 259,
+        "committed_DA": 52.9,
+        "rank_IC": 0.0877,
+        "Sharpe": 0.6854,
+        "win_rate": 52.9,
+        "profit_factor": 1.338,
+        "max_drawdown": 0.4957,
+        "PnL_per_trade": 0.002918,
         "total_PnL_after_cost": {
-          "0bps": 0.7153,
-          "10bps": 0.4533,
-          "25bps": 0.0603
+          "0bps": 0.75584,
+          "10bps": 0.49684,
+          "25bps": 0.10834
         }
       }
     },
     "matched_coverage": {
-      "coverage_matched_to_MAS": 0.279,
+      "coverage_matched_to_MAS": 0.432,
       "A5_MAS": {
-        "coverage": 0.282,
-        "committed_DA": 54.43,
-        "Sharpe": -0.0672
+        "coverage": 0.432,
+        "committed_DA": 58.68,
+        "Sharpe": 0.5042
       },
       "A1_LLM_flat": {
-        "coverage": 0.282,
-        "committed_DA": 48.1,
-        "Sharpe": 0.2249
+        "coverage": 0.432,
+        "committed_DA": 61.16,
+        "Sharpe": 1.1375
       }
     },
     "regression": {
       "n_with_llm_pred": 280,
-      "A5_MAS_RMSE": 0.04748,
-      "A1_LLM_RMSE": 0.04427,
-      "A5_MAS_MAE": 0.03389,
-      "A1_LLM_MAE": 0.03214,
+      "A5_MAS_RMSE": 0.04776,
+      "A1_LLM_RMSE": 0.04433,
+      "A5_MAS_MAE": 0.034,
+      "A1_LLM_MAE": 0.03221,
       "note": "Lower is better. CMTF optimises rank/decision skill, not point error."
     },
     "note": "Sharpe is a sign-based proxy WITHOUT transaction costs (project convention); the cost columns show that the LLM's higher coverage pays proportionally more cost. DA alone is not comparable across different coverages — read coverage + Sharpe + cost + drawdown together. Regression (RMSE/MAE) is reported for completeness and may favour either system."
@@ -134,8 +134,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.030055712287624676,
-      "gate_pred": 0.030055712287624676
+      "a5_conf": 0.01705747687568267,
+      "gate_pred": 0.01705747687568267
     },
     {
       "symbol": "BID",
@@ -147,8 +147,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.006409023267527421,
-      "gate_pred": -0.006409023267527421
+      "a5_conf": 0.0013546346842000883,
+      "gate_pred": 0.0013546346842000883
     },
     {
       "symbol": "CTG",
@@ -160,21 +160,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.04016359274586042,
-      "gate_pred": 0.04016359274586042
+      "a5_conf": 0.047051489974061646,
+      "gate_pred": 0.047051489974061646
     },
     {
       "symbol": "MBB",
       "date": "2025-01-24",
-      "truth": 0.015357655473053455,
+      "truth": 0.015970855951309204,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.02027214426198043,
-      "gate_pred": 0.02027214426198043
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.014759148471057415,
+      "gate_pred": 0.014759148471057415
     },
     {
       "symbol": "TCB",
@@ -186,8 +186,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.04961405197779337,
-      "gate_pred": 0.04961405197779337
+      "a5_conf": 0.04948013803611199,
+      "gate_pred": 0.04948013803611199
     },
     {
       "symbol": "VCB",
@@ -199,8 +199,8 @@
       "a1_pred_ret": -0.002,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.03789889129499594,
-      "gate_pred": 0.03789889129499594
+      "a5_conf": 0.053209574737896524,
+      "gate_pred": 0.053209574737896524
     },
     {
       "symbol": "VPB",
@@ -212,8 +212,8 @@
       "a1_pred_ret": 0.005,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.04982678219676018,
-      "gate_pred": 0.04982678219676018
+      "a5_conf": 0.033182100082437195,
+      "gate_pred": 0.033182100082437195
     },
     {
       "symbol": "ACB",
@@ -225,8 +225,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.03649516403675079,
-      "gate_pred": 0.03649516403675079
+      "a5_conf": 0.04804675032695135,
+      "gate_pred": 0.04804675032695135
     },
     {
       "symbol": "BID",
@@ -238,8 +238,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.024690391961485147,
-      "gate_pred": 0.024690391961485147
+      "a5_conf": 0.018170878601570923,
+      "gate_pred": 0.018170878601570923
     },
     {
       "symbol": "CTG",
@@ -249,23 +249,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.011817467709382376,
-      "gate_pred": 0.011817467709382376
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.03240297005201379,
+      "gate_pred": 0.03240297005201379
     },
     {
       "symbol": "MBB",
       "date": "2025-02-26",
-      "truth": 0.01483198907226324,
+      "truth": 0.014832666143774986,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.012017099186778069,
-      "gate_pred": -0.012017099186778069
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.017271906758348148,
+      "gate_pred": -0.017271906758348148
     },
     {
       "symbol": "TCB",
@@ -277,8 +277,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.024365689217423398,
-      "gate_pred": 0.024365689217423398
+      "a5_conf": 0.029156116768717766,
+      "gate_pred": 0.029156116768717766
     },
     {
       "symbol": "VCB",
@@ -288,10 +288,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.008,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01436813703427712,
-      "gate_pred": 0.01436813703427712
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.029579920461401343,
+      "gate_pred": 0.029579920461401343
     },
     {
       "symbol": "VPB",
@@ -303,8 +303,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.03980476347108682,
-      "gate_pred": 0.03980476347108682
+      "a5_conf": 0.05228392407298088,
+      "gate_pred": 0.05228392407298088
     },
     {
       "symbol": "ACB",
@@ -316,8 +316,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.027669597417116165,
-      "gate_pred": 0.027669597417116165
+      "a5_conf": 0.034938795336832605,
+      "gate_pred": 0.034938795336832605
     },
     {
       "symbol": "BID",
@@ -327,10 +327,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.012697921444972357,
-      "gate_pred": 0.012697921444972357
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.024686451070010662,
+      "gate_pred": 0.024686451070010662
     },
     {
       "symbol": "CTG",
@@ -342,21 +342,21 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012196687205384174,
-      "gate_pred": -0.012196687205384174
+      "a5_conf": 0.003942536500593026,
+      "gate_pred": -0.003942536500593026
     },
     {
       "symbol": "MBB",
       "date": "2025-03-03",
-      "truth": 0.05940121412277222,
+      "truth": 0.05885764956474304,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.009684318521370491,
-      "gate_pred": 0.009684318521370491
+      "a5_conf": 0.0038990781952937445,
+      "gate_pred": -0.0038990781952937445
     },
     {
       "symbol": "TCB",
@@ -368,8 +368,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00520304124802351,
-      "gate_pred": -0.00520304124802351
+      "a5_conf": 0.0012044558922449748,
+      "gate_pred": 0.0012044558922449748
     },
     {
       "symbol": "VCB",
@@ -379,10 +379,10 @@
       "a1_sign": 0.0,
       "a1_conf": 0.3,
       "a1_pred_ret": -0.002,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.0208678940931956,
-      "gate_pred": -0.0208678940931956
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.005676374149819215,
+      "gate_pred": -0.005676374149819215
     },
     {
       "symbol": "VPB",
@@ -392,10 +392,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017864624969661236,
-      "gate_pred": 0.017864624969661236
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.01818788720993325,
+      "gate_pred": 0.01818788720993325
     },
     {
       "symbol": "ACB",
@@ -404,11 +404,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.013000000000000001,
+      "a1_pred_ret": -0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.018757525521020096,
-      "gate_pred": 0.018757525521020096
+      "a5_conf": 0.024495595134794712,
+      "gate_pred": 0.024495595134794712
     },
     {
       "symbol": "BID",
@@ -417,11 +417,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.015,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004501373507082462,
-      "gate_pred": 0.004501373507082462
+      "a5_conf": 0.012211832528313002,
+      "gate_pred": 0.012211832528313002
     },
     {
       "symbol": "CTG",
@@ -431,23 +431,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.010704253179331621,
-      "gate_pred": -0.010704253179331621
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.017597722510496776,
+      "gate_pred": -0.017597722510496776
     },
     {
       "symbol": "MBB",
       "date": "2025-03-31",
-      "truth": -0.14242033660411835,
+      "truth": -0.14261411130428314,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007723628698537747,
-      "gate_pred": 0.007723628698537747
+      "a5_conf": 0.015318937686970457,
+      "gate_pred": 0.015318937686970457
     },
     {
       "symbol": "TCB",
@@ -459,8 +459,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.028733037412166595,
-      "gate_pred": 0.028733037412166595
+      "a5_conf": 0.036801330745220184,
+      "gate_pred": 0.036801330745220184
     },
     {
       "symbol": "VCB",
@@ -469,11 +469,11 @@
       "a1_dir": "abstain",
       "a1_sign": 0.0,
       "a1_conf": 0.4,
-      "a1_pred_ret": -0.005,
+      "a1_pred_ret": -0.006,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005701770617937048,
-      "gate_pred": -0.005701770617937048
+      "a5_conf": 0.00876129853228728,
+      "gate_pred": -0.00876129853228728
     },
     {
       "symbol": "VPB",
@@ -485,8 +485,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.0332679475347201,
-      "gate_pred": 0.0332679475347201
+      "a5_conf": 0.04429773179193338,
+      "gate_pred": 0.04429773179193338
     },
     {
       "symbol": "ACB",
@@ -495,11 +495,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01587158441543579,
-      "gate_pred": 0.01587158441543579
+      "a1_pred_ret": -0.013000000000000001,
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.017982072196900845,
+      "gate_pred": 0.017982072196900845
     },
     {
       "symbol": "BID",
@@ -511,8 +511,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.027536781504750252,
-      "gate_pred": 0.027536781504750252
+      "a5_conf": 0.019428140949457884,
+      "gate_pred": 0.019428140949457884
     },
     {
       "symbol": "CTG",
@@ -522,23 +522,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015660707838833332,
-      "gate_pred": -0.015660707838833332
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02121005952358246,
+      "gate_pred": -0.02121005952358246
     },
     {
       "symbol": "MBB",
       "date": "2025-04-02",
-      "truth": -0.09893118590116501,
+      "truth": -0.09930448234081268,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.027169032643238705,
-      "gate_pred": 0.027169032643238705
+      "a5_conf": 0.041534402718146644,
+      "gate_pred": 0.041534402718146644
     },
     {
       "symbol": "TCB",
@@ -550,8 +550,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.023566323642929394,
-      "gate_pred": 0.023566323642929394
+      "a5_conf": 0.029561258231600124,
+      "gate_pred": 0.029561258231600124
     },
     {
       "symbol": "VCB",
@@ -560,11 +560,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.012,
+      "a1_pred_ret": 0.006999999999999999,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.003382905386388302,
-      "gate_pred": -0.003382905386388302
+      "a5_conf": 3.197890085478624e-05,
+      "gate_pred": -3.197890085478624e-05
     },
     {
       "symbol": "VPB",
@@ -574,10 +574,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.005,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.018778119857112568,
-      "gate_pred": -0.018778119857112568
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.0019371855693558853,
+      "gate_pred": -0.0019371855693558853
     },
     {
       "symbol": "ACB",
@@ -587,10 +587,10 @@
       "a1_sign": 0.0,
       "a1_conf": 0.4,
       "a1_pred_ret": -0.006999999999999999,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.007978716865181923,
-      "gate_pred": 0.007978716865181923
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.02548258441189925,
+      "gate_pred": 0.02548258441189925
     },
     {
       "symbol": "BID",
@@ -600,10 +600,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.007521010236814618,
-      "gate_pred": -0.007521010236814618
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.018300036589304607,
+      "gate_pred": 0.018300036589304607
     },
     {
       "symbol": "CTG",
@@ -615,21 +615,21 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.002014757754902045,
-      "gate_pred": -0.002014757754902045
+      "a5_conf": 0.010687578585930169,
+      "gate_pred": -0.010687578585930169
     },
     {
       "symbol": "MBB",
       "date": "2025-04-03",
-      "truth": 0.03470562398433685,
+      "truth": 0.03490125760436058,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.023122201673686504,
-      "gate_pred": 0.023122201673686504
+      "a5_conf": 0.04979142422477404,
+      "gate_pred": 0.04979142422477404
     },
     {
       "symbol": "TCB",
@@ -638,11 +638,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0026203723391517997,
-      "gate_pred": 0.0026203723391517997
+      "a5_conf": 0.01166109616557757,
+      "gate_pred": -0.01166109616557757
     },
     {
       "symbol": "VCB",
@@ -654,8 +654,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005331769585609436,
-      "gate_pred": -0.005331769585609436
+      "a5_conf": 0.00496654383217295,
+      "gate_pred": -0.00496654383217295
     },
     {
       "symbol": "VPB",
@@ -665,10 +665,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.014757174998521805,
-      "gate_pred": -0.014757174998521805
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.016886840264002483,
+      "gate_pred": -0.016886840264002483
     },
     {
       "symbol": "ACB",
@@ -680,8 +680,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.014858547287682692,
-      "gate_pred": -0.014858547287682692
+      "a5_conf": 0.0030415638660391173,
+      "gate_pred": -0.0030415638660391173
     },
     {
       "symbol": "BID",
@@ -693,8 +693,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.03712521865963936,
-      "gate_pred": -0.03712521865963936
+      "a5_conf": 0.046283685912688576,
+      "gate_pred": -0.046283685912688576
     },
     {
       "symbol": "CTG",
@@ -706,21 +706,21 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.02832011754314105,
-      "gate_pred": 0.02832011754314105
+      "a5_conf": 0.019722970978667338,
+      "gate_pred": 0.019722970978667338
     },
     {
       "symbol": "MBB",
       "date": "2025-04-08",
-      "truth": 0.09542612731456757,
+      "truth": 0.09609409421682358,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.01895667057639609,
-      "gate_pred": 0.01895667057639609
+      "a5_conf": 0.049185690159598984,
+      "gate_pred": 0.049185690159598984
     },
     {
       "symbol": "TCB",
@@ -732,8 +732,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.014955855595568815,
-      "gate_pred": 0.014955855595568815
+      "a5_conf": 0.01521789088534812,
+      "gate_pred": 0.01521789088534812
     },
     {
       "symbol": "VCB",
@@ -745,8 +745,8 @@
       "a1_pred_ret": 0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0011199509414533775,
-      "gate_pred": -0.0011199509414533775
+      "a5_conf": 0.010978631830463806,
+      "gate_pred": -0.010978631830463806
     },
     {
       "symbol": "VPB",
@@ -754,12 +754,12 @@
       "truth": -0.015429941937327385,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_conf": 0.6,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.008638955924349526,
-      "gate_pred": 0.008638955924349526
+      "a5_conf": 0.0025466463218132653,
+      "gate_pred": 0.0025466463218132653
     },
     {
       "symbol": "ACB",
@@ -771,8 +771,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01140628568828106,
-      "gate_pred": -0.01140628568828106
+      "a5_conf": 0.007261711483200391,
+      "gate_pred": -0.007261711483200391
     },
     {
       "symbol": "BID",
@@ -780,12 +780,12 @@
       "truth": -0.03926503658294678,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.03045669135948022,
-      "gate_pred": -0.03045669135948022
+      "a5_conf": 0.04519254962603251,
+      "gate_pred": -0.04519254962603251
     },
     {
       "symbol": "CTG",
@@ -797,34 +797,34 @@
       "a1_pred_ret": 0.006999999999999999,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005004404500747721,
-      "gate_pred": 0.005004404500747721
+      "a5_conf": 0.0013176933862268925,
+      "gate_pred": -0.0013176933862268925
     },
     {
       "symbol": "MBB",
       "date": "2025-04-11",
-      "truth": -0.008564140647649765,
-      "a1_dir": "short",
-      "a1_sign": -1.0,
-      "a1_conf": 0.6,
-      "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.025093309270838898,
-      "gate_pred": -0.025093309270838898
-    },
-    {
-      "symbol": "TCB",
-      "date": "2025-05-06",
-      "truth": 0.09061533212661743,
+      "truth": -0.008313586935400963,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010942439703891674,
-      "gate_pred": -0.010942439703891674
+      "a5_conf": 0.0005999744559327761,
+      "gate_pred": -0.0005999744559327761
+    },
+    {
+      "symbol": "TCB",
+      "date": "2025-05-06",
+      "truth": 0.09061533212661743,
+      "a1_dir": "abstain",
+      "a1_sign": 0.0,
+      "a1_conf": 0.4,
+      "a1_pred_ret": -0.008,
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.008335576392710209,
+      "gate_pred": -0.008335576392710209
     },
     {
       "symbol": "VCB",
@@ -836,8 +836,8 @@
       "a1_pred_ret": -0.015,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02133886329829693,
-      "gate_pred": -0.02133886329829693
+      "a5_conf": 0.03355310671031475,
+      "gate_pred": -0.03355310671031475
     },
     {
       "symbol": "VPB",
@@ -849,8 +849,8 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.026630065714319546,
-      "gate_pred": -0.026630065714319546
+      "a5_conf": 0.04208007579048475,
+      "gate_pred": -0.04208007579048475
     },
     {
       "symbol": "ACB",
@@ -862,8 +862,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.026423087033132713,
-      "gate_pred": 0.026423087033132713
+      "a5_conf": 0.02921840672691663,
+      "gate_pred": 0.02921840672691663
     },
     {
       "symbol": "BID",
@@ -872,11 +872,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.013000000000000001,
+      "a1_pred_ret": -0.018000000000000002,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.025522974009315174,
-      "gate_pred": -0.025522974009315174
+      "a5_conf": 0.03606833207110564,
+      "gate_pred": -0.03606833207110564
     },
     {
       "symbol": "CTG",
@@ -886,23 +886,23 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017571613114948075,
-      "gate_pred": 0.017571613114948075
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.037439968436956406,
+      "gate_pred": 0.037439968436956406
     },
     {
       "symbol": "MBB",
       "date": "2025-04-18",
-      "truth": 0.012535776942968369,
+      "truth": 0.012444605119526386,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01636910904198885,
-      "gate_pred": -0.01636910904198885
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.026094442543884117,
+      "gate_pred": -0.026094442543884117
     },
     {
       "symbol": "TCB",
@@ -914,8 +914,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.013966061174869537,
-      "gate_pred": -0.013966061174869537
+      "a5_conf": 0.009535479048887888,
+      "gate_pred": -0.009535479048887888
     },
     {
       "symbol": "VCB",
@@ -927,8 +927,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0012163089122623205,
-      "gate_pred": 0.0012163089122623205
+      "a5_conf": 0.01491071501125892,
+      "gate_pred": 0.01491071501125892
     },
     {
       "symbol": "VPB",
@@ -940,8 +940,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.006637714027116696,
-      "gate_pred": 0.006637714027116696
+      "a5_conf": 0.0007034666487015784,
+      "gate_pred": 0.0007034666487015784
     },
     {
       "symbol": "ACB",
@@ -953,8 +953,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007312106434255838,
-      "gate_pred": 0.007312106434255838
+      "a5_conf": 0.0017895006264249484,
+      "gate_pred": -0.0017895006264249484
     },
     {
       "symbol": "BID",
@@ -966,8 +966,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0005648263419667879,
-      "gate_pred": 0.0005648263419667879
+      "a5_conf": 0.015405052263910571,
+      "gate_pred": 0.015405052263910571
     },
     {
       "symbol": "CTG",
@@ -975,25 +975,25 @@
       "truth": 0.018801964819431305,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0003960915297890703,
-      "gate_pred": 0.0003960915297890703
+      "a5_conf": 0.004404091741889715,
+      "gate_pred": 0.004404091741889715
     },
     {
       "symbol": "MBB",
       "date": "2025-04-24",
-      "truth": 0.012535776942968369,
+      "truth": 0.012444605119526386,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007153051284452279,
-      "gate_pred": 0.007153051284452279
+      "a5_conf": 0.0024730580238004527,
+      "gate_pred": 0.0024730580238004527
     },
     {
       "symbol": "TCB",
@@ -1002,11 +1002,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.025685856118798256,
-      "gate_pred": -0.025685856118798256
+      "a5_conf": 0.023831843708952267,
+      "gate_pred": -0.023831843708952267
     },
     {
       "symbol": "VCB",
@@ -1015,11 +1015,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.008,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02167475037276745,
-      "gate_pred": -0.02167475037276745
+      "a5_conf": 0.01754540391266346,
+      "gate_pred": -0.01754540391266346
     },
     {
       "symbol": "VPB",
@@ -1031,8 +1031,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0036906806441644826,
-      "gate_pred": 0.0036906806441644826
+      "a5_conf": 0.013930551086862883,
+      "gate_pred": 0.013930551086862883
     },
     {
       "symbol": "ACB",
@@ -1041,11 +1041,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": -0.018000000000000002,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017123704310506582,
-      "gate_pred": -0.017123704310506582
+      "a1_pred_ret": -0.012,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02881537067393462,
+      "gate_pred": -0.02881537067393462
     },
     {
       "symbol": "BID",
@@ -1057,8 +1057,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.031169071793556213,
-      "gate_pred": -0.031169071793556213
+      "a5_conf": 0.02870046781996886,
+      "gate_pred": -0.02870046781996886
     },
     {
       "symbol": "CTG",
@@ -1070,21 +1070,21 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00496703681225578,
-      "gate_pred": -0.00496703681225578
+      "a5_conf": 0.009406612797950705,
+      "gate_pred": 0.009406612797950705
     },
     {
       "symbol": "MBB",
       "date": "2025-05-08",
-      "truth": 0.0620226189494133,
+      "truth": 0.062216922640800476,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01610087665418784,
-      "gate_pred": -0.01610087665418784
+      "a5_conf": 0.009911436587572098,
+      "gate_pred": -0.009911436587572098
     },
     {
       "symbol": "TCB",
@@ -1093,24 +1093,24 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015870222511390846,
-      "gate_pred": 0.015870222511390846
+      "a1_pred_ret": 0.015,
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.022795616028209526,
+      "gate_pred": 0.022795616028209526
     },
     {
       "symbol": "VCB",
       "date": "2025-05-20",
       "truth": -0.0053022392094135284,
-      "a1_dir": "short",
-      "a1_sign": -1.0,
-      "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_dir": "abstain",
+      "a1_sign": 0.0,
+      "a1_conf": 0.3,
+      "a1_pred_ret": -0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0007989499717950821,
-      "gate_pred": -0.0007989499717950821
+      "a5_conf": 0.012009276542812586,
+      "gate_pred": 0.012009276542812586
     },
     {
       "symbol": "VPB",
@@ -1119,11 +1119,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0012104352936148643,
-      "gate_pred": -0.0012104352936148643
+      "a5_conf": 0.0006206760105366508,
+      "gate_pred": 0.0006206760105366508
     },
     {
       "symbol": "ACB",
@@ -1135,8 +1135,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.003720337525010109,
-      "gate_pred": -0.003720337525010109
+      "a5_conf": 0.006258894378940265,
+      "gate_pred": -0.006258894378940265
     },
     {
       "symbol": "BID",
@@ -1148,8 +1148,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00016554522638519606,
-      "gate_pred": 0.00016554522638519606
+      "a5_conf": 0.014983351031939188,
+      "gate_pred": 0.014983351031939188
     },
     {
       "symbol": "CTG",
@@ -1157,25 +1157,25 @@
       "truth": 0.03446141257882118,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012051929370500147,
-      "gate_pred": -0.012051929370500147
+      "a5_conf": 0.0012698044689993064,
+      "gate_pred": 0.0012698044689993064
     },
     {
       "symbol": "MBB",
       "date": "2025-05-13",
-      "truth": 0.014046692289412022,
+      "truth": 0.014049121178686619,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.012,
+      "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.028046507388353348,
-      "gate_pred": -0.028046507388353348
+      "a5_conf": 0.026612506558497746,
+      "gate_pred": -0.026612506558497746
     },
     {
       "symbol": "TCB",
@@ -1185,10 +1185,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.019895921926945448,
-      "gate_pred": 0.019895921926945448
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.01350184716284275,
+      "gate_pred": 0.01350184716284275
     },
     {
       "symbol": "VCB",
@@ -1200,8 +1200,8 @@
       "a1_pred_ret": -0.0075,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.002970381174236536,
-      "gate_pred": -0.002970381174236536
+      "a5_conf": 0.003318976116133854,
+      "gate_pred": -0.003318976116133854
     },
     {
       "symbol": "VPB",
@@ -1213,8 +1213,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0033012271548310914,
-      "gate_pred": -0.0033012271548310914
+      "a5_conf": 0.010143162372211615,
+      "gate_pred": -0.010143162372211615
     },
     {
       "symbol": "ACB",
@@ -1222,12 +1222,12 @@
       "truth": 0.056423790752887726,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.008081670423659185,
-      "gate_pred": -0.008081670423659185
+      "a5_conf": 0.0012511188785235088,
+      "gate_pred": -0.0012511188785235088
     },
     {
       "symbol": "BID",
@@ -1235,12 +1235,12 @@
       "truth": 0.002789402147755027,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.006068877720584472,
-      "gate_pred": 0.006068877720584472
+      "a1_conf": 0.7,
+      "a1_pred_ret": 0.012,
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.020745697431266308,
+      "gate_pred": 0.020745697431266308
     },
     {
       "symbol": "CTG",
@@ -1252,21 +1252,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00886919085557262,
-      "gate_pred": -0.00886919085557262
+      "a5_conf": 0.008054908675452074,
+      "gate_pred": -0.008054908675452074
     },
     {
       "symbol": "MBB",
       "date": "2025-05-21",
-      "truth": -0.018260443583130836,
+      "truth": -0.018431127071380615,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.026375872393449146,
-      "gate_pred": 0.026375872393449146
+      "a5_conf": 0.03244950249791145,
+      "gate_pred": 0.03244950249791145
     },
     {
       "symbol": "TCB",
@@ -1278,8 +1278,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.016925242729485035,
-      "gate_pred": 0.016925242729485035
+      "a5_conf": 0.013370396724591652,
+      "gate_pred": 0.013370396724591652
     },
     {
       "symbol": "VCB",
@@ -1291,8 +1291,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.027378743514418602,
-      "gate_pred": 0.027378743514418602
+      "a5_conf": 0.021182298349837463,
+      "gate_pred": 0.021182298349837463
     },
     {
       "symbol": "VPB",
@@ -1300,12 +1300,12 @@
       "truth": 0.039318326860666275,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.017490725343426067,
-      "gate_pred": -0.017490725343426067
+      "a5_conf": 0.008280850714072585,
+      "gate_pred": -0.008280850714072585
     },
     {
       "symbol": "ACB",
@@ -1317,8 +1317,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005477194053431352,
-      "gate_pred": 0.005477194053431352
+      "a5_conf": 0.014290940792610249,
+      "gate_pred": 0.014290940792610249
     },
     {
       "symbol": "BID",
@@ -1328,10 +1328,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.005,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.011112358421087265,
-      "gate_pred": 0.011112358421087265
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.02352371532469988,
+      "gate_pred": 0.02352371532469988
     },
     {
       "symbol": "CTG",
@@ -1343,21 +1343,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0009525483474135399,
-      "gate_pred": 0.0009525483474135399
+      "a5_conf": 0.006891005362073581,
+      "gate_pred": -0.006891005362073581
     },
     {
       "symbol": "MBB",
       "date": "2025-06-24",
-      "truth": 0.004111002665013075,
+      "truth": 0.0037403195165097713,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.002270230402549108,
-      "gate_pred": 0.002270230402549108
+      "a5_conf": 0.0001265355385839939,
+      "gate_pred": 0.0001265355385839939
     },
     {
       "symbol": "TCB",
@@ -1369,8 +1369,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0034322966863934803,
-      "gate_pred": -0.0034322966863934803
+      "a5_conf": 0.008133336824054519,
+      "gate_pred": 0.008133336824054519
     },
     {
       "symbol": "VCB",
@@ -1382,8 +1382,8 @@
       "a1_pred_ret": 0.0,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.028562236887713272,
-      "gate_pred": -0.028562236887713272
+      "a5_conf": 0.03786984761245549,
+      "gate_pred": -0.03786984761245549
     },
     {
       "symbol": "VPB",
@@ -1391,12 +1391,12 @@
       "truth": 0.0809854120016098,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0059094772053261595,
-      "gate_pred": -0.0059094772053261595
+      "a5_conf": 0.0038375106329719224,
+      "gate_pred": -0.0038375106329719224
     },
     {
       "symbol": "ACB",
@@ -1408,8 +1408,8 @@
       "a1_pred_ret": 0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.009452640583428243,
-      "gate_pred": 0.009452640583428243
+      "a5_conf": 0.0007296865805983543,
+      "gate_pred": -0.0007296865805983543
     },
     {
       "symbol": "BID",
@@ -1421,8 +1421,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005013321720374127,
-      "gate_pred": 0.005013321720374127
+      "a5_conf": 3.559631295502186e-05,
+      "gate_pred": 3.559631295502186e-05
     },
     {
       "symbol": "CTG",
@@ -1434,21 +1434,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0032899243136247,
-      "gate_pred": -0.0032899243136247
+      "a5_conf": 0.01646715433647235,
+      "gate_pred": -0.01646715433647235
     },
     {
       "symbol": "MBB",
       "date": "2025-07-03",
-      "truth": 0.019339025020599365,
+      "truth": 0.01958252489566803,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004190765010813872,
-      "gate_pred": -0.004190765010813872
+      "a5_conf": 0.005891760926412341,
+      "gate_pred": -0.005891760926412341
     },
     {
       "symbol": "TCB",
@@ -1457,11 +1457,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0015839272333929937,
-      "gate_pred": 0.0015839272333929937
+      "a5_conf": 0.000998203953107198,
+      "gate_pred": -0.000998203953107198
     },
     {
       "symbol": "VCB",
@@ -1471,10 +1471,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.003,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017725190458198387,
-      "gate_pred": 0.017725190458198387
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.021409816574305296,
+      "gate_pred": 0.021409816574305296
     },
     {
       "symbol": "VPB",
@@ -1484,10 +1484,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.018788369372487068,
-      "gate_pred": -0.018788369372487068
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.010908867698162794,
+      "gate_pred": -0.010908867698162794
     },
     {
       "symbol": "ACB",
@@ -1499,8 +1499,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.024422792096932728,
-      "gate_pred": -0.024422792096932728
+      "a5_conf": 0.02328362005452315,
+      "gate_pred": -0.02328362005452315
     },
     {
       "symbol": "BID",
@@ -1512,8 +1512,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.028199102729558945,
-      "gate_pred": 0.028199102729558945
+      "a5_conf": 0.019224187048772972,
+      "gate_pred": 0.019224187048772972
     },
     {
       "symbol": "CTG",
@@ -1525,21 +1525,21 @@
       "a1_pred_ret": 0.015,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.015160590099791685,
-      "gate_pred": -0.015160590099791685
+      "a5_conf": 0.013198910281062126,
+      "gate_pred": -0.013198910281062126
     },
     {
       "symbol": "MBB",
       "date": "2025-07-18",
-      "truth": 0.045048344880342484,
+      "truth": 0.04536037892103195,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01731988446166118,
-      "gate_pred": -0.01731988446166118
+      "a5_conf": 0.01508694669852654,
+      "gate_pred": -0.01508694669852654
     },
     {
       "symbol": "TCB",
@@ -1548,11 +1548,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.012,
+      "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0020578354597091675,
-      "gate_pred": 0.0020578354597091675
+      "a5_conf": 0.008066703449003398,
+      "gate_pred": 0.008066703449003398
     },
     {
       "symbol": "VCB",
@@ -1564,8 +1564,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0038561749582489333,
-      "gate_pred": -0.0038561749582489333
+      "a5_conf": 0.0006740645815928777,
+      "gate_pred": -0.0006740645815928777
     },
     {
       "symbol": "VPB",
@@ -1575,10 +1575,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.02210080313185851,
-      "gate_pred": -0.02210080313185851
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.016115555850168068,
+      "gate_pred": -0.016115555850168068
     },
     {
       "symbol": "ACB",
@@ -1587,11 +1587,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.015,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.017361778765916824,
-      "gate_pred": -0.017361778765916824
+      "a5_conf": 0.013030935389300188,
+      "gate_pred": -0.013030935389300188
     },
     {
       "symbol": "BID",
@@ -1603,8 +1603,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012204910318056742,
-      "gate_pred": 0.012204910318056742
+      "a5_conf": 0.015087470722695192,
+      "gate_pred": 0.015087470722695192
     },
     {
       "symbol": "CTG",
@@ -1613,24 +1613,24 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0054623854424183564,
-      "gate_pred": -0.0054623854424183564
+      "a5_conf": 0.007476949132978916,
+      "gate_pred": -0.007476949132978916
     },
     {
       "symbol": "MBB",
       "date": "2025-08-06",
-      "truth": 0.11705655604600906,
+      "truth": 0.11702758073806763,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.020898870813349884,
-      "gate_pred": -0.020898870813349884
+      "a5_conf": 0.026483085316916306,
+      "gate_pred": -0.026483085316916306
     },
     {
       "symbol": "TCB",
@@ -1639,11 +1639,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.006999999999999999,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01527519462009271,
-      "gate_pred": -0.01527519462009271
+      "a1_pred_ret": 0.012,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.016861794516444206,
+      "gate_pred": -0.016861794516444206
     },
     {
       "symbol": "VCB",
@@ -1652,11 +1652,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.006999999999999999,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0021923895304401717,
-      "gate_pred": 0.0021923895304401717
+      "a5_conf": 0.002839017038544019,
+      "gate_pred": 0.002839017038544019
     },
     {
       "symbol": "VPB",
@@ -1664,12 +1664,12 @@
       "truth": 0.09337911009788513,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.019634347409009933,
-      "gate_pred": -0.019634347409009933
+      "a5_conf": 0.017769306277235348,
+      "gate_pred": -0.017769306277235348
     },
     {
       "symbol": "ACB",
@@ -1679,10 +1679,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015875883400440216,
-      "gate_pred": -0.015875883400440216
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.022075165684024494,
+      "gate_pred": -0.022075165684024494
     },
     {
       "symbol": "BID",
@@ -1694,8 +1694,8 @@
       "a1_pred_ret": 0.008,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005296948676307996,
-      "gate_pred": 0.005296948676307996
+      "a5_conf": 0.0103718393171827,
+      "gate_pred": -0.0103718393171827
     },
     {
       "symbol": "CTG",
@@ -1705,23 +1705,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.014280798534552256,
-      "gate_pred": 0.014280798534552256
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.021606389636872336,
+      "gate_pred": 0.021606389636872336
     },
     {
       "symbol": "MBB",
       "date": "2025-08-15",
-      "truth": -0.04896717146039009,
+      "truth": -0.04904792830348015,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01677061157533899,
-      "gate_pred": 0.01677061157533899
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.023462714239334066,
+      "gate_pred": 0.023462714239334066
     },
     {
       "symbol": "TCB",
@@ -1733,8 +1733,8 @@
       "a1_pred_ret": 0.015,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010324592158819238,
-      "gate_pred": -0.010324592158819238
+      "a5_conf": 0.010438461787998676,
+      "gate_pred": -0.010438461787998676
     },
     {
       "symbol": "VCB",
@@ -1746,8 +1746,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007526930111149947,
-      "gate_pred": -0.007526930111149947
+      "a5_conf": 0.007050018873997033,
+      "gate_pred": -0.007050018873997033
     },
     {
       "symbol": "VPB",
@@ -1755,12 +1755,12 @@
       "truth": 0.050603680312633514,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_conf": 0.6,
+      "a1_pred_ret": 0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.026227327063679695,
-      "gate_pred": -0.026227327063679695
+      "a5_conf": 0.03095748523871104,
+      "gate_pred": -0.03095748523871104
     },
     {
       "symbol": "ACB",
@@ -1772,8 +1772,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010166840472569069,
-      "gate_pred": -0.010166840472569069
+      "a5_conf": 0.014988356114675602,
+      "gate_pred": -0.014988356114675602
     },
     {
       "symbol": "BID",
@@ -1783,10 +1783,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": true,
-      "a5_sign": -1.0,
-      "a5_conf": 0.018255118280649185,
-      "gate_pred": -0.018255118280649185
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.01279561035335064,
+      "gate_pred": -0.01279561035335064
     },
     {
       "symbol": "CTG",
@@ -1798,21 +1798,21 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02563650409380595,
-      "gate_pred": -0.02563650409380595
+      "a5_conf": 0.03026853563884894,
+      "gate_pred": -0.03026853563884894
     },
     {
       "symbol": "MBB",
       "date": "2025-08-26",
-      "truth": 0.02509092167019844,
+      "truth": 0.024977998808026314,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01229983459537228,
-      "gate_pred": -0.01229983459537228
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01895238117625316,
+      "gate_pred": -0.01895238117625316
     },
     {
       "symbol": "TCB",
@@ -1824,8 +1824,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012586004178350171,
-      "gate_pred": -0.012586004178350171
+      "a5_conf": 0.008264301344752312,
+      "gate_pred": -0.008264301344752312
     },
     {
       "symbol": "VCB",
@@ -1837,8 +1837,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00667503693451484,
-      "gate_pred": -0.00667503693451484
+      "a5_conf": 0.0073696716378132505,
+      "gate_pred": -0.0073696716378132505
     },
     {
       "symbol": "VPB",
@@ -1847,11 +1847,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.022873287089169025,
-      "gate_pred": -0.022873287089169025
+      "a5_conf": 0.021575733087956905,
+      "gate_pred": -0.021575733087956905
     },
     {
       "symbol": "ACB",
@@ -1863,8 +1863,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007500737905502319,
-      "gate_pred": 0.007500737905502319
+      "a5_conf": 0.009558045615752539,
+      "gate_pred": 0.009558045615752539
     },
     {
       "symbol": "BID",
@@ -1876,8 +1876,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012166230085616311,
-      "gate_pred": -0.012166230085616311
+      "a5_conf": 0.010305386191854874,
+      "gate_pred": -0.010305386191854874
     },
     {
       "symbol": "CTG",
@@ -1889,21 +1889,21 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00120914401486516,
-      "gate_pred": -0.00120914401486516
+      "a5_conf": 0.0034924323360125222,
+      "gate_pred": 0.0034924323360125222
     },
     {
       "symbol": "MBB",
       "date": "2025-09-03",
-      "truth": -0.054164864122867584,
+      "truth": -0.05445309728384018,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.0038592919784908495,
-      "gate_pred": -0.0038592919784908495
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01699516021957,
+      "gate_pred": -0.01699516021957
     },
     {
       "symbol": "TCB",
@@ -1915,8 +1915,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0033595215645618737,
-      "gate_pred": -0.0033595215645618737
+      "a5_conf": 0.0017612704541534185,
+      "gate_pred": 0.0017612704541534185
     },
     {
       "symbol": "VCB",
@@ -1928,8 +1928,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.021359109940628212,
-      "gate_pred": -0.021359109940628212
+      "a5_conf": 0.03474221130212148,
+      "gate_pred": -0.03474221130212148
     },
     {
       "symbol": "VPB",
@@ -1939,10 +1939,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.018000000000000002,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.0158946254523471,
-      "gate_pred": -0.0158946254523471
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.025340368350346882,
+      "gate_pred": -0.025340368350346882
     },
     {
       "symbol": "ACB",
@@ -1951,11 +1951,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.011102873831987381,
-      "gate_pred": -0.011102873831987381
+      "a5_conf": 0.0016073545751472313,
+      "gate_pred": 0.0016073545751472313
     },
     {
       "symbol": "BID",
@@ -1967,8 +1967,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0008033414681752523,
-      "gate_pred": 0.0008033414681752523
+      "a5_conf": 0.0010077301412820816,
+      "gate_pred": -0.0010077301412820816
     },
     {
       "symbol": "CTG",
@@ -1977,24 +1977,24 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012362099252641201,
-      "gate_pred": 0.012362099252641201
+      "a5_conf": 0.006563803258662422,
+      "gate_pred": 0.006563803258662422
     },
     {
       "symbol": "MBB",
       "date": "2025-09-09",
-      "truth": 0.03139685466885567,
+      "truth": 0.03150471672415733,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010087227759261927,
-      "gate_pred": -0.010087227759261927
+      "a5_conf": 0.015421563759446144,
+      "gate_pred": -0.015421563759446144
     },
     {
       "symbol": "TCB",
@@ -2006,8 +2006,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.023591386154294014,
-      "gate_pred": -0.023591386154294014
+      "a5_conf": 0.03016970803340276,
+      "gate_pred": -0.03016970803340276
     },
     {
       "symbol": "VCB",
@@ -2017,10 +2017,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015846054380138714,
-      "gate_pred": -0.015846054380138714
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.018331204541027546,
+      "gate_pred": -0.018331204541027546
     },
     {
       "symbol": "VPB",
@@ -2032,8 +2032,8 @@
       "a1_pred_ret": -0.015,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.011978523805737495,
-      "gate_pred": -0.011978523805737495
+      "a5_conf": 0.0028358399868011475,
+      "gate_pred": -0.0028358399868011475
     },
     {
       "symbol": "ACB",
@@ -2042,11 +2042,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015318111050873995,
-      "gate_pred": -0.015318111050873995
+      "a1_pred_ret": 0.013000000000000001,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.019743883050978184,
+      "gate_pred": -0.019743883050978184
     },
     {
       "symbol": "BID",
@@ -2058,8 +2058,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0003120776576300462,
-      "gate_pred": -0.0003120776576300462
+      "a5_conf": 0.000926213338971138,
+      "gate_pred": 0.000926213338971138
     },
     {
       "symbol": "CTG",
@@ -2071,21 +2071,21 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.016974827585120995,
-      "gate_pred": 0.016974827585120995
+      "a5_conf": 0.01574887599175175,
+      "gate_pred": 0.01574887599175175
     },
     {
       "symbol": "MBB",
       "date": "2025-09-15",
-      "truth": -0.026416629552841187,
+      "truth": -0.026689182966947556,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.007461283976833026,
-      "gate_pred": -0.007461283976833026
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02482763212174177,
+      "gate_pred": -0.02482763212174177
     },
     {
       "symbol": "TCB",
@@ -2093,12 +2093,12 @@
       "truth": 0.015202319249510765,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0015395290683954954,
-      "gate_pred": -0.0015395290683954954
+      "a5_conf": 0.0032504692984124026,
+      "gate_pred": 0.0032504692984124026
     },
     {
       "symbol": "VCB",
@@ -2110,8 +2110,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0026654150957862535,
-      "gate_pred": -0.0026654150957862535
+      "a5_conf": 0.00029985152650624514,
+      "gate_pred": 0.00029985152650624514
     },
     {
       "symbol": "VPB",
@@ -2121,10 +2121,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.010157409434517225,
-      "gate_pred": -0.010157409434517225
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.017073676300545532,
+      "gate_pred": -0.017073676300545532
     },
     {
       "symbol": "ACB",
@@ -2134,10 +2134,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017380271727840107,
-      "gate_pred": -0.017380271727840107
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.020178888303538162,
+      "gate_pred": -0.020178888303538162
     },
     {
       "symbol": "BID",
@@ -2146,11 +2146,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.008,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01045154578362902,
-      "gate_pred": -0.01045154578362902
+      "a5_conf": 0.01610160432755947,
+      "gate_pred": -0.01610160432755947
     },
     {
       "symbol": "CTG",
@@ -2162,21 +2162,21 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0053233797661960125,
-      "gate_pred": 0.0053233797661960125
+      "a5_conf": 4.4576978931824364e-05,
+      "gate_pred": -4.4576978931824364e-05
     },
     {
       "symbol": "MBB",
       "date": "2025-10-07",
-      "truth": 0.007421184331178665,
+      "truth": 0.007331694010645151,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.015049098990857601,
-      "gate_pred": -0.015049098990857601
+      "a5_conf": 0.016206664964556694,
+      "gate_pred": -0.016206664964556694
     },
     {
       "symbol": "TCB",
@@ -2184,12 +2184,12 @@
       "truth": -0.02302645333111286,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_conf": 0.6,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0026718339940998703,
-      "gate_pred": 0.0026718339940998703
+      "a5_conf": 0.01590083135912816,
+      "gate_pred": -0.01590083135912816
     },
     {
       "symbol": "VCB",
@@ -2201,8 +2201,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00033382861874997616,
-      "gate_pred": -0.00033382861874997616
+      "a5_conf": 0.001753155142068863,
+      "gate_pred": -0.001753155142068863
     },
     {
       "symbol": "VPB",
@@ -2214,8 +2214,8 @@
       "a1_pred_ret": -0.023,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.018368619494140148,
-      "gate_pred": 0.018368619494140148
+      "a5_conf": 0.033306951324145,
+      "gate_pred": 0.033306951324145
     },
     {
       "symbol": "ACB",
@@ -2227,8 +2227,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0001337730015317599,
-      "gate_pred": 0.0001337730015317599
+      "a5_conf": 0.0044421366571138305,
+      "gate_pred": -0.0044421366571138305
     },
     {
       "symbol": "BID",
@@ -2238,10 +2238,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.005011941306293011,
-      "gate_pred": -0.005011941306293011
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.022934939246624708,
+      "gate_pred": -0.022934939246624708
     },
     {
       "symbol": "CTG",
@@ -2253,21 +2253,21 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.027711815123135846,
-      "gate_pred": -0.027711815123135846
+      "a5_conf": 0.037935038873304926,
+      "gate_pred": -0.037935038873304926
     },
     {
       "symbol": "MBB",
       "date": "2025-11-04",
-      "truth": -0.03390154987573624,
+      "truth": -0.0339314341545105,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.014557744221140942,
-      "gate_pred": -0.014557744221140942
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.024483054818119854,
+      "gate_pred": -0.024483054818119854
     },
     {
       "symbol": "TCB",
@@ -2276,24 +2276,24 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.01,
+      "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00585592914527903,
-      "gate_pred": 0.00585592914527903
+      "a5_conf": 0.009511245157530842,
+      "gate_pred": 0.009511245157530842
     },
     {
       "symbol": "VCB",
       "date": "2025-10-16",
       "truth": -0.0505405031144619,
-      "a1_dir": "short",
-      "a1_sign": -1.0,
-      "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_dir": "abstain",
+      "a1_sign": 0.0,
+      "a1_conf": 0.4,
+      "a1_pred_ret": -0.0075,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.018892122743030388,
-      "gate_pred": -0.018892122743030388
+      "a5_conf": 0.02314526028931141,
+      "gate_pred": -0.02314526028931141
     },
     {
       "symbol": "VPB",
@@ -2305,8 +2305,8 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004013572819530964,
-      "gate_pred": 0.004013572819530964
+      "a5_conf": 0.009806277230381966,
+      "gate_pred": 0.009806277230381966
     },
     {
       "symbol": "ACB",
@@ -2315,11 +2315,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.013000000000000001,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010388067923486233,
-      "gate_pred": -0.010388067923486233
+      "a5_conf": 0.015733259730041027,
+      "gate_pred": -0.015733259730041027
     },
     {
       "symbol": "BID",
@@ -2329,10 +2329,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.011796195525676012,
-      "gate_pred": 0.011796195525676012
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.02815258951159194,
+      "gate_pred": 0.02815258951159194
     },
     {
       "symbol": "CTG",
@@ -2344,21 +2344,21 @@
       "a1_pred_ret": -0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007446016922282676,
-      "gate_pred": 0.007446016922282676
+      "a5_conf": 0.0013761956167096894,
+      "gate_pred": 0.0013761956167096894
     },
     {
       "symbol": "MBB",
       "date": "2025-11-12",
-      "truth": -0.008474626578390598,
+      "truth": -0.008371937088668346,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.007070539829631646,
-      "gate_pred": -0.007070539829631646
+      "a5_conf": 0.016040187639494736,
+      "gate_pred": -0.016040187639494736
     },
     {
       "symbol": "TCB",
@@ -2370,8 +2370,8 @@
       "a1_pred_ret": -0.008,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0009593230206519365,
-      "gate_pred": -0.0009593230206519365
+      "a5_conf": 0.0008303301098446051,
+      "gate_pred": -0.0008303301098446051
     },
     {
       "symbol": "VCB",
@@ -2383,8 +2383,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005279294913634658,
-      "gate_pred": -0.005279294913634658
+      "a5_conf": 0.009785224373141924,
+      "gate_pred": 0.009785224373141924
     },
     {
       "symbol": "VPB",
@@ -2396,8 +2396,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02817805918554465,
-      "gate_pred": -0.02817805918554465
+      "a5_conf": 0.030935277541478474,
+      "gate_pred": -0.030935277541478474
     },
     {
       "symbol": "ACB",
@@ -2407,10 +2407,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.018000000000000002,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017080453224480152,
-      "gate_pred": 0.017080453224480152
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.03073026581356923,
+      "gate_pred": 0.03073026581356923
     },
     {
       "symbol": "BID",
@@ -2422,8 +2422,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.023982449745138485,
-      "gate_pred": -0.023982449745138485
+      "a5_conf": 0.028422448163231213,
+      "gate_pred": -0.028422448163231213
     },
     {
       "symbol": "CTG",
@@ -2433,23 +2433,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.010691677685827017,
-      "gate_pred": -0.010691677685827017
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.022197587726016838,
+      "gate_pred": -0.022197587726016838
     },
     {
       "symbol": "MBB",
       "date": "2025-11-21",
-      "truth": 0.002152853412553668,
+      "truth": 0.0022386398632079363,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.008888868459810814,
-      "gate_pred": 0.008888868459810814
+      "a5_conf": 0.006318980284656088,
+      "gate_pred": 0.006318980284656088
     },
     {
       "symbol": "TCB",
@@ -2457,12 +2457,12 @@
       "truth": 0.057304028421640396,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.04313542818029722,
-      "gate_pred": -0.04313542818029722
+      "a5_conf": 0.04421353215972582,
+      "gate_pred": -0.04421353215972582
     },
     {
       "symbol": "VCB",
@@ -2474,8 +2474,8 @@
       "a1_pred_ret": -0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005813615629449487,
-      "gate_pred": 0.005813615629449487
+      "a5_conf": 0.01096108416095376,
+      "gate_pred": 0.01096108416095376
     },
     {
       "symbol": "VPB",
@@ -2487,8 +2487,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00586195084421585,
-      "gate_pred": 0.00586195084421585
+      "a5_conf": 0.008893372335781654,
+      "gate_pred": 0.008893372335781654
     },
     {
       "symbol": "ACB",
@@ -2498,10 +2498,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.025,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.016090511499593656,
-      "gate_pred": 0.016090511499593656
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.03514053843294581,
+      "gate_pred": 0.03514053843294581
     },
     {
       "symbol": "BID",
@@ -2513,8 +2513,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005759329178545158,
-      "gate_pred": -0.005759329178545158
+      "a5_conf": 0.009029986492047707,
+      "gate_pred": -0.009029986492047707
     },
     {
       "symbol": "CTG",
@@ -2523,24 +2523,24 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.0051433163074155646,
-      "gate_pred": 0.0051433163074155646
+      "a1_pred_ret": 0.01,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.020532831083983183,
+      "gate_pred": -0.020532831083983183
     },
     {
       "symbol": "MBB",
       "date": "2025-12-03",
-      "truth": 0.02414604276418686,
+      "truth": 0.02385549433529377,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0028329558748131,
-      "gate_pred": -0.0028329558748131
+      "a5_conf": 0.003265515435487032,
+      "gate_pred": -0.003265515435487032
     },
     {
       "symbol": "TCB",
@@ -2552,8 +2552,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.006890960192928712,
-      "gate_pred": 0.006890960192928712
+      "a5_conf": 0.0006942259302983681,
+      "gate_pred": 0.0006942259302983681
     },
     {
       "symbol": "VCB",
@@ -2565,8 +2565,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0013332090650995572,
-      "gate_pred": -0.0013332090650995572
+      "a5_conf": 0.005579598558445771,
+      "gate_pred": -0.005579598558445771
     },
     {
       "symbol": "VPB",
@@ -2576,10 +2576,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.018000000000000002,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.008533740105728308,
-      "gate_pred": -0.008533740105728308
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.017345905303955078,
+      "gate_pred": -0.017345905303955078
     },
     {
       "symbol": "ACB",
@@ -2591,8 +2591,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.033468869825204216,
-      "gate_pred": -0.033468869825204216
+      "a5_conf": 0.036560557782649994,
+      "gate_pred": -0.036560557782649994
     },
     {
       "symbol": "BID",
@@ -2604,8 +2604,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.025504794903099537,
-      "gate_pred": 0.025504794903099537
+      "a5_conf": 0.02345336073388656,
+      "gate_pred": 0.02345336073388656
     },
     {
       "symbol": "CTG",
@@ -2614,24 +2614,24 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.008177580622335276,
-      "gate_pred": -0.008177580622335276
+      "a1_pred_ret": 0.01,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.029750455791751545,
+      "gate_pred": -0.029750455791751545
     },
     {
       "symbol": "MBB",
       "date": "2025-12-11",
-      "truth": -0.008080852217972279,
+      "truth": -0.00798491295427084,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.026357586806019146,
-      "gate_pred": 0.026357586806019146
+      "a5_conf": 0.02327991897861163,
+      "gate_pred": 0.02327991897861163
     },
     {
       "symbol": "TCB",
@@ -2643,8 +2643,8 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.01861913005510966,
-      "gate_pred": -0.01861913005510966
+      "a5_conf": 0.027953458329041798,
+      "gate_pred": -0.027953458329041798
     },
     {
       "symbol": "VCB",
@@ -2656,8 +2656,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.008960799624522528,
-      "gate_pred": -0.008960799624522528
+      "a5_conf": 0.010991993049780527,
+      "gate_pred": -0.010991993049780527
     },
     {
       "symbol": "VPB",
@@ -2666,11 +2666,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.013000000000000001,
+      "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0036120503209531307,
-      "gate_pred": -0.0036120503209531307
+      "a5_conf": 0.00670167594216764,
+      "gate_pred": -0.00670167594216764
     },
     {
       "symbol": "ACB",
@@ -2682,8 +2682,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.014135874497393766,
-      "gate_pred": 0.014135874497393766
+      "a5_conf": 0.013032733152310053,
+      "gate_pred": 0.013032733152310053
     },
     {
       "symbol": "BID",
@@ -2695,8 +2695,8 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0018920199557517965,
-      "gate_pred": -0.0018920199557517965
+      "a5_conf": 0.0031041770125739276,
+      "gate_pred": -0.0031041770125739276
     },
     {
       "symbol": "CTG",
@@ -2705,11 +2705,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.015,
+      "a1_pred_ret": 0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.023007727538545925,
-      "gate_pred": -0.023007727538545925
+      "a5_conf": 0.025316163276632626,
+      "gate_pred": -0.025316163276632626
     },
     {
       "symbol": "MBB",
@@ -2717,12 +2717,12 @@
       "truth": 0.0,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.008407949159542719,
-      "gate_pred": -0.008407949159542719
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.021045001223683357,
+      "gate_pred": -0.021045001223683357
     },
     {
       "symbol": "TCB",
@@ -2734,8 +2734,8 @@
       "a1_pred_ret": -0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0012377901778866847,
-      "gate_pred": 0.0012377901778866847
+      "a5_conf": 0.0035660266876220703,
+      "gate_pred": -0.0035660266876220703
     },
     {
       "symbol": "VCB",
@@ -2744,11 +2744,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.018000000000000002,
+      "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0008927861539026102,
-      "gate_pred": 0.0008927861539026102
+      "a5_conf": 0.001356100042661031,
+      "gate_pred": -0.001356100042661031
     },
     {
       "symbol": "VPB",
@@ -2760,8 +2760,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.013777474562327066,
-      "gate_pred": 0.013777474562327066
+      "a5_conf": 0.007439937597761552,
+      "gate_pred": 0.007439937597761552
     },
     {
       "symbol": "ACB",
@@ -2773,8 +2773,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004444176171091385,
-      "gate_pred": -0.004444176171091385
+      "a5_conf": 0.007377541405730881,
+      "gate_pred": -0.007377541405730881
     },
     {
       "symbol": "BID",
@@ -2786,8 +2786,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.021387049928307533,
-      "gate_pred": -0.021387049928307533
+      "a5_conf": 0.0222984538510597,
+      "gate_pred": -0.0222984538510597
     },
     {
       "symbol": "CTG",
@@ -2799,21 +2799,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.01963232271373272,
-      "gate_pred": -0.01963232271373272
+      "a5_conf": 0.028365249435106914,
+      "gate_pred": -0.028365249435106914
     },
     {
       "symbol": "MBB",
       "date": "2025-12-29",
-      "truth": 0.07180581241846085,
+      "truth": 0.07186303287744522,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.001588204696114796,
-      "gate_pred": -0.001588204696114796
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01673551128866772,
+      "gate_pred": -0.01673551128866772
     },
     {
       "symbol": "TCB",
@@ -2823,10 +2823,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.010841140911603967,
-      "gate_pred": -0.010841140911603967
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02614971933265527,
+      "gate_pred": -0.02614971933265527
     },
     {
       "symbol": "VCB",
@@ -2838,8 +2838,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01368906923259298,
-      "gate_pred": 0.01368906923259298
+      "a5_conf": 0.00988064895500429,
+      "gate_pred": 0.00988064895500429
     },
     {
       "symbol": "VPB",
@@ -2851,8 +2851,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02101970836520195,
-      "gate_pred": -0.02101970836520195
+      "a5_conf": 0.019399982566634815,
+      "gate_pred": -0.019399982566634815
     },
     {
       "symbol": "ACB",
@@ -2864,8 +2864,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.009538934178029498,
-      "gate_pred": 0.009538934178029498
+      "a5_conf": 0.004789359176963141,
+      "gate_pred": 0.004789359176963141
     },
     {
       "symbol": "BID",
@@ -2877,8 +2877,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0017484969769914944,
-      "gate_pred": -0.0017484969769914944
+      "a5_conf": 0.003702337620779872,
+      "gate_pred": -0.003702337620779872
     },
     {
       "symbol": "CTG",
@@ -2890,21 +2890,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00018119113519787788,
-      "gate_pred": 0.00018119113519787788
+      "a5_conf": 0.001635262044146657,
+      "gate_pred": -0.001635262044146657
     },
     {
       "symbol": "MBB",
       "date": "2026-01-20",
-      "truth": -0.033398281782865524,
+      "truth": -0.03357444331049919,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.009176263430466255,
-      "gate_pred": -0.009176263430466255
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01808197454859813,
+      "gate_pred": -0.01808197454859813
     },
     {
       "symbol": "TCB",
@@ -2914,10 +2914,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01011990817884604,
-      "gate_pred": -0.01011990817884604
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.022658615683515865,
+      "gate_pred": -0.022658615683515865
     },
     {
       "symbol": "VCB",
@@ -2929,8 +2929,8 @@
       "a1_pred_ret": -0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012290202702085177,
-      "gate_pred": 0.012290202702085177
+      "a5_conf": 0.0007307116563121477,
+      "gate_pred": -0.0007307116563121477
     },
     {
       "symbol": "VPB",
@@ -2942,8 +2942,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.002041397150605917,
-      "gate_pred": 0.002041397150605917
+      "a5_conf": 0.00498432790239652,
+      "gate_pred": 0.00498432790239652
     },
     {
       "symbol": "ACB",
@@ -2955,8 +2955,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0003844671882688999,
-      "gate_pred": 0.0003844671882688999
+      "a5_conf": 0.0002812838841540118,
+      "gate_pred": 0.0002812838841540118
     },
     {
       "symbol": "BID",
@@ -2966,10 +2966,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": -0.012,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.020110023207962513,
-      "gate_pred": 0.020110023207962513
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.00920815688247482,
+      "gate_pred": 0.00920815688247482
     },
     {
       "symbol": "CTG",
@@ -2981,21 +2981,21 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.002726699924096465,
-      "gate_pred": 0.002726699924096465
+      "a5_conf": 0.010543299450849494,
+      "gate_pred": -0.010543299450849494
     },
     {
       "symbol": "MBB",
       "date": "2026-02-25",
-      "truth": -0.06465446949005127,
+      "truth": -0.06463500112295151,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.01878805986295144,
-      "gate_pred": -0.01878805986295144
+      "a5_conf": 0.030022746572891872,
+      "gate_pred": -0.030022746572891872
     },
     {
       "symbol": "TCB",
@@ -3005,10 +3005,10 @@
       "a1_sign": 0.0,
       "a1_conf": 0.3,
       "a1_pred_ret": -0.005,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.032153939828276634,
-      "gate_pred": 0.032153939828276634
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.01530097300807635,
+      "gate_pred": 0.01530097300807635
     },
     {
       "symbol": "VCB",
@@ -3017,11 +3017,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01574544523221751,
-      "gate_pred": -0.01574544523221751
+      "a1_pred_ret": 0.013000000000000001,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.019714307350416977,
+      "gate_pred": -0.019714307350416977
     },
     {
       "symbol": "VPB",
@@ -3033,8 +3033,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.008755051327170804,
-      "gate_pred": 0.008755051327170804
+      "a5_conf": 0.011701746262891296,
+      "gate_pred": 0.011701746262891296
     },
     {
       "symbol": "ACB",
@@ -3042,12 +3042,12 @@
       "truth": -0.010597401298582554,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0020365494419820607,
-      "gate_pred": -0.0020365494419820607
+      "a5_conf": 0.000298034855707859,
+      "gate_pred": 0.000298034855707859
     },
     {
       "symbol": "BID",
@@ -3057,10 +3057,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.008,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.02131832391023636,
-      "gate_pred": 0.02131832391023636
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.013487395558816692,
+      "gate_pred": 0.013487395558816692
     },
     {
       "symbol": "CTG",
@@ -3070,23 +3070,23 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.013148561120033264,
-      "gate_pred": 0.013148561120033264
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.021636143156986993,
+      "gate_pred": 0.021636143156986993
     },
     {
       "symbol": "MBB",
       "date": "2026-02-26",
-      "truth": -0.06268838047981262,
+      "truth": -0.06259025633335114,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01636599066356818,
-      "gate_pred": -0.01636599066356818
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.027443834270040195,
+      "gate_pred": -0.027443834270040195
     },
     {
       "symbol": "TCB",
@@ -3096,10 +3096,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.013790499729414782,
-      "gate_pred": -0.013790499729414782
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.023252020279566448,
+      "gate_pred": -0.023252020279566448
     },
     {
       "symbol": "VCB",
@@ -3107,12 +3107,12 @@
       "truth": -0.012596387416124344,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": 0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.020153437741100788,
-      "gate_pred": -0.020153437741100788
+      "a5_conf": 0.025064024453361828,
+      "gate_pred": -0.025064024453361828
     },
     {
       "symbol": "VPB",
@@ -3124,8 +3124,8 @@
       "a1_pred_ret": -0.006,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.011935908793626973,
-      "gate_pred": 0.011935908793626973
+      "a5_conf": 0.003465679163734118,
+      "gate_pred": 0.003465679163734118
     },
     {
       "symbol": "ACB",
@@ -3137,8 +3137,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.016061927191913128,
-      "gate_pred": 0.016061927191913128
+      "a5_conf": 0.01070126712632676,
+      "gate_pred": 0.01070126712632676
     },
     {
       "symbol": "BID",
@@ -3150,8 +3150,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.0343757209678491,
-      "gate_pred": 0.0343757209678491
+      "a5_conf": 0.020080504783739645,
+      "gate_pred": 0.020080504783739645
     },
     {
       "symbol": "CTG",
@@ -3163,21 +3163,21 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004009968368336558,
-      "gate_pred": 0.004009968368336558
+      "a5_conf": 0.0027855743343631425,
+      "gate_pred": 0.0027855743343631425
     },
     {
       "symbol": "MBB",
       "date": "2026-03-04",
-      "truth": -0.0055814096704125404,
+      "truth": -0.005417970009148121,
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.00037938841463377077,
-      "gate_pred": 0.00037938841463377077
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.020625133377810318,
+      "gate_pred": -0.020625133377810318
     },
     {
       "symbol": "TCB",
@@ -3189,8 +3189,8 @@
       "a1_pred_ret": 0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0006728046185647448,
-      "gate_pred": -0.0006728046185647448
+      "a5_conf": 0.005332266679033637,
+      "gate_pred": -0.005332266679033637
     },
     {
       "symbol": "VCB",
@@ -3202,8 +3202,8 @@
       "a1_pred_ret": 0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.023479178547859192,
-      "gate_pred": -0.023479178547859192
+      "a5_conf": 0.030423248186707497,
+      "gate_pred": -0.030423248186707497
     },
     {
       "symbol": "VPB",
@@ -3215,8 +3215,8 @@
       "a1_pred_ret": -0.005,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.015314149282251796,
-      "gate_pred": 0.015314149282251796
+      "a5_conf": 0.003379563723380367,
+      "gate_pred": 0.003379563723380367
     },
     {
       "symbol": "ACB",
@@ -3228,8 +3228,8 @@
       "a1_pred_ret": -0.0075,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005294306591774027,
-      "gate_pred": 0.005294306591774027
+      "a5_conf": 0.004281161352992058,
+      "gate_pred": 0.004281161352992058
     },
     {
       "symbol": "BID",
@@ -3241,8 +3241,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.039434862012664475,
-      "gate_pred": 0.039434862012664475
+      "a5_conf": 0.038751937448978424,
+      "gate_pred": 0.038751937448978424
     },
     {
       "symbol": "CTG",
@@ -3254,21 +3254,21 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.006609273060651806,
-      "gate_pred": -0.006609273060651806
+      "a5_conf": 0.015656723589927424,
+      "gate_pred": -0.015656723589927424
     },
     {
       "symbol": "MBB",
       "date": "2026-03-06",
-      "truth": -0.020814374089241028,
+      "truth": -0.020862791687250137,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.4,
+      "a1_conf": 0.7,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.007218130514957011,
-      "gate_pred": -0.007218130514957011
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02343166572973132,
+      "gate_pred": -0.02343166572973132
     },
     {
       "symbol": "TCB",
@@ -3278,10 +3278,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.008707098585243026,
-      "gate_pred": 0.008707098585243026
+      "a5_trade": true,
+      "a5_sign": 1.0,
+      "a5_conf": 0.01729664406351124,
+      "gate_pred": 0.01729664406351124
     },
     {
       "symbol": "VCB",
@@ -3293,8 +3293,8 @@
       "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010117327483991781,
-      "gate_pred": -0.010117327483991781
+      "a5_conf": 0.01341252614899228,
+      "gate_pred": -0.01341252614899228
     },
     {
       "symbol": "VPB",
@@ -3304,10 +3304,10 @@
       "a1_sign": 0.0,
       "a1_conf": 0.3,
       "a1_pred_ret": -0.0075,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.005998305045068264,
-      "gate_pred": -0.005998305045068264
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01917963878562053,
+      "gate_pred": -0.01917963878562053
     },
     {
       "symbol": "ACB",
@@ -3319,8 +3319,8 @@
       "a1_pred_ret": 0.004,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.00666364134910206,
-      "gate_pred": 0.00666364134910206
+      "a5_conf": 0.007979306392371655,
+      "gate_pred": -0.007979306392371655
     },
     {
       "symbol": "BID",
@@ -3329,11 +3329,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.01319800317287445,
-      "gate_pred": -0.01319800317287445
+      "a1_pred_ret": 0.015,
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.021702670802672703,
+      "gate_pred": -0.021702670802672703
     },
     {
       "symbol": "CTG",
@@ -3345,21 +3345,21 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004880240187048912,
-      "gate_pred": -0.004880240187048912
+      "a5_conf": 0.01171129165838162,
+      "gate_pred": -0.01171129165838162
     },
     {
       "symbol": "MBB",
       "date": "2026-03-09",
-      "truth": 0.04907756298780441,
+      "truth": 0.04940788447856903,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": -0.018000000000000002,
+      "a1_pred_ret": -0.02,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005296241492033005,
-      "gate_pred": -0.005296241492033005
+      "a5_conf": 0.010861223718772331,
+      "gate_pred": -0.010861223718772331
     },
     {
       "symbol": "TCB",
@@ -3371,8 +3371,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.013125710577393571,
-      "gate_pred": -0.013125710577393571
+      "a5_conf": 0.012967490513498584,
+      "gate_pred": -0.012967490513498584
     },
     {
       "symbol": "VCB",
@@ -3384,8 +3384,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.01777428186809023,
-      "gate_pred": 0.01777428186809023
+      "a5_conf": 0.008142018089226136,
+      "gate_pred": 0.008142018089226136
     },
     {
       "symbol": "VPB",
@@ -3393,12 +3393,12 @@
       "truth": -0.014184635132551193,
       "a1_dir": "long",
       "a1_sign": 1.0,
-      "a1_conf": 0.6,
+      "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.020704480198522408,
-      "gate_pred": -0.020704480198522408
+      "a5_conf": 0.03151383499304453,
+      "gate_pred": -0.03151383499304453
     },
     {
       "symbol": "ACB",
@@ -3410,8 +3410,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": 1.0,
-      "a5_conf": 0.04819680626193682,
-      "gate_pred": 0.04819680626193682
+      "a5_conf": 0.03506347304210067,
+      "gate_pred": 0.03506347304210067
     },
     {
       "symbol": "BID",
@@ -3423,8 +3423,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0059135120051602525,
-      "gate_pred": -0.0059135120051602525
+      "a5_conf": 0.012872932168344656,
+      "gate_pred": -0.012872932168344656
     },
     {
       "symbol": "CTG",
@@ -3433,24 +3433,24 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": -0.012,
+      "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0048058263103788095,
-      "gate_pred": 0.0048058263103788095
+      "a5_conf": 0.011431315680965781,
+      "gate_pred": -0.011431315680965781
     },
     {
       "symbol": "MBB",
       "date": "2026-03-10",
-      "truth": -0.007561472710222006,
+      "truth": -0.007470056414604187,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.017306096230943997,
-      "gate_pred": -0.017306096230943997
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.02242878172546625,
+      "gate_pred": -0.02242878172546625
     },
     {
       "symbol": "TCB",
@@ -3460,10 +3460,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.0175,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.020133863125617307,
-      "gate_pred": 0.020133863125617307
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 3.125231402615706e-05,
+      "gate_pred": 3.125231402615706e-05
     },
     {
       "symbol": "VCB",
@@ -3473,10 +3473,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.7,
       "a1_pred_ret": 0.01,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.02205636476476987,
-      "gate_pred": 0.02205636476476987
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.01351766559916238,
+      "gate_pred": 0.01351766559916238
     },
     {
       "symbol": "VPB",
@@ -3486,10 +3486,10 @@
       "a1_sign": 1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": 0.012,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.010341418907046318,
-      "gate_pred": -0.010341418907046318
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.020173591561615467,
+      "gate_pred": -0.020173591561615467
     },
     {
       "symbol": "ACB",
@@ -3501,8 +3501,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.014535188054045042,
-      "gate_pred": -0.014535188054045042
+      "a5_conf": 0.01589826059838136,
+      "gate_pred": -0.01589826059838136
     },
     {
       "symbol": "BID",
@@ -3514,8 +3514,8 @@
       "a1_pred_ret": 0.01,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.009109698546429476,
-      "gate_pred": -0.009109698546429476
+      "a5_conf": 0.009573079723243913,
+      "gate_pred": -0.009573079723243913
     },
     {
       "symbol": "CTG",
@@ -3523,25 +3523,25 @@
       "truth": -0.04738862067461014,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.6,
-      "a1_pred_ret": -0.018000000000000002,
+      "a1_conf": 0.7,
+      "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005871250759810209,
-      "gate_pred": 0.005871250759810209
+      "a5_conf": 0.006651939048121373,
+      "gate_pred": -0.006651939048121373
     },
     {
       "symbol": "MBB",
       "date": "2026-03-11",
-      "truth": -0.018832948058843613,
+      "truth": -0.018801964819431305,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.012,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.02014771228035291,
-      "gate_pred": -0.02014771228035291
+      "a5_conf": 0.0263501579562823,
+      "gate_pred": -0.0263501579562823
     },
     {
       "symbol": "TCB",
@@ -3551,10 +3551,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.023,
-      "a5_trade": true,
-      "a5_sign": 1.0,
-      "a5_conf": 0.019820273698618013,
-      "gate_pred": 0.019820273698618013
+      "a5_trade": false,
+      "a5_sign": 0.0,
+      "a5_conf": 0.0058433642916497774,
+      "gate_pred": 0.0058433642916497774
     },
     {
       "symbol": "VCB",
@@ -3563,11 +3563,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.018000000000000002,
+      "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0017808035966785003,
-      "gate_pred": 0.0017808035966785003
+      "a5_conf": 0.016234131219486397,
+      "gate_pred": -0.016234131219486397
     },
     {
       "symbol": "VPB",
@@ -3579,8 +3579,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.005456101925422748,
-      "gate_pred": 0.005456101925422748
+      "a5_conf": 0.0009215411264449358,
+      "gate_pred": -0.0009215411264449358
     },
     {
       "symbol": "ACB",
@@ -3589,11 +3589,11 @@
       "a1_dir": "long",
       "a1_sign": 1.0,
       "a1_conf": 0.7,
-      "a1_pred_ret": 0.01,
+      "a1_pred_ret": 0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0003044436840961377,
-      "gate_pred": -0.0003044436840961377
+      "a5_conf": 0.0059655215591192245,
+      "gate_pred": -0.0059655215591192245
     },
     {
       "symbol": "BID",
@@ -3605,8 +3605,8 @@
       "a1_pred_ret": 0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.006477392433832089,
-      "gate_pred": -0.006477392433832089
+      "a5_conf": 0.005611210906257232,
+      "gate_pred": -0.005611210906257232
     },
     {
       "symbol": "CTG",
@@ -3616,23 +3616,23 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.015341429350276789,
-      "gate_pred": -0.015341429350276789
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01937743028004964,
+      "gate_pred": -0.01937743028004964
     },
     {
       "symbol": "MBB",
       "date": "2026-03-16",
-      "truth": -0.043059490621089935,
+      "truth": -0.04314873740077019,
       "a1_dir": "short",
       "a1_sign": -1.0,
-      "a1_conf": 0.7,
+      "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": true,
       "a5_sign": -1.0,
-      "a5_conf": 0.023466981016099453,
-      "gate_pred": -0.023466981016099453
+      "a5_conf": 0.024848449043929577,
+      "gate_pred": -0.024848449043929577
     },
     {
       "symbol": "TCB",
@@ -3644,8 +3644,8 @@
       "a1_pred_ret": -0.025,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.010393286201482018,
-      "gate_pred": 0.010393286201482018
+      "a5_conf": 0.011094096659993133,
+      "gate_pred": 0.011094096659993133
     },
     {
       "symbol": "VCB",
@@ -3654,11 +3654,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_pred_ret": -0.02,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.009235016797902063,
-      "gate_pred": 0.009235016797902063
+      "a5_conf": 0.007299041918789347,
+      "gate_pred": -0.007299041918789347
     },
     {
       "symbol": "VPB",
@@ -3667,11 +3667,11 @@
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0037295850149045386,
-      "gate_pred": 0.0037295850149045386
+      "a5_conf": 0.0006435257382690907,
+      "gate_pred": 0.0006435257382690907
     },
     {
       "symbol": "ACB",
@@ -3683,8 +3683,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0022373178386866734,
-      "gate_pred": 0.0022373178386866734
+      "a5_conf": 0.008820086096723875,
+      "gate_pred": -0.008820086096723875
     },
     {
       "symbol": "BID",
@@ -3694,10 +3694,10 @@
       "a1_sign": -1.0,
       "a1_conf": 0.6,
       "a1_pred_ret": -0.013000000000000001,
-      "a5_trade": false,
-      "a5_sign": 0.0,
-      "a5_conf": 0.002194373169913888,
-      "gate_pred": -0.002194373169913888
+      "a5_trade": true,
+      "a5_sign": -1.0,
+      "a5_conf": 0.01807608858992656,
+      "gate_pred": -0.01807608858992656
     },
     {
       "symbol": "CTG",
@@ -3709,21 +3709,21 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.012020146163801352,
-      "gate_pred": -0.012020146163801352
+      "a5_conf": 0.013806937883297602,
+      "gate_pred": -0.013806937883297602
     },
     {
       "symbol": "MBB",
       "date": "2026-03-20",
-      "truth": 0.0076775806955993176,
+      "truth": 0.007586380932480097,
       "a1_dir": "short",
       "a1_sign": -1.0,
       "a1_conf": 0.6,
-      "a1_pred_ret": -0.012,
+      "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0069040954889108734,
-      "gate_pred": -0.0069040954889108734
+      "a5_conf": 0.003138617922862371,
+      "gate_pred": -0.003138617922862371
     },
     {
       "symbol": "TCB",
@@ -3735,8 +3735,8 @@
       "a1_pred_ret": -0.012,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.017556874081492424,
-      "gate_pred": -0.017556874081492424
+      "a5_conf": 0.015800272425015766,
+      "gate_pred": -0.015800272425015766
     },
     {
       "symbol": "VCB",
@@ -3748,8 +3748,8 @@
       "a1_pred_ret": -0.018000000000000002,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.0071076190409560995,
-      "gate_pred": -0.0071076190409560995
+      "a5_conf": 0.006779357635726531,
+      "gate_pred": -0.006779357635726531
     },
     {
       "symbol": "VPB",
@@ -3761,8 +3761,8 @@
       "a1_pred_ret": -0.013000000000000001,
       "a5_trade": false,
       "a5_sign": 0.0,
-      "a5_conf": 0.004780463214653234,
-      "gate_pred": -0.004780463214653234
+      "a5_conf": 0.003919992518300812,
+      "gate_pred": -0.003919992518300812
     }
   ]
 }

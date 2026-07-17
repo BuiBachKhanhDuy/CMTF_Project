@@ -38,6 +38,7 @@ class CMTFDataset(Dataset):
         horizon: int = 1,
         target_horizon_days: int = 1,
         news_representation: str = "text",
+        allow_missing_target: bool = False,
     ) -> None:
         self.sequence_len = int(sequence_len)
         self.horizon = int(horizon)
@@ -70,9 +71,15 @@ class CMTFDataset(Dataset):
 
         # --------------------------------------------------
         # ✅ CRITICAL FIX: drop invalid targets FIRST
+        # (skipped when allow_missing_target=True — live inference needs the most
+        # recent rows precisely BECAUSE their target is NaN; the future hasn't
+        # happened yet, so there's no label to require. See run_pipeline's own
+        # allow_missing_target for the full rationale — this is the same escape
+        # hatch, needed here too since this filter is independent of that one.)
         # --------------------------------------------------
-        valid_mask = np.isfinite(df[self.target_col])
-        df = df.loc[valid_mask].reset_index(drop=True)
+        if not allow_missing_target:
+            valid_mask = np.isfinite(df[self.target_col])
+            df = df.loc[valid_mask].reset_index(drop=True)
 
         if len(df) == 0:
             raise ValueError("All rows removed after filtering invalid targets")

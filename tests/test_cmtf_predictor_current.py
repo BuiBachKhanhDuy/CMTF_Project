@@ -113,6 +113,53 @@ class TestHybridFusionPredictorCurrent:
         )
 
 
+class TestPredictWithAttention:
+    """`predict_with_attention` exposes the already-computed internal attention/
+    recency-gate tensors — this locks the tensor-plumbing (shape, finiteness), not
+    the model's training behavior (covered by TestHybridFusionPredictorCurrent)."""
+
+    def test_returns_finite_per_day_attention_and_recency_gate(self):
+        market, news, mask, target = _make_data()
+        model = _make_model(use_two_stage=False)
+        model.fit(
+            market, news, target, market, news, target,
+            news_mask_train=mask, news_mask_val=mask,
+            epochs=2, batch_size=8, patience=2, skip_encoder_fit=True,
+        )
+        pred, attn, recency = model.predict_with_attention(market[:1], news[:1], mask[:1])
+        assert pred.shape == (1,)
+        assert attn is not None and attn.shape == (1, 6)  # (B, seq_len)
+        assert np.isfinite(attn).all()
+        assert np.all(attn >= 0.0)  # attention weights are non-negative
+        assert recency is not None and recency.shape == (1, 6)
+        assert np.isfinite(recency).all()
+        assert np.all((recency >= 0.0) & (recency <= 1.0))  # sigmoid gate
+
+    def test_rejects_batches_larger_than_256(self):
+        model = _make_model(use_two_stage=False)
+        model.is_fitted = True  # bypass fit for this pure input-validation check
+        big_market = np.zeros((257, 6, 4), dtype=np.float32)
+        big_news = np.zeros((257, 6, 16), dtype=np.float32)
+        with pytest.raises(ValueError, match="256"):
+            model.predict_with_attention(big_market, big_news)
+
+    def test_no_cross_attention_returns_none(self):
+        model = HybridFusionPredictor(
+            market_encoder=_TinyMarketEncoder(input_dim=4), raw_news_dim=16,
+            projected_news_dim=8, fusion_market_dim=8, fusion_hidden_dim=8, n_heads=2,
+            dropout=0.0, seq_len=6, output_mode="anchored_fusion", use_cross_attention=False,
+            market_epochs=2, fusion_epochs=2, market_patience=2, fusion_patience=2, device="cpu",
+        )
+        market, news, mask, target = _make_data()
+        model.fit(
+            market, news, target, market, news, target,
+            news_mask_train=mask, news_mask_val=mask,
+            epochs=2, batch_size=8, patience=2, skip_encoder_fit=True,
+        )
+        _pred, attn, _recency = model.predict_with_attention(market[:1], news[:1], mask[:1])
+        assert attn is None  # honestly absent, never fabricated
+
+
 class TestStatisticalHelpersStillWork:
     def test_metrics_and_significance_helpers(self):
         rng = np.random.default_rng(7)

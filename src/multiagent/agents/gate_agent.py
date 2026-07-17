@@ -32,7 +32,8 @@ def gate_agent_node(
 
     Reads: gate_pred, target_horizon_days, artifact_versions
     Writes: gated_action, position_scale, gate_tau, gate_coverage, gate_val_score,
-            gate_reason, node_timings
+            gate_disclosure_da_pct, gate_disclosure_base_rate_pct, gate_reason,
+            node_timings, warnings
     """
     cfg = config or DEFAULT_CONFIG
     t0 = time.time()
@@ -65,6 +66,15 @@ def gate_agent_node(
             f"@ size={position_scale:+.2f}"
         )
 
+    disclosure_da = meta.get("val_gated_DA%")
+    disclosure_base_rate = meta.get("val_base_rate_DA%")
+    warnings = []
+    if disclosure_da is None or disclosure_base_rate is None:
+        warnings.append(
+            f"gate: {path} has no honest disclosure numbers (schema predates v2) — "
+            f"recalibrate (`python -m src.multiagent calibrate --horizon {horizon}`)"
+        )
+
     elapsed = time.time() - t0
     logger.info(
         "GateAgent | pred={:+.4f} tau={:.4f} cov={:.2f} → {} size={:+.2f} | {:.4f}s",
@@ -77,7 +87,10 @@ def gate_agent_node(
         "gate_tau": tau,
         "gate_coverage": policy.coverage,
         "gate_val_score": policy.val_score,
+        "gate_disclosure_da_pct": disclosure_da,
+        "gate_disclosure_base_rate_pct": disclosure_base_rate,
         "gate_reason": reason,
         "artifact_versions": {"gate_policy": f"{meta.get('config_hash')}@cov{meta.get('calibration_coverage')}"},
+        "warnings": warnings,
         "node_timings": {"gate_agent": elapsed},
     }

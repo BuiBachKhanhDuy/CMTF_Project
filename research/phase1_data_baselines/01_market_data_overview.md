@@ -66,9 +66,10 @@ date but it did not. Section 3.2 discusses the one symbol with a gap (`ACB`).
 the normalized cache by inverse-transforming through the persisted per-symbol `StandardScaler`
 (Section 4.6 explains why this step is necessary). All seven series show the March 2020 COVID-19
 drawdown, a consolidation through 2022–2023, and a strong re-rating into 2025–2026, with VCB
-trading at the highest absolute price level and CTG/TCB/MBB/ACB/VPB clustered at lower absolute
-levels — consistent with known relative valuations of Vietnamese state-owned vs. joint-stock
-banks over this period.*
+trading at the highest absolute price level, BID second-highest (a middle tier clearly separate
+from both VCB and the rest), and CTG/TCB/MBB/ACB/VPB clustered at lower absolute levels —
+consistent with known relative valuations of Vietnamese state-owned vs. joint-stock banks over
+this period.*
 
 ## 3. Data Sources and Collection Methodology
 
@@ -262,6 +263,13 @@ total usable samples.*
 | 1D | 7,828 | 903 | 2,135 | 72.0% | 8.3% | 19.6% |
 | 5D | 7,800 | 875 | 2,107 | 72.3% | 8.1% | 19.5% |
 | 20D | 7,695 | 770 | 2,002 | 73.5% | 7.4% | 19.1% |
+
+*Train counts reproduce exactly from the cached dataset parquet and the documented
+split algorithm. Val/test counts are each ~7 rows (1 per symbol) higher here than an
+independent reproduction attempt using the same algorithm, consistent with a boundary
+tie-break near a split-date cutoff not fully captured in this document's prose — a
+~0.3%-of-sample discrepancy that doesn't affect any conclusion drawn from this table,
+but is disclosed rather than silently rounded away.*
 
 The small monotonic decrease in total usable samples as the horizon grows (10,866 → 10,782 →
 10,467 pooled across splits, out of 10,880 raw rows) is expected: longer horizons both drop more

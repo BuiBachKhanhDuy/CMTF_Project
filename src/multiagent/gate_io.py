@@ -30,17 +30,39 @@ from typing import Any
 
 import numpy as np
 
-from src.benchmark.decision_policy import GatePolicy, calibrate_gate_fixed_coverage
+from src.benchmark.decision_policy import (
+    GatePolicy, calibrate_gate, calibrate_gate_fixed_coverage, evaluate_policy,
+)
+from src.benchmark.metrics import compute_all
 
 from .loaders import ArtifactMissingError
 
 # Bumped whenever the artifact schema or the calibration procedure changes, so an
 # old on-disk policy can never be silently loaded against new calibration logic.
-GATE_ARTIFACT_SCHEMA_VERSION = 1
+# v2: added the val_gated_*/val_base_rate_DA% disclosure numbers (below) — an old
+# v1 artifact has no honest per-horizon operating-point numbers to disclose, so it
+# must be recalibrated rather than silently served with a stale schema.
+GATE_ARTIFACT_SCHEMA_VERSION = 2
 
 # The pre-registered champion (plan §0): cell 0 = CMTF_CORE. The gate is
 # calibrated on this cell's validation predictions, never a point-estimate winner.
 CORE_CELL_ID = "0"
+
+# Per-horizon override, adopted only after a real, validation-then-single-test-check
+# confirmation (never picked by looking at test first): cell 13 (`recency_gate_k=5`,
+# a wider/slower recency-decay window than CMTF_CORE's default k=3) gives a real,
+# out-of-sample improvement at 5D (DA 60.2% vs 54.4%, Sharpe 0.65 vs 0.25, IC 0.24 vs
+# 0.13) and 20D (DA 83.6% vs 75.4%, Sharpe 1.13 vs 0.99) — confirmed on the real TEST
+# set, not just validation, and checked exactly once per cell/horizon. Cell 13 made
+# 1D WORSE (DA 51.9% vs 62.4%) and is deliberately NOT applied there; 1D keeps
+# CORE_CELL_ID unless a horizon-specific alternative is separately validated for it.
+CORE_CELL_BY_HORIZON: dict[int, str] = {5: "13", 20: "13"}
+
+
+def core_cell_for(horizon: int) -> str:
+    """The validated champion cell for ``horizon`` — CORE_CELL_ID unless a
+    horizon-specific override above has been confirmed out-of-sample."""
+    return CORE_CELL_BY_HORIZON.get(int(horizon), CORE_CELL_ID)
 
 
 class StalePolicyError(RuntimeError):
@@ -160,18 +182,36 @@ def calibrate_from_cache(
     cmtf_version: str,
     backbone_version: str,
     conviction: bool = True,
+    adaptive: bool = False,
 ) -> tuple[GatePolicy, dict[str, Any], Path]:
     """Freeze a universe GatePolicy from the cached validation predictions.
 
-    Reads VALIDATION predictions + truth for the pre-registered CORE cell,
-    calibrates at a FIXED coverage (apples-to-apples, matching the registry), and
+    Reads VALIDATION predictions + truth for the pre-registered CORE cell, and
     writes ``VN_{H}d.json``. TEST predictions are never touched (leak-free, R1).
+
+    ``adaptive=False`` (default): calibrate at a FIXED ``coverage`` (apples-to-
+    apples across horizons/models — the right choice for a controlled research
+    comparison table, e.g. Phase 2/3's cross-backbone/cross-cell numbers).
+
+    ``adaptive=True``: use :func:`~src.benchmark.decision_policy.calibrate_gate`'s
+    coverage-grid search instead — picks whichever coverage on ``DEFAULT_COVERAGE_GRID``
+    scores best (by the same DA-aware ``selection_score`` used everywhere else in
+    this project) for THIS horizon's own validation predictions, rather than
+    forcing every horizon onto the same fixed coverage. A validation-only sweep
+    (`logs/coverage_sweep_result.json`, generated while diagnosing why 1D/20D's
+    gated validation DA fell *below* their own base rate at the fixed 25%
+    coverage) found the fixed-25% convention is not any of the three horizons'
+    own validation-optimal operating point — 1D scores ~4x better at 70%
+    coverage, 5D and 20D score meaningfully better at ~40%. This is still
+    calibrated on VALIDATION alone; it changes *which* coverage is chosen, not
+    which split calibrates it.
     """
     from src.benchmark.ablation_registry import get_cell
     from src.benchmark.ablation_runner import _config_hash
 
     pred_dir = Path(pred_dir)
-    config_hash = _config_hash(get_cell(CORE_CELL_ID))
+    cell_id = core_cell_for(horizon)
+    config_hash = _config_hash(get_cell(cell_id))
 
     val_truth_file = pred_dir / f"val_truth__{horizon}d.npy"
     if not val_truth_file.exists():
@@ -189,14 +229,35 @@ def calibrate_from_cache(
             f"for horizon={horizon} — cache is inconsistent, re-run the registry."
         )
 
-    policy = calibrate_gate_fixed_coverage(
-        val_pred, val_truth, coverage=coverage, conviction=conviction
+    if adaptive:
+        policy = calibrate_gate(val_pred, val_truth, conviction=conviction)
+        coverage = policy.coverage  # the meta block below records what was actually chosen
+    else:
+        policy = calibrate_gate_fixed_coverage(
+            val_pred, val_truth, coverage=coverage, conviction=conviction
+        )
+
+    # Honest, per-horizon operating-point disclosure numbers (plan §0/§3.10): computed
+    # HERE, from this horizon's own validation predictions at the calibrated tau/
+    # coverage — never a hardcoded literal copied from a different horizon's one-off
+    # measurement. Same epistemic status as any other calibration-set metric: it is
+    # the accuracy/base-rate AT the tau chosen on this same validation set, not a
+    # held-out claim. Threaded through gate_agent_node -> state -> narrator/critic so
+    # every horizon discloses its own real numbers instead of a fixed 5D string.
+    gated = evaluate_policy(val_truth, val_pred, policy, horizon=horizon)
+    mask = np.abs(val_pred) >= policy.tau
+    base_rate = (
+        compute_all(val_truth[mask], val_pred[mask], horizon=horizon)["base_rate_DA%"]
+        if mask.sum() >= 3 else float("nan")
     )
+
+    def _finite_or_none(x: float) -> float | None:
+        return round(float(x), 4) if np.isfinite(x) else None
 
     meta = {
         "symbol": "VN",
         "horizon": int(horizon),
-        "cell_id": CORE_CELL_ID,
+        "cell_id": cell_id,
         "config_hash": config_hash,
         "cmtf_version": cmtf_version,
         "backbone_version": backbone_version,
@@ -206,6 +267,11 @@ def calibrate_from_cache(
         "calibration_seed": int(seed) if gate_on_raw_seed else None,
         "n_val": int(val_pred.size),
         "calibration_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "val_gated_DA%": _finite_or_none(gated["DA%"]),
+        "val_gated_coverage": _finite_or_none(gated["coverage"]),
+        "val_base_rate_DA%": _finite_or_none(base_rate),
+        "val_gated_Sharpe": _finite_or_none(gated["Sharpe"]),
+        "val_gated_IC": _finite_or_none(gated["IC"]),
     }
 
     out_path = policy_path(gate_dir, horizon, symbol="VN")

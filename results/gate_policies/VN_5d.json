@@ -1,16 +1,16 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "policy": {
-    "tau": 0.01800279183468471,
+    "tau": 0.016623618566275884,
     "conviction": true,
-    "conviction_scale": 0.023902720771729946,
+    "conviction_scale": 0.02164532197639346,
     "coverage": 0.25,
-    "val_score": 1.1048372462629592
+    "val_score": 1.5660334984705635
   },
   "symbol": "VN",
   "horizon": 5,
-  "cell_id": "0",
-  "config_hash": "60f71e5ce5",
+  "cell_id": "13",
+  "config_hash": "ed960ffa26",
   "cmtf_version": "v4",
   "backbone_version": "v3",
   "calibrated_on": "validation",
@@ -18,5 +18,10 @@
   "gate_on_raw_seed": false,
   "calibration_seed": null,
   "n_val": 868,
-  "calibration_date": "2026-07-13T13:03:36Z"
+  "calibration_date": "2026-07-16T17:09:47Z",
+  "val_gated_DA%": 82.0896,
+  "val_gated_coverage": 0.25,
+  "val_base_rate_DA%": 50.25,
+  "val_gated_Sharpe": 2.2389,
+  "val_gated_IC": 0.5808
 }
