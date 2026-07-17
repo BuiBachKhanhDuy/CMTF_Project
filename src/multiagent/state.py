@@ -56,10 +56,27 @@ class MultiAgentState(TypedDict, total=False):
     # --- Market agent output ---
     volatility_metrics: dict[str, float]  # vol_20d, max_drawdown_pct, trend_pct
     market_proposal: dict[str, Any]  # direction, score, confidence, rationale, quality
+    # Real calendar date range of the trailing market window actually fed to the
+    # model (cfg.sequence_len trading days ending at prediction_time) — disclosure
+    # only, never re-derived by the model itself. None when unavailable (e.g. a
+    # genuinely live date with no local trailing history yet).
+    market_window_start: str | None
+    market_window_end: str | None
+    # Real gap (calendar days) between `prediction_time` and `market_window_end` —
+    # None when there's no market window at all. Ordinary weekends/holidays produce
+    # a small gap (1-3 days); a LARGE gap means the real data source (vnstock) has
+    # no trading days past `market_window_end` yet as of the fetch — e.g. the query's
+    # "today" is ahead of what the real market has actually published. Disclosure
+    # only, never used to alter the decision itself.
+    market_data_staleness_days: int | None
 
     # --- News agent output ---
     sentiment_metrics: dict[str, Any]  # coverage, staleness_frac, sentiment_mean, sentiment_std
     news_proposal: dict[str, Any]  # direction, score (raw sentiment), confidence (trust_weight)
+    # Real calendar date range the news lookback actually covered (lookback_days
+    # before prediction_time through prediction_time) — disclosure only.
+    news_window_start: str | None
+    news_window_end: str | None
 
     # --- Predict agent output ---
     baseline_pred: float

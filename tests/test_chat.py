@@ -136,7 +136,7 @@ class TestReasoningAgentWidenAndRerun:
 
         call_lookbacks = []
 
-        def fake_gather(frame, news_idx, symbol, date, lookback_days=5, vol_window=20):
+        def fake_gather(frame, news_idx, symbol, date, lookback_days=5, vol_window=20, sequence_len=30):
             call_lookbacks.append(lookback_days)
             # Thin (0) on the initial call; the widened call reports real coverage.
             coverage = 0 if lookback_days == 5 else 5
@@ -161,7 +161,7 @@ class TestReasoningAgentWidenAndRerun:
 
         call_lookbacks = []
 
-        def fake_gather(frame, news_idx, symbol, date, lookback_days=5, vol_window=20):
+        def fake_gather(frame, news_idx, symbol, date, lookback_days=5, vol_window=20, sequence_len=30):
             call_lookbacks.append(lookback_days)
             return {
                 "warnings": [],

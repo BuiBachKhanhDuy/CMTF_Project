@@ -9,6 +9,7 @@ import calendar
 import json
 import re
 import time
+from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -39,11 +40,33 @@ _SYSTEM_PROMPT = """\
 Bạn là bộ phân tích ý định cho hệ thống dự báo cổ phiếu Việt Nam.
 Nhiệm vụ: phân loại câu hỏi và trích xuất thông tin.
 
-Phân loại ý định (intent):
-1. "PREDICTION" — dự báo/khuyến nghị mua bán
-2. "EXPLANATION" — giải thích biến động
-3. "RESEARCH" — phân tích xu hướng / ngành / thị trường trong một khoảng thời gian
-4. "COMPARISON" — so sánh 2+ cổ phiếu
+Phân loại ý định (intent) — QUAN TRỌNG: việc có mã cổ phiếu trong câu KHÔNG quyết
+định intent. Gần như MỌI câu hỏi đều nêu một mã cụ thể, kể cả câu hỏi RESEARCH
+("phân tích cổ phiếu MBB tháng 3" vẫn có mã MBB). Chỉ dựa vào ĐỘNG TỪ/Ý ĐỊNH THỰC
+SỰ của câu hỏi, không phải việc có mã hay không:
+
+1. "PREDICTION" — hỏi về TƯƠNG LAI: nên mua/bán không, dự báo, khuyến nghị giao
+   dịch, "sẽ tăng/giảm không". KHÔNG nêu một khoảng thời gian cụ thể trong quá khứ.
+   Ví dụ: "VCB có nên mua không", "dự báo BID 5 ngày tới", "MBB tuần sau thế nào".
+2. "EXPLANATION" — CHỈ khi câu hỏi dùng đúng từ hỏi lý do: "tại sao"/"vì sao"/"why".
+   Không có một trong các từ này thì KHÔNG PHẢI EXPLANATION, dù câu hỏi nói về một
+   thời điểm/khoảng thời gian trong quá khứ — đó là RESEARCH (mục 3), không phải
+   EXPLANATION. Ví dụ ĐÚNG EXPLANATION: "tại sao VCB giảm hôm qua", "vì sao BID
+   tăng mạnh". Ví dụ SAI (đây là RESEARCH, KHÔNG PHẢI EXPLANATION, vì không có
+   "tại sao"/"vì sao"): "phân tích VCB tuần trước" — có "phân tích" (từ khóa
+   RESEARCH ở mục 3) và không có từ hỏi lý do nào, nên PHẢI là RESEARCH.
+3. "RESEARCH" — phân tích/xem xét một cổ phiếu, ngành, hoặc thị trường trong một
+   KHOẢNG THỜI GIAN cụ thể (đặc biệt nếu khoảng đó thuộc QUÁ KHỨ — đã xảy ra rồi,
+   không cần dự báo), MIỄN LÀ câu hỏi không dùng "tại sao"/"vì sao" (nếu có thì là
+   EXPLANATION, mục 2). Từ khóa: "phân tích", "xu hướng", "diễn biến", "tình hình",
+   "review", "trong tháng/quý/năm X". Việc câu hỏi nêu TÊN một mã cổ phiếu cụ thể
+   (ví dụ "phân tích cổ phiếu MBB trong tháng 3") vẫn LÀ RESEARCH, không phải
+   PREDICTION — mã cổ phiếu chỉ là đối tượng được phân tích, không biến câu hỏi
+   thành một yêu cầu dự báo.
+   Ví dụ RESEARCH (có mã, vẫn là RESEARCH): "phân tích cổ phiếu MBB trong tháng 3
+   2026", "xu hướng VCB quý vừa rồi", "tình hình BID tháng trước ra sao",
+   "phân tích VCB tuần trước" (KHÔNG PHẢI EXPLANATION — xem mục 2).
+4. "COMPARISON" — so sánh 2+ cổ phiếu.
 
 Trả lời CHÍNH XÁC JSON:
 {
@@ -59,13 +82,27 @@ Quy tắc:
 - Mã cổ phiếu VN: 3 chữ hoa (VCB, BID, TCB...)
 - "ngắn hạn"/"1 ngày" → "1d"; "trung hạn"/"tuần" → "5d"; "dài hạn"/"tháng" → "20d"
 - Mặc định "1d" nếu không rõ horizon
-- Mặc định "PREDICTION" nếu có mã, "RESEARCH" nếu không
+- LUÔN LUÔN chỉ trả về DUY NHẤT MỘT đối tượng JSON, dù câu hỏi có nhiều yêu cầu
+  cùng lúc. Nếu câu hỏi nêu NHIỀU horizon (ví dụ "ngắn hạn và trung hạn"), chỉ
+  chọn horizon ĐẦU TIÊN được nêu, không tạo nhiều đối tượng JSON cho từng horizon.
+  Nếu câu hỏi vừa muốn "dự đoán" vừa muốn "giải thích" (ví dụ "dự đoán ... và giải
+  thích"), chọn "PREDICTION" — mọi khuyến nghị dự đoán trong hệ thống này đều đã
+  kèm giải thích lý do, nên "giải thích" không cần một đối tượng JSON riêng.
+- KHÔNG có quy tắc mặc định nào dựa trên việc có mã hay không — xem mục phân loại
+  ý định ở trên. Nếu câu hỏi nêu một khoảng thời gian cụ thể (nhất là quá khứ) VÀ
+  không hỏi "nên mua/bán" một cách rõ ràng, hãy chọn "RESEARCH".
 - Nếu câu hỏi nêu MỘT KHOẢNG THỜI GIAN cụ thể (ví dụ "tháng 3 2026", "March 2026",
   một ngày cụ thể), tính chính xác date_start/date_end (ngày đầu và cuối tháng đó,
   hoặc chính ngày đó cho cả hai trường). NGÀY và NĂM có thể không nằm liền kề trong
   câu (ví dụ "tháng 3 cổ phiếu VCB 2026" nghĩa là tháng 3 năm 2026).
 - Nếu KHÔNG có khoảng thời gian rõ ràng nào được nêu, trả về null cho cả hai
   trường — TUYỆT ĐỐI không tự đặt ra một khoảng ngày mặc định.
+- Tin nhắn của người dùng sẽ bắt đầu bằng dòng "Hôm nay là YYYY-MM-DD." — đây LÀ
+  ngày thực tế hiện tại, PHẢI dùng làm mốc để tính các khoảng thời gian TƯƠNG ĐỐI:
+  "tháng trước"/"tháng này", "quý trước"/"quý này"/"quý vừa rồi", "tuần trước",
+  "gần đây", "hôm qua". TUYỆT ĐỐI không tự đoán hay lấy một năm/tháng bất kỳ từ
+  trí nhớ khi câu hỏi dùng thời gian tương đối — luôn tính từ "Hôm nay" được cho.
+  Nếu không thể tính chắc chắn dù đã có "Hôm nay", trả về null (không đoán bừa).
 """
 
 
@@ -145,7 +182,10 @@ def _deterministic_parse(query_text: str) -> dict[str, Any]:
         intent = "EXPLANATION"
     elif any(k in lowered for k in ("vs", "so sánh", "compare")):
         intent = "COMPARISON"
-    elif any(k in lowered for k in ("sector", "ngành", "trend", "xu hướng", "phân tích", "analyze", "analysis")):
+    elif any(k in lowered for k in (
+        "sector", "ngành", "trend", "xu hướng", "phân tích", "analyze", "analysis",
+        "diễn biến", "tình hình", "review",
+    )):
         intent = "RESEARCH"
     else:
         intent = "PREDICTION"
@@ -172,9 +212,19 @@ def _llm_parse(query_text: str, config: MultiAgentConfig) -> dict[str, Any]:
         temperature=0.1,
         timeout=config.ollama_timeout,
     )
+    # Relative date expressions ("tháng trước", "quý vừa rồi", "hôm qua", ...) are
+    # only resolvable if the model is told what "today" actually is — the model has
+    # no other way to know, and previously either hallucinated an arbitrary past
+    # date or silently gave up (returned null) for these queries. Real wall-clock
+    # time is correct here: this is the live interactive product path, gated behind
+    # `evaluation_mode=False` (deterministic eval runs use `_deterministic_parse`
+    # instead, which never calls this function).
+    today = datetime.now().strftime("%Y-%m-%d")
+    human_message = f"Hôm nay là {today}.\n{query_text}"
+
     response = llm.invoke([
         ("system", _SYSTEM_PROMPT),
-        ("human", query_text),
+        ("human", human_message),
     ])
     content = response.content.strip()
 
@@ -188,7 +238,17 @@ def _llm_parse(query_text: str, config: MultiAgentConfig) -> dict[str, Any]:
                 content = part
                 break
 
-    result = json.loads(content)
+    # Parse only the FIRST JSON object, ignoring anything after it. A compound query
+    # (asks for multiple things at once — e.g. "predict AND explain", "short-term AND
+    # medium-term") can make the model hedge by emitting more than one JSON object
+    # back-to-back instead of the single object it was asked for; `json.loads` on the
+    # full string then raises "Extra data" and crashes the whole query. `raw_decode`
+    # parses one value starting at the first `{` and simply stops there, so the first
+    # (primary) object always wins regardless of what trails it.
+    first_brace = content.find("{")
+    if first_brace == -1:
+        raise ValueError(f"No JSON object found in orchestrator response: {content!r}")
+    result, _ = json.JSONDecoder().raw_decode(content, first_brace)
 
     intent = str(result.get("intent", "PREDICTION")).upper()
     if intent not in ("PREDICTION", "EXPLANATION", "RESEARCH", "COMPARISON"):
