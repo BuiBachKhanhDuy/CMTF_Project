@@ -53,21 +53,67 @@ def _disclosure_note(state: MultiAgentState) -> str:
 def _attention_note(state: MultiAgentState) -> str:
     """Cite the single most-attended trailing day — a real internal signal from the
     model's cross-attention (see raw_prediction.summarize_attention), not an LLM's
-    guess at "why". Empty string (nothing to cite) when unavailable, never fabricated."""
+    guess at "why". Prefers the real calendar date (resolved by
+    chat.py::_resolve_attention_dates / graph.py's equivalent) over the abstract
+    day-offset when available. Empty string (nothing to cite) when unavailable,
+    never fabricated."""
     top_days = state.get("attention_top_days")
     if not top_days:
         return ""
     top = top_days[0]
-    days_before, weight = top["days_before_cutoff"], top["weight"]
-    when = "ngày gần nhất" if days_before == 0 else f"{days_before} ngày trước"
+    days_before, weight = top["days_before_cutoff"], top.get("weight")
+    date = top.get("date")
+    if date:
+        when = f"ngày {date}"
+    else:
+        when = "ngày gần nhất" if days_before == 0 else f"{days_before} ngày trước"
     return f" Mô hình tập trung chú ý nhiều nhất vào dữ liệu {when} (trọng số {weight:.0%})."
+
+
+def _window_note(state: MultiAgentState) -> str:
+    """Disclose the REAL calendar date range of the market/news data that fed this
+    prediction — not just the horizon. `market_window_start/end` and
+    `news_window_start/end` are state-derived (chat.py::_gather_evidence /
+    market_agent + news_agent), never invented by the model. Omits a side whose
+    range isn't available rather than fabricating one."""
+    ms, me = state.get("market_window_start"), state.get("market_window_end")
+    ns, ne = state.get("news_window_start"), state.get("news_window_end")
+    parts = []
+    if ms and me:
+        parts.append(f"dữ liệu giá {ms} → {me}")
+    if ns and ne:
+        parts.append(f"tin tức {ns} → {ne}")
+    if not parts:
+        return ""
+    note = f" Dữ liệu dùng để dự đoán: {', '.join(parts)}."
+    # Same >5-day threshold as chat.py::_gather_evidence's staleness warning — an
+    # ordinary weekend/holiday gap (1-3 days) isn't worth calling out, but a real
+    # lag between "hôm nay" and the latest data the market has actually published
+    # must be stated plainly, not left for the reader to compute from two dates.
+    staleness = state.get("market_data_staleness_days")
+    if isinstance(staleness, (int, float)) and staleness > 5:
+        note += (
+            f" Lưu ý: dữ liệu giá thực tế mới nhất chỉ có đến {me}, cách thời điểm "
+            f"dự đoán {int(staleness)} ngày — thị trường thực chưa công bố dữ liệu mới "
+            f"hơn tại thời điểm này, đây không phải lỗi hệ thống."
+        )
+    return note
 
 
 _SYSTEM_PROMPT = (
     "Bạn là chuyên gia phân tích tài chính Việt Nam. Viết một đoạn giải thích ngắn gọn "
     "(<200 từ) bằng tiếng Việt cho khuyến nghị giao dịch, CHỈ dùng dữ liệu trong bằng chứng. "
     "KHÔNG bịa số. Nếu khuyến nghị là KHÔNG GIAO DỊCH, nói rõ mô hình thiếu độ tin cậy và "
-    "nêu điểm vận hành kèm khoảng tin cậy; KHÔNG dùng giọng điệu tự tin mua/bán."
+    "nêu điểm vận hành kèm khoảng tin cậy; KHÔNG dùng giọng điệu tự tin mua/bán. "
+    "BẮT BUỘC phải nêu rõ trong câu trả lời: (1) khoảng thời gian thực (ngày bắt đầu → "
+    "ngày kết thúc) của dữ liệu giá và dữ liệu tin tức đã dùng để dự đoán, lấy đúng từ "
+    "phần 'Khoảng dữ liệu' trong bằng chứng — KHÔNG tự suy ra từ horizon; (2) ngày cụ thể "
+    "mà mô hình tập trung chú ý (attention) nhiều nhất, lấy đúng từ phần 'Chú ý mô hình' "
+    "trong bằng chứng; (3) NẾU bằng chứng có dòng 'Độ trễ dữ liệu' (nghĩa là dữ liệu giá "
+    "thực không có đến sát ngày dự đoán), PHẢI nêu rõ con số ngày trễ đó và giải thích đây "
+    "là do thị trường thực chưa công bố dữ liệu mới hơn, KHÔNG phải lỗi hệ thống. Nếu bằng "
+    "chứng không có một trong các mục trên thì bỏ qua mục đó, KHÔNG bịa ra ngày tháng hay "
+    "con số nào."
 )
 
 
@@ -93,6 +139,7 @@ def grounded_template(state: MultiAgentState) -> str:
     parts.append(
         f"Bối cảnh thị trường: biến động 20 ngày {vm.get('vol_20d', 0):.1f}%, "
         f"sụt giảm tối đa {vm.get('max_drawdown_pct', 0):.1f}%."
+        + _window_note(state)
         + _attention_note(state)
     )
     # NOTE: reasoning_agent runs AFTER critic_agent (it needs a real critic_status to
@@ -108,7 +155,20 @@ def _evidence_prompt(state: MultiAgentState) -> str:
     vm = state.get("volatility_metrics", {})
     sm = state.get("sentiment_metrics", {})
     action_vi = _ACTION_VI.get(state.get("action", "abstain"), "KHÔNG GIAO DỊCH")
-    return "\n".join([
+    ms, mend = state.get("market_window_start"), state.get("market_window_end")
+    ns, nend = state.get("news_window_start"), state.get("news_window_end")
+    market_range = f"{ms} → {mend}" if ms and mend else "không có"
+    news_range = f"{ns} → {nend}" if ns and nend else "không có"
+    top_days = state.get("attention_top_days") or []
+    top = top_days[0] if top_days else None
+    if top and top.get("date"):
+        attention_str = f"ngày {top['date']} (trọng số {top['weight']:.0%})"
+    elif top:
+        attention_str = f"{top['days_before_cutoff']} ngày trước cutoff (trọng số {top['weight']:.0%})"
+    else:
+        attention_str = "không có"
+    staleness = state.get("market_data_staleness_days")
+    lines = [
         f"Mã: {state.get('symbol')}  Horizon: {state.get('target_horizon_days')}d",
         f"Khuyến nghị: {action_vi}  |  Kích thước: {state.get('position_scale', 0):+.2f}",
         f"Gate: {state.get('gate_reason', '')}  (bao phủ {state.get('gate_coverage', 0):.0%})",
@@ -116,9 +176,16 @@ def _evidence_prompt(state: MultiAgentState) -> str:
         f"Dự báo (ensemble): {me.get('final_pred', 0):.5f}  gate_pred: {me.get('gate_pred', 0):.5f}",
         f"Biến động 20d: {vm.get('vol_20d', 0):.1f}%  Sụt giảm: {vm.get('max_drawdown_pct', 0):.1f}%",
         f"Tin tức: coverage={sm.get('coverage', 0)} staleness={sm.get('staleness_frac', 0):.0%}",
-        f"Chú ý mô hình (attention): {state.get('attention_top_days') or 'không có'}",
-        f"LƯU Ý bắt buộc: {_disclosure_note(state)}",
-    ])
+        f"Khoảng dữ liệu: giá {market_range}  |  tin tức {news_range}",
+        f"Chú ý mô hình (attention) — ngày tập trung nhiều nhất: {attention_str}",
+    ]
+    if isinstance(staleness, (int, float)) and staleness > 5:
+        lines.append(
+            f"Độ trễ dữ liệu: dữ liệu giá thực mới nhất cách ngày dự đoán {int(staleness)} "
+            f"ngày (thị trường thực chưa công bố dữ liệu mới hơn, không phải lỗi hệ thống)"
+        )
+    lines.append(f"LƯU Ý bắt buộc: {_disclosure_note(state)}")
+    return "\n".join(lines)
 
 
 def generate_answer(state: MultiAgentState, config: MultiAgentConfig, strict: bool = False) -> str:

@@ -32,6 +32,7 @@ import re
 import sys
 import urllib.request
 from dataclasses import replace as _dc_replace
+from datetime import datetime
 
 # Vietnamese narration/answers contain characters outside cp1252 (Windows' default
 # console codepage), which crashes print() before a single query is even processed
@@ -129,6 +130,50 @@ def _real_vol_dd(frame, symbol, cutoff, window=20):
     return vol, dd, trend
 
 
+def _real_market_window_range(frame, symbol, cutoff, sequence_len):
+    """Real calendar (start, end) of the trailing `sequence_len`-day window the
+    model actually consumes for this prediction — NOT `vol_window` (a separate,
+    risk-agent-only lookback that can differ from the model's own input length).
+    None, None if there isn't enough local history (mirrors `_real_vol_dd`'s
+    honesty rule: never fabricate a window that wasn't actually there)."""
+    s = frame[(frame["symbol"] == symbol) & (frame.index <= pd.Timestamp(cutoff))].sort_index()
+    window = s.iloc[-sequence_len:]
+    if len(window) < 5:
+        return None, None
+    return str(window.index[0].date()), str(window.index[-1].date())
+
+
+def _real_news_window_range(news_idx, symbol, cutoff, lookback_days):
+    """Real calendar (start, end) the news lookback covers — a fixed
+    (cutoff - lookback_days, cutoff) span, disclosed as such regardless of whether
+    any article actually fell inside it (an empty window is still a real window,
+    not a missing one)."""
+    end = pd.Timestamp(cutoff)
+    start = end - pd.Timedelta(days=lookback_days)
+    return str(start.date()), str(end.date())
+
+
+def _resolve_attention_dates(frame, symbol, cutoff, top_days):
+    """Enrich `attention_top_days` (from `raw_prediction.summarize_attention` —
+    `{"days_before_cutoff": int, "weight": float}`) with the REAL calendar date
+    each trailing-day offset corresponds to, using the same trading-calendar slice
+    `_real_market_window_range` uses — "3 ngày trước" becomes "2026-03-19", a
+    concrete date a user can actually look up, not just an abstract offset.
+    Returns the list unchanged (still real, still usable) if the local price
+    history needed to resolve dates isn't available for this cutoff."""
+    if not top_days:
+        return top_days
+    s = frame[(frame["symbol"] == symbol) & (frame.index <= pd.Timestamp(cutoff))].sort_index()
+    if len(s) < 2:
+        return top_days
+    enriched = []
+    for d in top_days:
+        offset = int(d["days_before_cutoff"])
+        date_str = str(s.index[-(offset + 1)].date()) if offset + 1 <= len(s) else None
+        enriched.append({**d, "date": date_str})
+    return enriched
+
+
 _HORIZON_DAYS = {"1d": 1, "5d": 5, "20d": 20}
 
 
@@ -188,18 +233,35 @@ def _classify(query, cfg, default_symbol, default_horizon, sym_dates):
     date_start = out.get("date_start")
     date_end = out.get("date_end")
     m = _DATE_RE.search(query)
-    date = m.group(0) if m else (sym_dates.get(symbol, [None])[-1] if symbol else None)
+    if m:
+        date = m.group(0)
+    else:
+        # The query named NO date/range at all (e.g. "dự đoán BID 1 tuần tới" with
+        # no absolute date) — anchor on the REAL wall-clock date ("hôm nay"), never
+        # the last date that happens to be cached in the frozen prediction store.
+        # That cached last-date is an implementation detail of the offline research
+        # book, not "today" — silently substituting it made a live "predict from
+        # now" query quietly answer a stale historical date instead (e.g. landing
+        # on 2026-03-24 when it's actually already 2026-07-17). `in_book` below
+        # naturally falls through to the LIVE-date fetch path when today isn't in
+        # the local parquet yet, which is exactly what a real "now" prediction needs.
+        date = datetime.now().strftime("%Y-%m-%d")
     if not date_start or not date_end:
         date_start = date_end = date
     return intent, symbol, symbols, date, date_start, date_end, horizon, route_reason
 
 
-def _gather_evidence(frame, news_idx, symbol, date, lookback_days=5, vol_window=20):
+def _gather_evidence(frame, news_idx, symbol, date, lookback_days=5, vol_window=20, sequence_len=30):
     """Build the volatility/sentiment/articles evidence bundle for (symbol, date) —
     factored out so `reasoning_agent`'s widen-and-rerun closure can call it again with
     wider `lookback_days`/`vol_window` values. Both slice the ALREADY-loaded
     `frame`/`news_idx` (the full research book, preloaded once at chat.py startup) —
-    widening never triggers a new fetch."""
+    widening never triggers a new fetch.
+
+    `sequence_len` (default matches `MultiAgentConfig.sequence_len`) is the model's
+    OWN input window length — deliberately separate from `vol_window` (the
+    risk-agent's lookback) — used only to disclose the real calendar range of data
+    that actually fed the prediction (Section: narrator's data-window disclosure)."""
     vol, dd, trend = _real_vol_dd(frame, symbol, date, window=vol_window)
     heads = recent_headlines(news_idx, symbol, date, lookback_days=lookback_days, k=15)
     warnings = []
@@ -210,17 +272,37 @@ def _gather_evidence(frame, news_idx, symbol, date, lookback_days=5, vol_window=
         vol_metrics = {}  # vol_20d / max_drawdown_pct / trend_pct intentionally absent
     else:
         vol_metrics = {"vol_20d": vol, "max_drawdown_pct": dd, "trend_pct": trend}
+    market_window_start, market_window_end = _real_market_window_range(frame, symbol, date, sequence_len)
+    news_window_start, news_window_end = _real_news_window_range(news_idx, symbol, date, lookback_days)
+    # Real gap between the requested cutoff and the latest trading day actually
+    # found. A weekend/holiday produces a small (1-3 day) gap; a LARGE one means the
+    # real market data source has no trading days past `market_window_end` yet as of
+    # this fetch (e.g. the query's "today" is ahead of what the market has actually
+    # published) — surfaced honestly rather than silently predicting off stale data
+    # while claiming it's current.
+    staleness_days = None
+    if market_window_end:
+        staleness_days = (pd.Timestamp(date) - pd.Timestamp(market_window_end)).days
+        if staleness_days > 5:
+            warnings.append(
+                f"data lag: dữ liệu giá gần nhất chỉ có đến {market_window_end}, "
+                f"cách ngày dự đoán ({date}) {staleness_days} ngày — thị trường thực "
+                f"chưa có dữ liệu mới hơn tại thời điểm truy vấn, không phải lỗi hệ thống"
+            )
     return {
         "warnings": warnings,
         "volatility_metrics": vol_metrics,
         "sentiment_metrics": {"coverage": len(heads), "staleness_frac": 0.0 if heads else 1.0,
                               "sentiment_mean": 0.0},
         "articles": [{"title": h} for h in heads],
+        "market_window_start": market_window_start, "market_window_end": market_window_end,
+        "news_window_start": news_window_start, "news_window_end": news_window_end,
+        "market_data_staleness_days": staleness_days,
     }
 
 
 def _run_decision(symbol, date, horizon, cfg, frame, news_idx):
-    evidence = _gather_evidence(frame, news_idx, symbol, date)
+    evidence = _gather_evidence(frame, news_idx, symbol, date, sequence_len=cfg.sequence_len)
     state = {
         "symbol": symbol, "target_horizon_days": horizon, "prediction_time": date,
         "artifact_versions": {}, "node_timings": {}, **evidence,
@@ -236,16 +318,28 @@ def _run_decision(symbol, date, horizon, cfg, frame, news_idx):
             frame, news_idx, symbol, date,
             lookback_days=cfg.reasoning_widen_lookback_days_to,
             vol_window=cfg.reasoning_widen_sequence_len_to,
+            sequence_len=cfg.sequence_len,  # the model's own input length never widens, only the risk check does
         )
         rerun_state = {**current_state, **wider_evidence}
-        for _, fn in _RERUN_CHAIN:
-            rerun_state.update(fn(rerun_state, cfg))
+        for name, fn in _RERUN_CHAIN:
+            upd = fn(rerun_state, cfg)
+            if name == "predict_agent":
+                upd["attention_top_days"] = _resolve_attention_dates(
+                    frame, symbol, date, upd.get("attention_top_days")
+                )
+            rerun_state.update(upd)
         return rerun_state
 
     steps = []
     for name, fn in DECISION_CHAIN:
         before = dict(state)
         upd = fn(state, cfg, widen_and_rerun=_widen_and_rerun) if name == "reasoning_agent" else fn(state, cfg)
+        if name == "predict_agent":
+            # real calendar date per attended trailing day — narrator/critic cite the
+            # date, not just an abstract offset (state.py's attention_top_days schema)
+            upd["attention_top_days"] = _resolve_attention_dates(
+                frame, symbol, date, upd.get("attention_top_days")
+            )
         steps.append((name, summarize_node(name, before, {**before, **upd})))
         timings = {**state.get("node_timings", {}), **upd.pop("node_timings", {})}
         state.update(upd); state["node_timings"] = timings
@@ -288,7 +382,7 @@ def _run_prediction_for_gap(symbol, from_date, horizon, cfg, frame, news_idx):
     anchored at ``from_date`` — used only for whatever portion of a requested range
     is NOT yet knowable from real data. The synthesis step narrates this; it never
     invents it — the number and trade/abstain action always come from here."""
-    evidence = _gather_evidence(frame, news_idx, symbol, from_date)
+    evidence = _gather_evidence(frame, news_idx, symbol, from_date, sequence_len=cfg.sequence_len)
     state = {
         "symbol": symbol, "target_horizon_days": horizon, "prediction_time": from_date,
         "artifact_versions": {}, "node_timings": {}, **evidence,
@@ -555,7 +649,8 @@ def main():
             note = " …"
         print(f"  → interpreting as: symbol={symbol}  date={date}  horizon={horizon}d" + note)
         try:
-            state, steps = _run_decision(symbol, date, horizon, cfg, frame, news_idx)
+            with _collecting(f"Đang thu thập dữ liệu thị trường & tin tức {symbol} ({date})…"):
+                state, steps = _run_decision(symbol, date, horizon, cfg, frame, news_idx)
         except PredictionNotCachedError as e:
             print(f"  ⚠ {str(e).splitlines()[0]}"); continue
         except ArtifactMissingError as e:

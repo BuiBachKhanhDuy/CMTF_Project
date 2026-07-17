@@ -24,6 +24,11 @@ from ..state import MultiAgentState
 from .narrator_agent import generate_answer, grounded_template
 
 _NUM_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
+# ISO calendar dates (e.g. "2026-03-19") must be pulled out and verified BEFORE
+# _NUM_RE runs: its optional leading "-" would otherwise tokenize a date into three
+# spurious "negative number" matches ("2026", "-03", "-19"), none of which would ever
+# match an allowed magnitude — flagging every date-citing answer as ungrounded.
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # Vietnamese action words the narrator may emit.
 _TRADE_WORDS = ("MUA", "BÁN")
 
@@ -60,8 +65,28 @@ def _allowed_numbers(state: MultiAgentState) -> list[float]:
         vals.append(float(d["days_before_cutoff"]))
         vals.append(round(float(d["weight"]), 4))
         vals.append(round(float(d["weight"]) * 100, 1))
+    staleness = state.get("market_data_staleness_days")
+    if isinstance(staleness, (int, float)):
+        vals.append(float(staleness))
     vals += [20.0, 200.0]  # fixed 20-day trailing-vol window; "<200 từ" prompt-length instruction
     return vals
+
+
+def _allowed_dates(state: MultiAgentState) -> set[str]:
+    """Real calendar (ISO) dates the answer is permitted to cite — the market/news
+    window edges (chat.py::_gather_evidence), the prediction date itself, and any
+    resolved attention-day date. Exact string match, not tolerance-based: unlike
+    magnitudes, a date is either the real one or it's fabricated."""
+    dates: set[str] = set()
+    for v in (state.get("market_window_start"), state.get("market_window_end"),
+              state.get("news_window_start"), state.get("news_window_end"),
+              state.get("prediction_time")):
+        if v:
+            dates.add(str(v))
+    for d in (state.get("attention_top_days") or []):
+        if d.get("date"):
+            dates.add(str(d["date"]))
+    return dates
 
 
 def verify_answer(answer: str, state: MultiAgentState) -> list[str]:
@@ -83,9 +108,17 @@ def verify_answer(answer: str, state: MultiAgentState) -> list[str]:
     elif action_vi and action_vi not in answer.upper():
         findings.append(f"action-match: answer does not state the decided action {action_vi!r}")
 
-    # 1. numbers grounded in state
+    # 1a. dates grounded in state (checked + stripped before the numeric pass below,
+    # so their digit groups aren't double-counted as spurious negative numbers)
+    allowed_dates = _allowed_dates(state)
+    for tok in _DATE_RE.findall(answer):
+        if tok not in allowed_dates:
+            findings.append(f"ungrounded date in answer: {tok}")
+    answer_sans_dates = _DATE_RE.sub("", answer)
+
+    # 1b. numbers grounded in state
     allowed = _allowed_numbers(state)
-    for tok in _NUM_RE.findall(answer):
+    for tok in _NUM_RE.findall(answer_sans_dates):
         num = float(tok.replace(",", "."))
         if not any(abs(num - a) <= max(0.05 * abs(a), 0.01) for a in allowed):
             findings.append(f"ungrounded number in answer: {tok}")
