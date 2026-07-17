@@ -97,48 +97,54 @@ class TemporalAligner:
         - at/after 15:00 on day T -> bar T+1
         - date-only timestamps at 00:00 are shifted to T+1 conservatively
         Weekend / holiday news → next trading bar.
+
+        Vectorized equivalent of the original per-article Python loop (which
+        recomputed ``ohlcv.index.normalize()`` — an O(bars) scan — once per
+        article, i.e. O(articles x bars); with ~18k articles x ~1.6k bars per
+        symbol that was ~10-13s of the live-inference latency on its own). Same
+        market-close/leakage rules, same "first eligible bar" tie-break, same
+        chronological append order within a bar — verified against
+        ``TestAlignerNoLeakage`` (same-day, premarket, weekend, after-hours,
+        date-only cases).
         """
-        # Build a mapping: for each news article determine the eligible bar
         bar_dates = bar_times.normalize().unique().sort_values()
+        if bar_dates.empty or news.empty:
+            return ohlcv
 
-        for _, article in news.iterrows():
-            pub = pd.Timestamp(article["published_date"])
-            pub_date = pub.normalize()
+        pub = pd.to_datetime(news["published_date"])
+        valid_pub = pub.notna()
+        pub_date = pub.dt.normalize()
+        is_midnight = (
+            (pub.dt.hour == 0) & (pub.dt.minute == 0) & (pub.dt.second == 0) & (pub.dt.microsecond == 0)
+        )
+        after_close = pub.dt.hour >= _MARKET_CLOSE_HOUR
+        eligible_date = pub_date.where(~(is_midnight | after_close), pub_date + pd.Timedelta(days=1))
 
-            has_midnight_time = (
-                pub.hour == 0 and pub.minute == 0 and pub.second == 0 and pub.microsecond == 0
-            )
-            if has_midnight_time or pub.hour >= _MARKET_CLOSE_HOUR:
-                # Unknown exact time or after close -> next bar conservatively
-                eligible_date = pub_date + pd.Timedelta(days=1)
-            else:
-                eligible_date = pub_date
+        # First bar_date >= eligible_date, for every article at once (bar_dates is
+        # sorted, so this is the vectorized form of `bar_dates[bar_dates >= x][0]`).
+        positions = bar_dates.searchsorted(eligible_date.to_numpy(), side="left")
+        has_target = valid_pub.to_numpy() & (positions < len(bar_dates))
+        if not has_target.any():
+            return ohlcv
 
-            # Find the next available trading bar on or after eligible_date
-            future_bars = bar_dates[bar_dates >= eligible_date]
-            if future_bars.empty:
-                continue  # no eligible bar in dataset
+        target_dates = bar_dates[positions[has_target]]
 
-            target_date = future_bars[0]
+        # First ohlcv row for each calendar date — mirrors the original's
+        # `ohlcv.index[ohlcv.index.normalize() == target_date][0]`.
+        date_to_idx = pd.Series(ohlcv.index, index=ohlcv.index.normalize()).groupby(level=0).first()
+        target_idx = date_to_idx.reindex(target_dates).to_numpy()
 
-            # Match to ohlcv rows whose date equals target_date
-            mask = ohlcv.index.normalize() == target_date
-            idxs = ohlcv.index[mask]
-            if idxs.empty:
-                continue
-
-            idx = idxs[0]
-            pos = ohlcv.index.get_loc(idx)
-            if isinstance(pos, slice):
-                pos = pos.start  # type: ignore[assignment]
-
-            ohlcv.at[idx, "news_count"] += 1
-            ohlcv.at[idx, "news_titles"] = ohlcv.at[idx, "news_titles"] + [
-                str(article.get("title", ""))
-            ]
-            ohlcv.at[idx, "news_content"] = ohlcv.at[idx, "news_content"] + [
-                str(article.get("content", ""))
-            ]
+        assigned = news.loc[has_target].copy()
+        assigned["_bar_idx"] = target_idx
+        # `news` was already sorted by published_date before this call, and
+        # groupby preserves within-group row order, so titles/content land in
+        # the same chronological order the original one-at-a-time loop produced.
+        for idx, group in assigned.groupby("_bar_idx", sort=False):
+            titles = group["title"].astype(str).tolist() if "title" in group else [""] * len(group)
+            contents = group["content"].astype(str).tolist() if "content" in group else [""] * len(group)
+            ohlcv.at[idx, "news_count"] += len(group)
+            ohlcv.at[idx, "news_titles"] = ohlcv.at[idx, "news_titles"] + titles
+            ohlcv.at[idx, "news_content"] = ohlcv.at[idx, "news_content"] + contents
             ohlcv.at[idx, "has_news"] = True
 
         return ohlcv

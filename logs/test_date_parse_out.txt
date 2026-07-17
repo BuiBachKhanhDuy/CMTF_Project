@@ -1,0 +1,4 @@
+dự báo xu hướng cổ phiếu VCB ngắn hạn sau 16/7 sắp tới
+  intent=PREDICTION date_start=None date_end=None route_reason=parsed intent=PREDICTION symbols=['VCB'] horizon=1d
+dự báo xu hướng cổ phiếu VCB ngắn hạn sau 15/7
+  intent=PREDICTION date_start=None date_end=None route_reason=parsed intent=PREDICTION symbols=['VCB'] horizon=1d

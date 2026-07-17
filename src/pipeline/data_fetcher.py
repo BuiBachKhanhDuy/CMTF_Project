@@ -7,9 +7,10 @@ using the vnstock library (v3.x).
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +28,87 @@ from tenacity import (
 # ---------------------------------------------------------------------------
 CACHE_DIR = Path("./cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# OHLCV overlap-aware disk cache — mirrors news_scraper.py's `_find_overlapping_cache`
+# (same problem: every live-inference query uses a slightly different `end`, e.g.
+# today's date, so an exact-filename cache almost never hits past the first call,
+# forcing a full multi-year network re-fetch, per symbol, on every single live
+# query). Unlike news, OHLCV had no local cache at all — this was the dominant
+# source of live-query latency (8 symbols incl. VNINDEX x full 2020-> history,
+# rate-limited to ~16 req/min). Historical closes are immutable once the trading
+# day has settled, so a full-cover cache hit needs no network call at all; a
+# partial cover only re-fetches the small incremental tail (plus a short buffer to
+# absorb late same-day revisions to the most recent bars).
+# ---------------------------------------------------------------------------
+_OHLCV_CACHE_DIR = CACHE_DIR / "ohlcv"
+_OHLCV_CACHE_FILE_RE = re.compile(r"^([A-Z0-9]+)_([A-Za-z]+)_([A-Za-z0-9]+)_(\d{8})_(\d{8})_ohlcv\.parquet$")
+
+
+def _ohlcv_cache_path(symbol: str, source: str, interval: str, start: str, end: str) -> Path:
+    _OHLCV_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    safe_start = start.replace("-", "")
+    safe_end = end.replace("-", "")
+    return _OHLCV_CACHE_DIR / f"{symbol}_{source}_{interval}_{safe_start}_{safe_end}_ohlcv.parquet"
+
+
+# In-process memoization keyed by the exact (symbol, start, end, interval, source,
+# use_cache) call — separate from the on-disk overlap cache above. For a genuinely
+# live `end` (e.g. "today"), no on-disk cache can ever be a true "full cover" (the
+# market hasn't published that day's bar yet), so every call — including the SAME
+# logical request made twice in one process, e.g. `run_pipeline`'s internal fetch
+# and `_extract_and_split`'s separate `fetch_multi_symbol` raw-OHLCV fetch moments
+# later — would otherwise each hit the network's freshest-tail boundary
+# independently. If the real-time feed's "latest available bar" shifts by even one
+# row between those two calls (a new bar just posted, or one still settling), the
+# two results silently disagree — this is what caused the real
+# "N timestamps missing after merge with raw OHLCV" crash. Memoizing the exact call
+# guarantees identical repeat calls within one process return the IDENTICAL
+# DataFrame, never a second network round trip that could observe a different
+# "now".
+#
+# Bounded (not a plain dict): a single long-running `chat.py --llm` session can
+# query many distinct dates over its lifetime, each pulling in a full per-symbol
+# OHLCV frame — an unbounded cache here was one contributor to a real MemoryError
+# seen in a long session (on top of `_pipeline_splits`'s own bounded lru_cache).
+# Small entries (raw OHLCV, not embeddings), so a modest cap is enough headroom.
+_INPROCESS_OHLCV_CACHE_MAXSIZE = 32
+_INPROCESS_OHLCV_CACHE: "OrderedDict[tuple, pd.DataFrame]" = OrderedDict()
+
+
+def _ohlcv_memo_get(key: tuple) -> pd.DataFrame | None:
+    if key not in _INPROCESS_OHLCV_CACHE:
+        return None
+    _INPROCESS_OHLCV_CACHE.move_to_end(key)
+    return _INPROCESS_OHLCV_CACHE[key]
+
+
+def _ohlcv_memo_put(key: tuple, value: pd.DataFrame) -> None:
+    _INPROCESS_OHLCV_CACHE[key] = value
+    _INPROCESS_OHLCV_CACHE.move_to_end(key)
+    while len(_INPROCESS_OHLCV_CACHE) > _INPROCESS_OHLCV_CACHE_MAXSIZE:
+        _INPROCESS_OHLCV_CACHE.popitem(last=False)
+
+
+def _find_overlapping_ohlcv_cache(
+    symbol: str, source: str, interval: str, start: str,
+) -> tuple[Path, pd.Timestamp, pd.Timestamp] | None:
+    """Find the on-disk OHLCV cache for (symbol, source, interval) whose cached
+    start is <= the requested start, preferring the one with the largest cached
+    end (most coverage) — same selection rule as news_scraper's overlap finder."""
+    start_ts = pd.Timestamp(start)
+    best: tuple[Path, pd.Timestamp, pd.Timestamp] | None = None
+    for p in _OHLCV_CACHE_DIR.glob(f"{symbol}_{source}_{interval}_*_ohlcv.parquet"):
+        m = _OHLCV_CACHE_FILE_RE.match(p.name)
+        if not m:
+            continue
+        cached_start = pd.to_datetime(m.group(4), format="%Y%m%d")
+        cached_end = pd.to_datetime(m.group(5), format="%Y%m%d")
+        if cached_start > start_ts:
+            continue  # doesn't cover the requested start
+        if best is None or cached_end > best[2]:
+            best = (p, cached_start, cached_end)
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +205,7 @@ class VnstockDataFetcher:
         end: str,
         interval: str = "1D",
         source: str = "KBS",
+        use_cache: bool = True,
     ) -> pd.DataFrame:
         """Fetch OHLCV data for a single symbol.
 
@@ -132,13 +215,59 @@ class VnstockDataFetcher:
             end: End date ``'YYYY-MM-DD'``.
             interval: Bar interval (``'1D'``, ``'1H'``, etc.).
             source: Exchange data source (default ``'KBS'``).
+            use_cache: Reuse the on-disk overlap-aware OHLCV cache (see
+                `_find_overlapping_ohlcv_cache`) — a full cover skips the network
+                fetch entirely; a partial cover only re-fetches the small
+                incremental tail (never a redundant multi-year re-fetch just
+                because `end` moved forward, e.g. every live-inference query).
 
         Returns:
             DataFrame indexed by ``time`` (datetime64) with columns
             ``[open, high, low, close, volume]``.
         """
-        logger.info("Fetching OHLCV | {} | {} → {} | {}", symbol, start, end, interval)
-        df = self._fetch_ohlcv_raw(symbol, start, end, interval, source)
+        memo_key = (symbol, start, end, interval, source)
+        if use_cache:
+            memoized = _ohlcv_memo_get(memo_key)
+            if memoized is not None:
+                return memoized.copy()
+
+        prior_df: pd.DataFrame | None = None
+        fetch_start = start
+        if use_cache:
+            overlap = _find_overlapping_ohlcv_cache(symbol, source, interval, start)
+            if overlap is not None:
+                cache_path, cached_start, cached_end = overlap
+                end_ts = pd.Timestamp(end)
+                try:
+                    prior_df = pd.read_parquet(cache_path)
+                except Exception:
+                    logger.warning("Corrupt OHLCV cache {} — ignoring", cache_path.name)
+                    prior_df = None
+                if prior_df is not None:
+                    if cached_end >= end_ts:
+                        logger.info(
+                            "OHLCV cache FULL COVER for {} from {} (needed {}..{}) — "
+                            "no fetch needed", symbol, cache_path.name, start, end,
+                        )
+                        out = prior_df[(prior_df.index >= pd.Timestamp(start)) & (prior_df.index <= end_ts)]
+                        out = out.sort_index()
+                        if use_cache:
+                            _ohlcv_memo_put(memo_key, out)
+                        return out.copy()
+                    # Partial cover: re-fetch a short buffer plus the new tail —
+                    # guards against late same-day revisions to the most recently
+                    # cached bars (a live day's close can be revised intraday).
+                    buffer_days = 5
+                    fetch_start = str((cached_end - pd.Timedelta(days=buffer_days)).date())
+                    logger.info(
+                        "OHLCV cache PARTIAL COVER for {} from {} ({}..{}) — incremental "
+                        "fetch only for {}..{} ({} prior rows reused)",
+                        symbol, cache_path.name, cached_start.date(), cached_end.date(),
+                        fetch_start, end, len(prior_df),
+                    )
+
+        logger.info("Fetching OHLCV | {} | {} → {} | {}", symbol, fetch_start, end, interval)
+        df = self._fetch_ohlcv_raw(symbol, fetch_start, end, interval, source)
 
         # Ensure datetime index
         df = _normalize_datetime_index_to_naive(df, time_col="time")
@@ -149,11 +278,30 @@ class VnstockDataFetcher:
             if col not in df.columns:
                 logger.warning("Missing column '{}' for {}", col, symbol)
         df = df[[c for c in expected_cols if c in df.columns]]
+        df = df.sort_index()
 
-        # Validate missing bars
+        if prior_df is not None:
+            # Rows before the re-fetched buffer window are untouched; the buffer
+            # window onward comes from the fresh fetch (supersedes any prior bars
+            # in that overlap, absorbing late revisions).
+            df = pd.concat([prior_df[prior_df.index < pd.Timestamp(fetch_start)], df])
+            df = df[~df.index.duplicated(keep="last")].sort_index()
+
+        if use_cache and not df.empty:
+            combined_start = str(df.index[0].date())
+            combined_end = str(df.index[-1].date())
+            try:
+                df.to_parquet(_ohlcv_cache_path(symbol, source, interval, combined_start, combined_end))
+            except Exception:
+                logger.warning("Failed to write OHLCV cache for {} — continuing without it", symbol)
+
+        out = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
+
+        # Validate missing bars over the actually REQUESTED range (not the
+        # possibly-wider fetch_start used for the incremental buffer re-fetch).
         if interval == "1D":
             trading_days = pd.bdate_range(start=start, end=end)
-            missing = trading_days.difference(df.index.normalize())
+            missing = trading_days.difference(out.index.normalize())
             if len(missing) > 0:
                 logger.warning(
                     "{} — {} missing trading days detected (of {} expected)",
@@ -162,9 +310,11 @@ class VnstockDataFetcher:
                     len(trading_days),
                 )
 
-        df = df.sort_index()
-        logger.info("OHLCV fetched | {} | {} rows", symbol, len(df))
-        return df
+        out = out.sort_index()
+        logger.info("OHLCV fetched | {} | {} rows", symbol, len(out))
+        if use_cache:
+            _ohlcv_memo_put(memo_key, out)
+        return out.copy()
 
     # ------------------------------------------------------------------
     # News

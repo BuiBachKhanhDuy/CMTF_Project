@@ -77,6 +77,30 @@ from src.multiagent.live_inference import resolve_price_parquet
 
 KNOWN_SYMBOLS = ["VCB", "BID", "CTG", "TCB", "MBB", "ACB", "VPB"]
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# Vietnamese-style bare day/month (optionally /year), e.g. "15/7", "16/7/2026" — the
+# orchestrator's date_start/date_end only get populated for RESEARCH-style range
+# queries, not a plain "predict... sau 15/7" ask, so without this a named-but-non-
+# ISO date silently fell through to the real-"today" fallback below (a genuine bug:
+# the user's explicit date was ignored).
+_DATE_DMY_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\b")
+
+
+def _extract_date(query_text: str) -> str | None:
+    """First a strict ISO date, else a Vietnamese-style D/M[/YYYY]; else None (the
+    caller decides the fallback — never guessed here). No year given assumes the
+    current real year (datetime.now()), the common case for "sau 15/7"-style asks."""
+    m = _DATE_RE.search(query_text)
+    if m:
+        return m.group(0)
+    m = _DATE_DMY_RE.search(query_text)
+    if not m:
+        return None
+    day, month, year = m.groups()
+    year = year or str(datetime.now().year)
+    try:
+        return str(pd.Timestamp(year=int(year), month=int(month), day=int(day)).date())
+    except ValueError:
+        return None  # not a real calendar date (e.g. 31/2) — fall through, don't guess
 
 DECISION_CHAIN = [
     ("predict_agent", predict_agent_node),
@@ -151,6 +175,21 @@ def _real_news_window_range(news_idx, symbol, cutoff, lookback_days):
     end = pd.Timestamp(cutoff)
     start = end - pd.Timedelta(days=lookback_days)
     return str(start.date()), str(end.date())
+
+
+def _resolve_query_frame(base_frame, in_book, date, horizon):
+    """For an in-book date, reuse the preloaded `base_frame` (the frozen research
+    range) — fast, no I/O, and it's the SAME range the model's Tier-1 (cached) path
+    already uses. For a genuinely live/out-of-book date, `predict_agent` triggers a
+    real Tier-2 fetch reaching all the way to `date` (see live_inference.py) — using
+    `base_frame` here too would silently feed `_real_vol_dd` (the risk-agent safety
+    veto) and the window disclosure with data ending at the frozen range's hardcoded
+    end, MONTHS stale relative to what the model's own forward pass actually saw.
+    Loads the SAME fresher `dataset_<hash>_livewide.parquet` Tier-2 already
+    builds/caches for (horizon, end=date) — one real fetch total, not two."""
+    if in_book:
+        return base_frame
+    return pd.read_parquet(resolve_price_parquet(horizon, allow_missing_target=True, end=date))
 
 
 def _resolve_attention_dates(frame, symbol, cutoff, top_days):
@@ -232,9 +271,9 @@ def _classify(query, cfg, default_symbol, default_horizon, sym_dates):
     # only when the query named no range at all.
     date_start = out.get("date_start")
     date_end = out.get("date_end")
-    m = _DATE_RE.search(query)
-    if m:
-        date = m.group(0)
+    explicit_date = _extract_date(query)
+    if explicit_date:
+        date = explicit_date
     else:
         # The query named NO date/range at all (e.g. "dự đoán BID 1 tuần tới" with
         # no absolute date) — anchor on the REAL wall-clock date ("hôm nay"), never
@@ -381,8 +420,14 @@ def _run_prediction_for_gap(symbol, from_date, horizon, cfg, frame, news_idx):
     """The REAL calibrated prediction chain (predict -> gate -> risk -> metalabel),
     anchored at ``from_date`` — used only for whatever portion of a requested range
     is NOT yet knowable from real data. The synthesis step narrates this; it never
-    invents it — the number and trade/abstain action always come from here."""
-    evidence = _gather_evidence(frame, news_idx, symbol, from_date, sequence_len=cfg.sequence_len)
+    invents it — the number and trade/abstain action always come from here.
+
+    Only ever called for the uncovered tail of a range (`stats["coverage"] in
+    ("partial", "none")`) — `from_date` is by definition beyond `frame`'s static
+    research range, so always resolve the fresher live-fetched frame (never the
+    stale static one) for the same reason `_resolve_query_frame` exists."""
+    query_frame = _resolve_query_frame(frame, in_book=False, date=from_date, horizon=horizon)
+    evidence = _gather_evidence(query_frame, news_idx, symbol, from_date, sequence_len=cfg.sequence_len)
     state = {
         "symbol": symbol, "target_horizon_days": horizon, "prediction_time": from_date,
         "artifact_versions": {}, "node_timings": {}, **evidence,
@@ -609,6 +654,11 @@ def main():
         # produced the identical gate-decision template — the query's actual intent
         # was never looked at. This calls the REAL orchestrator_agent (the MAS's
         # actual first layer), not a hand-rolled duplicate.
+        if args.llm:
+            # orchestrator_node makes a real (--llm mode) LLM call here for intent/
+            # entity/date parsing — with no status line the user sees total silence
+            # between hitting Enter and "→ interpreting as" showing up.
+            print("  🤔 Đang xác định ý định câu hỏi (LLM)…", flush=True)
         intent, symbol, symbols, date, date_start, date_end, horizon, route_reason = _classify(
             query, cfg, last_symbol, args.horizon, sym_dates
         )
@@ -650,11 +700,31 @@ def main():
         print(f"  → interpreting as: symbol={symbol}  date={date}  horizon={horizon}d" + note)
         try:
             with _collecting(f"Đang thu thập dữ liệu thị trường & tin tức {symbol} ({date})…"):
-                state, steps = _run_decision(symbol, date, horizon, cfg, frame, news_idx)
+                query_frame = _resolve_query_frame(frame, in_book, date, horizon)
+                state, steps = _run_decision(symbol, date, horizon, cfg, query_frame, news_idx)
         except PredictionNotCachedError as e:
             print(f"  ⚠ {str(e).splitlines()[0]}"); continue
         except ArtifactMissingError as e:
-            print(f"  ⚠ live inference unavailable: {str(e).splitlines()[0]}"); continue
+            # The requested cutoff (often real "today") has no settled row yet — the
+            # market hasn't published it. Rather than making the user manually retry
+            # an earlier date themselves (which they can't always guess correctly),
+            # fall back ONCE to the latest real trading day the live fetch just
+            # reported, and disclose the substitution honestly rather than silently.
+            fallback_date = getattr(e, "latest_available_date", None)
+            if not fallback_date or fallback_date >= date:
+                print(f"  ⚠ live inference unavailable: {str(e).splitlines()[0]}"); continue
+            print(f"  ℹ {date} chưa có dữ liệu thật (thị trường chưa công bố) — "
+                  f"tự động dùng ngày gần nhất có dữ liệu thật: {fallback_date}")
+            try:
+                fb_in_book = symbol in sym_dates and fallback_date in sym_dates.get(symbol, [])
+                with _collecting(f"Đang thu thập dữ liệu thị trường & tin tức {symbol} ({fallback_date})…"):
+                    query_frame = _resolve_query_frame(frame, fb_in_book, fallback_date, horizon)
+                    state, steps = _run_decision(symbol, fallback_date, horizon, cfg, query_frame, news_idx)
+                date = fallback_date  # keep console/state output consistent with what was actually used
+            except Exception as e2:  # noqa: BLE001 — surface, never hide (R1)
+                print(f"  ⚠ live inference unavailable even at fallback date {fallback_date}: "
+                      f"{type(e2).__name__}: {e2}")
+                continue
         except Exception as e:  # noqa: BLE001 — surface, never hide (R1)
             print(f"  ⚠ error: {type(e).__name__}: {e}"); continue
 

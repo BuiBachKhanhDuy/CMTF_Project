@@ -106,7 +106,9 @@ def _locate_row(splits, symbol: str, cutoff: str):
     return int(idx[0]) if len(idx) else None
 
 
-def resolve_price_parquet(horizon: int = 5, allow_missing_target: bool = False) -> Path:
+def resolve_price_parquet(
+    horizon: int = 5, allow_missing_target: bool = False, end: str | None = None,
+) -> Path:
     """Return the current dataset parquet path for ``horizon``, computed the same
     way ``run_pipeline`` computes its own cache key — never a hardcoded hash.
 
@@ -130,11 +132,21 @@ def resolve_price_parquet(horizon: int = 5, allow_missing_target: bool = False) 
     Built on demand if missing (unlike the standard variant, which must already
     exist from a real research run) since it reuses already-warm news/embedding
     caches and is comparatively cheap.
+
+    ``end`` overrides the pipeline config's default (hardcoded, frozen research-range)
+    end date — the SAME override ``predict_live``'s Tier-2 live fetch applies via
+    ``_pipeline_splits(horizon, end, ...)``. Passing the query's own real cutoff here
+    resolves the SAME fresher on-disk parquet Tier-2 already builds/caches for that
+    (horizon, end), so a genuinely live/out-of-book query's risk metrics and
+    disclosed data window are computed from the SAME real data the model's forward
+    pass actually consumed — never the frozen range's stale last date.
     """
     from run_ablation_benchmark import _build_pipeline_config
     from src.pipeline.orchestrator import _config_hash, _DATASET_CACHE_DIR, run_pipeline
 
     config = _build_pipeline_config(horizon)
+    if end is not None:
+        config = {**config, "end": end}
     cfg_hash = _config_hash(config)
     suffix = "_livewide" if allow_missing_target else ""
     path = _DATASET_CACHE_DIR / f"dataset_{cfg_hash}{suffix}.parquet"
@@ -184,12 +196,17 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
         days = np.asarray(splits["test"]["times"]).astype("datetime64[D]")
         syms = np.asarray(splits["test"]["symbols"])
         avail = sorted(str(d) for d in np.unique(days[syms == symbol]))
-        raise ArtifactMissingError(
+        err = ArtifactMissingError(
             f"No pipeline row for symbol={symbol} date={cutoff} at {horizon}d. "
             f"Available for {symbol}: {avail[0] if avail else '(none)'} .. "
             f"{avail[-1] if avail else '(none)'} ({len(avail)} dates). "
             f"cutoff must be >= the OHLCV fetch start and <= data_end (or today)."
         )
+        # Structured (not string-parsed) so callers — e.g. chat.py's "today has no
+        # settled data yet, fall back to the latest real trading day" retry — don't
+        # need to scrape this message's prose to find it.
+        err.latest_available_date = avail[-1] if avail else None
+        raise err
 
     mw_te, ne_te, nm_te = _prep_test_arrays(cell, splits, market_cols)
 

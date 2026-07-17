@@ -288,8 +288,27 @@ def extract_per_symbol_data(
         raw_df = raw_ohlcv[sym][["close"]].rename(columns={"close": "raw_close"})
         sym_df = sym_df.merge(raw_df, left_on="time", right_index=True, how="left")
 
-        missing = int(sym_df["raw_close"].isna().sum())
-        assert missing == 0, f"{sym}: {missing} timestamps missing after merge with raw OHLCV"
+        missing_mask = sym_df["raw_close"].isna()
+        missing = int(missing_mask.sum())
+        if missing > 0 and allow_missing_target:
+            # Live-inference only (`allow_missing_target=True`): `dataset` and
+            # `raw_ohlcv` come from two SEPARATE live fetches of the same range —
+            # for a genuinely current/live `end`, the freshest trading day can be
+            # mid-settlement, so the two fetches can legitimately disagree on
+            # whether "today"'s bar exists yet. Drop the unmatched row(s) rather
+            # than crash — conservative (never fabricate a raw_close), logged (not
+            # silent), and never triggered for the historical research pipeline
+            # (`allow_missing_target=False` below still asserts — a real mismatch
+            # there means a genuine data-integrity bug, not a live boundary).
+            logger.warning(
+                "{}: {} timestamp(s) missing after merge with raw OHLCV (live "
+                "boundary-day mismatch) — dropping: {}",
+                sym, missing, sym_df.loc[missing_mask, "time"].tolist(),
+            )
+            sym_df = sym_df.loc[~missing_mask].reset_index(drop=True)
+            n = len(sym_df)
+        else:
+            assert missing == 0, f"{sym}: {missing} timestamps missing after merge with raw OHLCV"
 
         raw_c = sym_df["raw_close"].to_numpy(dtype=np.float64)
 

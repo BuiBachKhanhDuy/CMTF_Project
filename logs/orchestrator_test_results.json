@@ -1,0 +1,210 @@
+[
+  {
+    "query": "phân tích cổ phiếu MBB trong tháng 3 2026",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [
+      "MBB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-03-01",
+    "date_end": "2026-03-31",
+    "note": "the original bug case"
+  },
+  {
+    "query": "tình hình VCB tháng trước ra sao",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-06-17",
+    "date_end": "2026-07-17",
+    "note": "no 'phân tích' keyword, past framing"
+  },
+  {
+    "query": "VCB có nên mua không",
+    "expected": "PREDICTION",
+    "got": "PREDICTION",
+    "ok": true,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": null,
+    "date_end": null,
+    "note": "clear forward-looking ask, no date"
+  },
+  {
+    "query": "dự báo BID 5 ngày tới",
+    "expected": "PREDICTION",
+    "got": "PREDICTION",
+    "ok": true,
+    "symbols": [
+      "BID"
+    ],
+    "horizon": "5d",
+    "date_start": null,
+    "date_end": null,
+    "note": "forecast ask, explicit horizon"
+  },
+  {
+    "query": "MBB tuần sau thế nào",
+    "expected": "PREDICTION",
+    "got": "PREDICTION",
+    "ok": true,
+    "symbols": [
+      "MBB"
+    ],
+    "horizon": "5d",
+    "date_start": null,
+    "date_end": null,
+    "note": "implicit forward-looking, no explicit verb"
+  },
+  {
+    "query": "tại sao VCB giảm hôm qua",
+    "expected": "EXPLANATION",
+    "got": "EXPLANATION",
+    "ok": true,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": null,
+    "date_end": null,
+    "note": "why-question about a past move"
+  },
+  {
+    "query": "vì sao BID tăng mạnh",
+    "expected": "EXPLANATION",
+    "got": "EXPLANATION",
+    "ok": true,
+    "symbols": [
+      "BID"
+    ],
+    "horizon": "1d",
+    "date_start": null,
+    "date_end": null,
+    "note": "why-question, different phrasing"
+  },
+  {
+    "query": "so sánh VCB và BID",
+    "expected": "COMPARISON",
+    "got": "COMPARISON",
+    "ok": true,
+    "symbols": [
+      "VCB",
+      "BID"
+    ],
+    "horizon": "1d",
+    "date_start": null,
+    "date_end": null,
+    "note": "2-symbol comparison, no date"
+  },
+  {
+    "query": "so sánh VCB và BID trong tháng 3 2026",
+    "expected": "COMPARISON",
+    "got": "COMPARISON",
+    "ok": true,
+    "symbols": [
+      "VCB",
+      "BID"
+    ],
+    "horizon": "20d",
+    "date_start": "2026-03-01",
+    "date_end": "2026-03-31",
+    "note": "comparison + date range"
+  },
+  {
+    "query": "should I buy MBB",
+    "expected": "PREDICTION",
+    "got": "PREDICTION",
+    "ok": true,
+    "symbols": [
+      "MBB"
+    ],
+    "horizon": "1d",
+    "date_start": null,
+    "date_end": null,
+    "note": "English, forward-looking"
+  },
+  {
+    "query": "analyze VCB trend in March 2026",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-03-01",
+    "date_end": "2026-03-31",
+    "note": "English, analytical + date range"
+  },
+  {
+    "query": "cổ phiếu MBB đã diễn biến ra sao trong quý 1 2026",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [
+      "MBB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-04-01",
+    "date_end": "2026-06-30",
+    "note": "past-tense, no 'phân tích'"
+  },
+  {
+    "query": "BID nên mua hay bán trong 20 ngày tới",
+    "expected": "PREDICTION",
+    "got": "PREDICTION",
+    "ok": true,
+    "symbols": [
+      "BID"
+    ],
+    "horizon": "20d",
+    "date_start": null,
+    "date_end": null,
+    "note": "forward ask with an explicit horizon phrase"
+  },
+  {
+    "query": "phân tích ngành ngân hàng tháng 3 2026",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [],
+    "horizon": "1d",
+    "date_start": "2026-03-01",
+    "date_end": "2026-03-31",
+    "note": "sector-level research, no single stock symbol"
+  },
+  {
+    "query": "xu hướng VCB quý vừa rồi",
+    "expected": "RESEARCH",
+    "got": "RESEARCH",
+    "ok": true,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-04-30",
+    "date_end": "2026-07-17",
+    "note": "trend + recent past quarter, no explicit month"
+  },
+  {
+    "query": "phân tích VCB tuần trước",
+    "expected": "RESEARCH",
+    "got": "EXPLANATION",
+    "ok": false,
+    "symbols": [
+      "VCB"
+    ],
+    "horizon": "1d",
+    "date_start": "2026-07-10",
+    "date_end": "2026-07-14",
+    "note": "relative date (last week) — should resolve near real today, not hallucinate"
+  }
+]
