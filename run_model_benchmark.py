@@ -1750,5 +1750,3 @@ def main() -> None:
     logger.info("═══ Benchmark complete ═══")
 
 
-if __name__ == "__main__":
-    main()

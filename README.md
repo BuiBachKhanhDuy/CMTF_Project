@@ -6,18 +6,18 @@ A multimodal time-series forecasting system that fuses **OHLCV market data** wit
 
 Install these on the target machine **before** cloning:
 
-| Requirement | Why | Notes |
-|---|---|---|
-| **Python 3.11** (3.11.x) | Matches the pinned toolchain (`torch`, `chronos-forecasting`, `sentence-transformers` wheels). | 3.12+/3.14 may fail to resolve wheels. Verify with `python --version`. |
-| **Git + Git LFS** | Sentiment checkpoints (`phobert.pt` ≈ 542 MB) are stored via LFS. | `git lfs install` once per machine. |
-| **~4 GB free disk** | Pip packages + runtime caches (`cache/` grows to several GB). | |
-| **Network access** | The data pipeline fetches live OHLCV (vnstock/VCI) and scrapes Vietnamese news (CafeF/VnExpress/Vietstock/Google News). | Vietnam-facing endpoints; a proxy may block them. |
-| **Ollama + `qwen2.5:7b-instruct`** (optional) | Only for real-LLM narration in `chat.py --llm` and the H3/H4/H5 LLM evals. | Server at `http://localhost:11434`. The default (LLM-free) path needs none. |
+| Requirement                                   | Why                                                                                                                     | Notes                                                                       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **Python 3.11** (3.11.x)                      | Matches the pinned toolchain (`torch`, `chronos-forecasting`, `sentence-transformers` wheels).                          | 3.12+/3.14 may fail to resolve wheels. Verify with `python --version`.      |
+| **Git + Git LFS**                             | Sentiment checkpoints (`phobert.pt` ≈ 542 MB) are stored via LFS.                                                       | `git lfs install` once per machine.                                         |
+| **~4 GB free disk**                           | Pip packages + runtime caches (`cache/` grows to several GB).                                                           |                                                                             |
+| **Network access**                            | The data pipeline fetches live OHLCV (vnstock/VCI) and scrapes Vietnamese news (CafeF/VnExpress/Vietstock/Google News). | Vietnam-facing endpoints; a proxy may block them.                           |
+| **Ollama + `qwen2.5:7b-instruct`** (optional) | Only for real-LLM narration in `chat.py --llm` and the H3/H4/H5 LLM evals.                                              | Server at `http://localhost:11434`. The default (LLM-free) path needs none. |
 
 > Reproducibility note: a small **offline demo bundle** IS committed (deploy checkpoints,
 > frozen predictions, news index, and the 6 current-champion dataset parquets under
 > `cache/`), so the real-time multi-agent chatbot (`python chat.py`) runs immediately after
-> Setup — no rebuild, no network. Reproducing the *full* research (all benchmarks/ablations)
+> Setup — no rebuild, no network. Reproducing the _full_ research (all benchmarks/ablations)
 > still rebuilds the heavy caches from the pipeline (Steps 1–6), which re-fetches live data,
 > so regenerated numbers track — but are not bit-for-bit identical with — the committed
 > `results/` tables. See [Reproducibility & Caches](#reproducibility--caches).
@@ -246,12 +246,12 @@ Thesis-facing writeups live in [research/](research/) (tracked, one folder per p
 there on a fresh clone. The `docs/` reference notes below are **git-ignored** (local only):
 
 - [research/](research/) — phase-by-phase research documents (Phases 1–5), **tracked**
-- [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) — Phase 2/3 fusion research findings *(local)*
-- [docs/reference/RESULTS_IMPROVEMENT_LEVERS.md](docs/reference/RESULTS_IMPROVEMENT_LEVERS.md) — Phase 3 improvement-lever experiments *(local)*
-- [docs/reference/CACHING_GUIDE.md](docs/reference/CACHING_GUIDE.md) — cache layout for ablation/benchmark runs *(local)*
-- [docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md](docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md) — literature review & research agenda *(local)*
-- [docs/reference/MULTIAGENT_SYSTEM.md](docs/reference/MULTIAGENT_SYSTEM.md) — Phase 4/5 multiagent architecture, workflow & results *(local)*
-- [docs/reference/MULTIAGENT_REDESIGN_PLAN.md](docs/reference/MULTIAGENT_REDESIGN_PLAN.md) — Phase 4 design rationale / decision log *(local)*
+- [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) — Phase 2/3 fusion research findings _(local)_
+- [docs/reference/RESULTS_IMPROVEMENT_LEVERS.md](docs/reference/RESULTS_IMPROVEMENT_LEVERS.md) — Phase 3 improvement-lever experiments _(local)_
+- [docs/reference/CACHING_GUIDE.md](docs/reference/CACHING_GUIDE.md) — cache layout for ablation/benchmark runs _(local)_
+- [docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md](docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md) — literature review & research agenda _(local)_
+- [docs/reference/MULTIAGENT_SYSTEM.md](docs/reference/MULTIAGENT_SYSTEM.md) — Phase 4/5 multiagent architecture, workflow & results _(local)_
+- [docs/reference/MULTIAGENT_REDESIGN_PLAN.md](docs/reference/MULTIAGENT_REDESIGN_PLAN.md) — Phase 4 design rationale / decision log _(local)_
 - [docs/report.md](docs/report.md) — full thesis document (LaTeX source, local/untracked)
 
 ## Stack
@@ -263,25 +263,25 @@ there on a fresh clone. The `docs/` reference notes below are **git-ignored** (l
 
 ## Experiments
 
-| # | Experiment | Description |
-|---|-----------|-------------|
-| 1 | Chronos Zero-Shot | Foundation model predicts directly (no training) |
-| 2 | CMTF | LoRA-tuned Chronos backbone with FiLM + GRN fusion of market + news embeddings |
-| 3 | LSTM Baseline | Sequence model baseline on close windows |
-| 4 | LSTM + CMTF | LSTM embeddings fused with CMTF (residual-gated) |
-| 5 | Random Forest Baseline | Tabular baseline over engineered market features |
-| 6 | Chronos Fine-Tuned (LoRA) | Market-only Chronos baseline fine-tuned with LoRA |
+| #   | Experiment                | Description                                                                    |
+| --- | ------------------------- | ------------------------------------------------------------------------------ |
+| 1   | Chronos Zero-Shot         | Foundation model predicts directly (no training)                               |
+| 2   | CMTF                      | LoRA-tuned Chronos backbone with FiLM + GRN fusion of market + news embeddings |
+| 3   | LSTM Baseline             | Sequence model baseline on close windows                                       |
+| 4   | LSTM + CMTF               | LSTM embeddings fused with CMTF (residual-gated)                               |
+| 5   | Random Forest Baseline    | Tabular baseline over engineered market features                               |
+| 6   | Chronos Fine-Tuned (LoRA) | Market-only Chronos baseline fine-tuned with LoRA                              |
 
 ## Key Results (20-Day Horizon, VCB + BID)
 
-| Model | DA% | Sharpe | F1 | IC |
-|-------|-----|--------|----|----|
-| Chronos Zero-Shot | 46.8 | -0.32 | 0.48 | -0.13 |
-| **CMTF** | **68.7** | **1.19** | **0.61** | **0.46** |
-| LSTM Baseline | 55.7 | 0.32 | 0.63 | 0.28 |
-| LSTM + CMTF | 57.8 | 0.81 | 0.65 | 0.28 |
-| Random Forest Baseline | 52.9 | 0.02 | 0.46 | 0.01 |
-| Chronos Fine-Tuned (LoRA) | 47.5 | 0.03 | 0.64 | -0.15 |
+| Model                     | DA%      | Sharpe   | F1       | IC       |
+| ------------------------- | -------- | -------- | -------- | -------- |
+| Chronos Zero-Shot         | 46.8     | -0.32    | 0.48     | -0.13    |
+| **CMTF**                  | **68.7** | **1.19** | **0.61** | **0.46** |
+| LSTM Baseline             | 55.7     | 0.32     | 0.63     | 0.28     |
+| LSTM + CMTF               | 57.8     | 0.81     | 0.65     | 0.28     |
+| Random Forest Baseline    | 52.9     | 0.02     | 0.46     | 0.01     |
+| Chronos Fine-Tuned (LoRA) | 47.5     | 0.03     | 0.64     | -0.15    |
 
 CMTF is the strongest model on the 20-day horizon by RMSE, DA%, Sharpe, IC, and composite score.
 

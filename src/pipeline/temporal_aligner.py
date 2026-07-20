@@ -43,6 +43,19 @@ class TemporalAligner:
             ``news_count``, ``news_titles``, ``news_content``, ``has_news``.
         """
         ohlcv = df_ohlcv.copy()
+
+        print("=" * 80)
+        print("Index unique:", ohlcv.index.is_unique)
+        print("Duplicated:", ohlcv.index.duplicated().sum())
+
+        if "symbol" in ohlcv.columns:
+            print(ohlcv[["symbol"]].head(20))
+        else:
+            print("No symbol column")
+
+        print(ohlcv.head())
+        print("=" * 80)
+
         ohlcv.index = pd.to_datetime(ohlcv.index)
 
         if ohlcv.index.tz is None:
@@ -62,7 +75,9 @@ class TemporalAligner:
 
         news = df_news.copy()
         news["published_date"] = pd.to_datetime(news["published_date"], utc=True)
-        news["published_date"] = news["published_date"].dt.tz_convert("Asia/Ho_Chi_Minh")
+        news["published_date"] = news["published_date"].dt.tz_convert(
+            "Asia/Ho_Chi_Minh"
+        )
         news = news.sort_values("published_date")
 
         bar_times = ohlcv.index.sort_values()
@@ -106,7 +121,10 @@ class TemporalAligner:
             pub_date = pub.normalize()
 
             has_midnight_time = (
-                pub.hour == 0 and pub.minute == 0 and pub.second == 0 and pub.microsecond == 0
+                pub.hour == 0
+                and pub.minute == 0
+                and pub.second == 0
+                and pub.microsecond == 0
             )
             if has_midnight_time or pub.hour >= _MARKET_CLOSE_HOUR:
                 # Unknown exact time or after close -> next bar conservatively
@@ -122,24 +140,64 @@ class TemporalAligner:
             target_date = future_bars[0]
 
             # Match to ohlcv rows whose date equals target_date
-            mask = ohlcv.index.normalize() == target_date
-            idxs = ohlcv.index[mask]
-            if idxs.empty:
+            # mask = ohlcv.index.normalize() == target_date
+            # idxs = ohlcv.index[mask]
+            # if idxs.empty:
+            #     continue
+
+            # idx = idxs[0]
+            positions = (ohlcv.index.normalize() == target_date).nonzero()[0]
+
+            if len(positions) == 0:
                 continue
 
-            idx = idxs[0]
-            pos = ohlcv.index.get_loc(idx)
-            if isinstance(pos, slice):
-                pos = pos.start  # type: ignore[assignment]
+            pos = positions[0]
 
-            ohlcv.at[idx, "news_count"] += 1
-            ohlcv.at[idx, "news_titles"] = ohlcv.at[idx, "news_titles"] + [
-                str(article.get("title", ""))
-            ]
-            ohlcv.at[idx, "news_content"] = ohlcv.at[idx, "news_content"] + [
-                str(article.get("content", ""))
-            ]
-            ohlcv.at[idx, "has_news"] = True
+            # idx = idxs[0]
+            # pos = ohlcv.index.get_loc(idx)
+            # if isinstance(pos, slice):
+            #     pos = pos.start  # type: ignore[assignment]
+
+            # ohlcv.at[idx, "news_count"] += 1
+            # ohlcv.at[idx, "news_titles"] = ohlcv.at[idx, "news_titles"] + [
+            #     str(article.get("title", ""))
+            # ]
+            # ohlcv.at[idx, "news_content"] = ohlcv.at[idx, "news_content"] + [
+            #     str(article.get("content", ""))
+            # ]
+            # ohlcv.at[idx, "has_news"] = True
+
+            # luôn lấy vị trí integer
+            # pos = ohlcv.index.get_indexer([idx])[0]
+
+            # ohlcv.iat[pos, ohlcv.columns.get_loc("news_count")] += 1
+
+            # titles = list(ohlcv.iat[pos, ohlcv.columns.get_loc("news_titles")])
+            # titles.append(str(article.get("title", "")))
+            # ohlcv.iat[pos, ohlcv.columns.get_loc("news_titles")] = titles
+
+            # contents = list(ohlcv.iat[pos, ohlcv.columns.get_loc("news_content")])
+            # contents.append(str(article.get("content", "")))
+            # ohlcv.iat[pos, ohlcv.columns.get_loc("news_content")] = contents
+
+            # ohlcv.iat[pos, ohlcv.columns.get_loc("has_news")] = True
+
+            news_col = ohlcv.columns.get_loc("news_titles")
+            content_col = ohlcv.columns.get_loc("news_content")
+            count_col = ohlcv.columns.get_loc("news_count")
+            has_col = ohlcv.columns.get_loc("has_news")
+
+            ohlcv.iat[pos, count_col] += 1
+
+            titles = list(ohlcv.iat[pos, news_col])
+            titles.append(str(article.get("title", "")))
+            ohlcv.iat[pos, news_col] = titles
+
+            contents = list(ohlcv.iat[pos, content_col])
+            contents.append(str(article.get("content", "")))
+            ohlcv.iat[pos, content_col] = contents
+
+            ohlcv.iat[pos, has_col] = True
 
         return ohlcv
 

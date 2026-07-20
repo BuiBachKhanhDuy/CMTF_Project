@@ -37,20 +37,29 @@ class LivePrediction:
     symbol: str
     date: str
     horizon: int
-    gate_pred: float          # 3-seed ensemble mean (matches the calibrated gate)
+    gate_pred: float  # 3-seed ensemble mean (matches the calibrated gate)
     seed_preds: list[float]
-    truth: float | None       # realised return if the date is old enough, else None
+    truth: float | None  # realised return if the date is old enough, else None
     n_symbols_in_universe: int
-    attn_weights: np.ndarray | None = None    # (S,) per-trailing-day attention, 3-seed mean
-    recency_gate: np.ndarray | None = None    # (S,) per-trailing-day recency gate, 3-seed mean
+    attn_weights: np.ndarray | None = (
+        None  # (S,) per-trailing-day attention, 3-seed mean
+    )
+    recency_gate: np.ndarray | None = (
+        None  # (S,) per-trailing-day recency gate, 3-seed mean
+    )
 
 
-def deploy_checkpoint_paths(horizon: int, deploy_dir: str | Path = _DEPLOY_DIR) -> list[Path]:
+def deploy_checkpoint_paths(
+    horizon: int, deploy_dir: str | Path = _DEPLOY_DIR
+) -> list[Path]:
     """Glob the deploy checkpoints for this horizon — the single source of truth for
     "does a live-inference champion exist for this horizon", shared with
     ``readiness.py`` so the two can never drift out of sync on the glob pattern.
     ``deploy_dir`` is overridable (readiness tests point it at a tmp_path fixture)."""
-    return sorted(Path(p) for p in glob.glob(str(Path(deploy_dir) / f"cmtf_lstm_{horizon}d_seed*.pt")))
+    return sorted(
+        Path(p)
+        for p in glob.glob(str(Path(deploy_dir) / f"cmtf_lstm_{horizon}d_seed*.pt"))
+    )
 
 
 def _deploy_models(horizon: int):
@@ -62,7 +71,10 @@ def _deploy_models(horizon: int):
             f"run `SAVE_DEPLOY_MODEL=1 python run_ablation_registry.py --cells 0 "
             f"--horizons {horizon} --seeds 1 42 123` to train + persist it."
         )
-    return [(p.stem, torch.load(str(p), map_location="cpu", weights_only=False)) for p in paths]
+    return [
+        (p.stem, torch.load(str(p), map_location="cpu", weights_only=False))
+        for p in paths
+    ]
 
 
 @lru_cache(maxsize=4)
@@ -81,20 +93,31 @@ def _pipeline_splits(horizon: int, end: str | None, allow_missing_target: bool =
     there preserves the exact bit-for-bit reproduction of the frozen research splits.
     """
     from run_ablation_benchmark import _build_pipeline_config, _extract_and_split
+
     cfg = _build_pipeline_config(horizon)
     if end is not None:
         cfg = {**cfg, "end": end}
-    splits, market_cols = _extract_and_split(cfg, allow_missing_target=allow_missing_target)
+    splits, market_cols = _extract_and_split(
+        cfg, allow_missing_target=allow_missing_target
+    )
     return splits, market_cols
 
 
 def _prep_test_arrays(cell, splits, market_cols):
     """Reproduce the champion's test-feature prep (news scope + sentiment mode)."""
     from src.benchmark.ablation_runner import _get_news_arrays, _apply_sentiment_mode
+
     ne_tr, ne_v, ne_te, nm_tr, nm_v, nm_te = _get_news_arrays(cell, splits)
     _mw_tr, _mw_v, mw_te, _ne_tr, _ne_v, ne_te, _cols = _apply_sentiment_mode(
-        cell, splits["train"]["market_windows"].copy(), splits["val"]["market_windows"].copy(),
-        splits["test"]["market_windows"].copy(), ne_tr, ne_v, ne_te, market_cols)
+        cell,
+        splits["train"]["market_windows"].copy(),
+        splits["val"]["market_windows"].copy(),
+        splits["test"]["market_windows"].copy(),
+        ne_tr,
+        ne_v,
+        ne_te,
+        market_cols,
+    )
     return mw_te, ne_te, nm_te
 
 
@@ -149,8 +172,13 @@ def resolve_price_parquet(horizon: int = 5, allow_missing_target: bool = False) 
     return path
 
 
-def predict_live(symbol: str, cutoff: str, horizon: int = 5,
-                 config: MultiAgentConfig | None = None, data_end: str | None = None) -> LivePrediction:
+def predict_live(
+    symbol: str,
+    cutoff: str,
+    horizon: int = 5,
+    config: MultiAgentConfig | None = None,
+    data_end: str | None = None,
+) -> LivePrediction:
     """Real forward-pass prediction for (symbol, cutoff) via the training pipeline.
 
     Two-tier lookup:
@@ -170,6 +198,20 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
     # Tier 1: cached research range (fast, bit-exact).
     splits, market_cols = _pipeline_splits(horizon, None)
     i = _locate_row(splits, symbol, cutoff)
+
+    # # ==== THÊM KIỂM TRA AN TOÀN TẠI ĐÂY ====
+    # if "test" not in splits or i is None:
+    #     # Thử lại với allow_missing_target=True để tạo test set dù có missing values
+    #     splits, market_cols = _pipeline_splits(horizon, None, allow_missing_target=True)
+    #     i = _locate_row(splits, symbol, cutoff)
+    #     # Nếu vẫn không có test set hoặc không tìm thấy row, báo lỗi rõ ràng thay vì KeyError
+    #     if "test" not in splits or i is None:
+    #         raise ArtifactMissingError(
+    #             f"Không thể tạo bộ validation/test cho {symbol} {date} horizon={horizon}d. "
+    #             f"Dữ liệu có thể thiếu hoặc quá sparse. "
+    #             f"Gợi ý: Kiểm tra kết nốiinternet hoặc giảm horizon (ví dụ: --horizon 1)."
+    #         )
+    # # ==== KẾT THÚC KIỂM TRA ====
 
     # Tier 2: fresh fetch extended to the query date (realtime path).
     # allow_missing_target=True: `cutoff` may be within `horizon` trading days of
@@ -197,7 +239,9 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
     attn_by_seed, recency_by_seed = [], []
     for _name, model in _deploy_models(horizon):
         p, attn, recency = model.predict_with_attention(
-            mw_te[i:i + 1], ne_te[i:i + 1], nm_te[i:i + 1] if nm_te is not None else None,
+            mw_te[i : i + 1],
+            ne_te[i : i + 1],
+            nm_te[i : i + 1] if nm_te is not None else None,
         )
         seed_preds.append(float(np.asarray(p).ravel()[0]))
         if attn is not None:
@@ -216,8 +260,15 @@ def predict_live(symbol: str, cutoff: str, horizon: int = 5,
         truth = None
 
     return LivePrediction(
-        symbol=symbol, date=str(cutoff), horizon=horizon, gate_pred=gate_pred,
-        seed_preds=seed_preds, truth=truth,
-        n_symbols_in_universe=int(len(np.unique(np.asarray(splits["test"]["symbols"])))),
-        attn_weights=attn_weights, recency_gate=recency_gate,
+        symbol=symbol,
+        date=str(cutoff),
+        horizon=horizon,
+        gate_pred=gate_pred,
+        seed_preds=seed_preds,
+        truth=truth,
+        n_symbols_in_universe=int(
+            len(np.unique(np.asarray(splits["test"]["symbols"])))
+        ),
+        attn_weights=attn_weights,
+        recency_gate=recency_gate,
     )

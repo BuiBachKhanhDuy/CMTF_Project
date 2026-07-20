@@ -4,8 +4,7 @@
 Run:
     .venv/Scripts/python.exe chat.py            # fast (deterministic, grounded answer, no LLM)
     .venv/Scripts/python.exe chat.py --llm       # real LLM narration + metalabel news check (needs Ollama)
-    .venv/Scripts/python.exe chat.py --web       # web interface (HTTP API)
-    .venv/Scripts/python.exe chat.py --web --port 8080  # web interface on custom port
+    streamlit run chat.py                        # web interface (Streamlit UI)
 
 Then just type, e.g.:
     VCB                          -> latest cached date, 5d
@@ -538,6 +537,7 @@ def _run_rank(symbols, date, horizon, cfg):
     print(f"    ABSTAIN: {out['rank_abstained']}")
     if out["warnings"]:
         print(f"    ! {out['warnings']}")
+    return out
 
 
 def _handle_rank(query, cfg, default_horizon):
@@ -546,10 +546,10 @@ def _handle_rank(query, cfg, default_horizon):
     m = _DATE_RE.search(query)
     if not syms or not m:
         print("  usage: rank VCB,BID,CTG 2025-08-13")
-        return
+        return None
     symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
     horizon = _extract_horizon(query, cfg, default_horizon)
-    _run_rank(symbols, m.group(0), horizon, cfg)
+    return _run_rank(symbols, m.group(0), horizon, cfg)
 
 
 def _run_prediction_for_gap(symbol, from_date, horizon, cfg, frame, news_idx):
@@ -789,17 +789,287 @@ def _run_research(symbol, date_start, date_end, horizon, cfg, frame, news_idx):
                     symbol, date_start, date_end, stats, articles, prediction, llm_cfg
                 )
             print(f"  💬 {answer}")
-            return
+            return {
+                "stats": stats,
+                "articles": articles,
+                "prediction": prediction,
+                "answer": answer,
+            }
         except Exception as e:  # noqa: BLE001 — surface, fall back, never hide (R1)
             print(
                 f"  (LLM tạm không khả dụng: {type(e).__name__}; dùng phân tích xác định thay thế)"
             )
-    print(
-        f"  💬 {_deterministic_conclusion(symbol, date_start, date_end, stats, articles, prediction)}"
+    det_ans = _deterministic_conclusion(
+        symbol, date_start, date_end, stats, articles, prediction
     )
+    print(f"  💬 {det_ans}")
+    return {
+        "stats": stats,
+        "articles": articles,
+        "prediction": prediction,
+        "answer": det_ans,
+    }
+
+
+def run_streamlit_gui():
+    """Renders the Streamlit Web Interface wrapping the exact same agent logic."""
+    import streamlit as st
+
+    st.set_page_config(
+        page_title="Multi-Agent Stock Advisor", layout="wide", page_icon="📊"
+    )
+    st.title("📊 Multi-Agent Stock Advisor Demonstration")
+    st.markdown("---")
+
+    # Mode and Config Selection in Sidebar
+    st.sidebar.header("⚙️ Configuration")
+    use_llm = st.sidebar.checkbox(
+        "Enable LLM Mode (--llm)",
+        value=False,
+        help="Real LLM narration + metalabel news check",
+    )
+    default_horizon = st.sidebar.selectbox(
+        "Default Horizon (days)", options=[1, 5, 20], index=1
+    )
+
+    # Initialize shared variables or caches inside Streamlit session state
+    if "loaded_data" not in st.session_state:
+        with st.spinner("Loading model predictions, gate, price & news data ..."):
+            cfg = MultiAgentConfig(evaluation_mode=not use_llm)
+            store = get_store(default_horizon, cfg)
+            sym_dates = _symbol_dates(store)
+            frame = pd.read_parquet(
+                resolve_price_parquet(default_horizon, allow_missing_target=True)
+            )
+            frame.index = pd.to_datetime(frame.index).tz_localize(None).normalize()
+            news_idx = load_news_index()
+            lo = min(d for ds in sym_dates.values() for d in ds)
+            hi = max(d for ds in sym_dates.values() for d in ds)
+
+            st.session_state["loaded_data"] = {
+                "cfg": cfg,
+                "store": store,
+                "sym_dates": sym_dates,
+                "frame": frame,
+                "news_idx": news_idx,
+                "lo": lo,
+                "hi": hi,
+            }
+
+    data = st.session_state["loaded_data"]
+    # Dynamic config updates based on checkbox
+    data["cfg"].evaluation_mode = not use_llm
+
+    # System Status Banner
+    mode_str = (
+        "🧠 LLM (real narration)" if use_llm else "⚡ FAST (deterministic, no LLM)"
+    )
+    st.sidebar.info(f"**Current Mode:** {mode_str}")
+    st.sidebar.markdown(f"**Universe:** {', '.join(KNOWN_SYMBOLS)}")
+    st.sidebar.markdown(f"**Cached Range:** `{data['lo']}` to `{data['hi']}`")
+
+    # Sample Queries Helper
+    st.markdown("### 💡 Quick Examples")
+    cols = st.columns(4)
+    examples = [
+        "VCB 2025-08-13",
+        "BID có nên mua 5 ngày tới",
+        "rank VCB,BID,CTG 2025-08-13",
+        "Phân tích xu hướng TCB",
+    ]
+    for i, ex in enumerate(examples):
+        if cols[i].button(ex, key=f"ex_{i}"):
+            st.session_state["query_input"] = ex
+
+    # Main Chat Input
+    query = st.text_input(
+        "**Enter your financial query or command:**",
+        key="query_input",
+        placeholder="e.g., VCB 2025-08-13",
+    )
+
+    if query:
+        query_strip = query.strip()
+        low = query_strip.lower()
+
+        if low in ("help", "?"):
+            st.info(
+                "Type: `<SYMBOL> [YYYY-MM-DD] [horizon]` | natural question (EN/VI) | `rank A,B,C DATE` | `symbols`"
+            )
+        elif low == "symbols":
+            st.success(
+                f"Supported Symbols: {', '.join(KNOWN_SYMBOLS)} (Available book dates: {data['lo']} .. {data['hi']})"
+            )
+        elif low.startswith("rank"):
+            with st.spinner("Running Multi-Agent Ranking..."):
+                parts = query_strip.split()
+                syms = next((p for p in parts if "," in p), None)
+                m = _DATE_RE.search(query_strip)
+                if not syms or not m:
+                    st.error(
+                        "Usage syntax error. Example: `rank VCB,BID,CTG 2025-08-13`"
+                    )
+                else:
+                    symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
+                    horizon = _extract_horizon(
+                        query_strip, data["cfg"], default_horizon
+                    )
+                    out = rank_agent_node(
+                        {
+                            "target_symbols": symbols,
+                            "target_horizon_days": horizon,
+                            "prediction_time": m.group(0),
+                            "node_timings": {},
+                        },
+                        data["cfg"],
+                    )
+
+                    st.markdown(f"### 📈 Cross-Sectional Ranking @ **{m.group(0)}**")
+                    st.json(
+                        {
+                            "LONG Positions": out["rank_longs"],
+                            "SHORT Positions": out["rank_shorts"],
+                            "ABSTAINED Nodes": out["rank_abstained"],
+                            "Warnings": out["warnings"],
+                        }
+                    )
+        else:
+            # Standard Route Extraction via original _classify function
+            (
+                intent,
+                symbol,
+                symbols,
+                date,
+                date_start,
+                date_end,
+                horizon,
+                route_reason,
+            ) = _classify(
+                query_strip, data["cfg"], "VCB", default_horizon, data["sym_dates"]
+            )
+
+            if symbol is None:
+                st.error(
+                    f"Couldn't identify any known symbol. Supported: {', '.join(KNOWN_SYMBOLS)}"
+                )
+                return
+
+            st.write(
+                f"🗺️ *Orchestrator routing:* `intent={intent}`, `symbol={symbol}`, `date={date}`, `horizon={horizon}d` ({route_reason})"
+            )
+
+            if intent == "COMPARISON":
+                if len(symbols) >= 2 and date:
+                    with st.spinner("Processing asset comparison..."):
+                        out = rank_agent_node(
+                            {
+                                "target_symbols": symbols,
+                                "target_horizon_days": horizon,
+                                "prediction_time": date,
+                                "node_timings": {},
+                            },
+                            data["cfg"],
+                        )
+                        st.json(out)
+                else:
+                    st.warning(
+                        "Comparison needs 2+ known symbols and a concrete date. E.g., `VCB vs BID 2025-08-13`"
+                    )
+
+            elif intent == "RESEARCH":
+                with st.spinner(
+                    f"Gathering historical news & market stats for {symbol}..."
+                ):
+                    try:
+                        res = _run_research(
+                            symbol,
+                            date_start,
+                            date_end,
+                            horizon,
+                            data["cfg"],
+                            data["frame"],
+                            data["news_idx"],
+                        )
+                        if res:
+                            st.markdown("### 💬 System Analysis Output")
+                            st.info(res["answer"])
+
+                            st.markdown("#### 📊 Real Data Summary Metrics")
+                            st.columns(3)[0].metric(
+                                "Return %", f"{res['stats']['return_pct']:+.2f}%"
+                            )
+                            st.columns(3)[1].metric(
+                                "Volatility %", f"{res['stats']['volatility_pct']:.2f}%"
+                            )
+                            st.columns(3)[2].metric(
+                                "Max Drawdown %",
+                                f"{res['stats']['max_drawdown_pct']:.2f}%",
+                            )
+
+                            if res["articles"]:
+                                with st.expander(
+                                    f"📰 Trailing News Corpus ({len(res['articles'])} articles found)"
+                                ):
+                                    for a in res["articles"][:15]:
+                                        st.caption(f"- {a.get('title')}")
+                    except Exception as e:
+                        st.exception(e)
+
+            else:
+                # Core Prediction & Reasoning Pipeline Flow
+                with st.spinner(
+                    "Executing active Multi-Agent pipeline layer calculations..."
+                ):
+                    try:
+                        state, steps = _run_decision(
+                            symbol,
+                            date,
+                            horizon,
+                            data["cfg"],
+                            data["frame"],
+                            data["news_idx"],
+                        )
+
+                        action = state.get("action", "?").upper()
+                        size = state.get("position_scale", 0.0)
+                        answer = (
+                            state.get("answer_text")
+                            or state.get("grounded_answer")
+                            or "(no answer)"
+                        )
+
+                        # System Output Card
+                        st.markdown(
+                            f"### 🤖 System Response: `{action}` (Size: `{size:+.2f}`)"
+                        )
+                        if action == "LONG":
+                            st.success(answer)
+                        elif action == "SHORT":
+                            st.error(answer)
+                        else:
+                            st.warning(answer)
+
+                        for w in state.get("warnings", []):
+                            st.warning(f"⚠️ {w}")
+
+                        # Trace Steps Rendering Accordion
+                        with st.expander(
+                            "⛓️ Inspect Trace Stack Summary (Node-by-Node Architecture)"
+                        ):
+                            for idx, (name, summary) in enumerate(steps, 1):
+                                st.markdown(f"**Step {idx} · {name}**")
+                                st.json(summary)
+
+                    except Exception as e:
+                        st.exception(e)
 
 
 def main():
+    # If the execution context is triggered via Streamlit, load the UI directly
+    if sys.argv[0].endswith("streamlit") or "streamlit" in sys.modules:
+        run_streamlit_gui()
+        return
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--llm",
@@ -807,6 +1077,9 @@ def main():
         help="real LLM narration + metalabel news check (needs Ollama)",
     )
     ap.add_argument("--horizon", type=int, default=5, choices=[1, 5, 20])
+    # Add optional port arg to prevent breaking scripts but route cleanly to CLI default execution
+    ap.add_argument("--web", action="store_true")
+    ap.add_argument("--port", type=int, default=8080)
     args = ap.parse_args()
 
     cfg = MultiAgentConfig(evaluation_mode=not args.llm)
@@ -900,8 +1173,8 @@ def main():
                     symbol, date_start, date_end, horizon, cfg, frame, news_idx
                 )
             except Exception as e:  # noqa: BLE001 — surface, never hide (R1)
-                # print(f"  ⚠ error: {type(e).__name__}: {e}")
-                traceback.print_exc()
+                print(f"  ⚠ error: {type(e).__name__}: {e}")
+                # traceback.print_exc()
             continue
 
         # EXPLANATION falls through to the decision chain below — the gate's own
@@ -934,12 +1207,12 @@ def main():
         except ArtifactMissingError as e:
             print(f"  ⚠ live inference unavailable: {str(e).splitlines()[0]}")
             continue
-        # except Exception as e:  # noqa: BLE001 — surface, never hide (R1)
-        #     print(f"  ⚠ error: {type(e).__name__}: {e}")
-        #     continue
-        except Exception as e:
-            traceback.print_exc()
+        except Exception as e:  # noqa: BLE001 — surface, never hide (R1)
+            print(f"  ⚠ error: {type(e).__name__}: {e}")
             continue
+        # except Exception as e:
+        #     traceback.print_exc()
+        #     continue
 
         action = state.get("action", "?").upper()
         size = state.get("position_scale", 0.0)
@@ -955,4 +1228,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Auto-detect if invoked via Streamlit CLI executor string wrap
+    if sys.argv[0].endswith("streamlit") or "streamlit" in sys.modules:
+        run_streamlit_gui()
+    else:
+        sys.exit(main())

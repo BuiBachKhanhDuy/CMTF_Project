@@ -83,6 +83,7 @@ _CANONICAL_MARKET_COLS = [
 # Hashing / cache utilities
 # -----------------------------------------------------------------------------
 
+
 def _config_hash(config: dict[str, Any]) -> str:
     """Compute a short hash of config keys and schema choices that affect the dataset."""
     keys = [
@@ -129,9 +130,17 @@ def _save_dataset_cache(df: pd.DataFrame, cache_path: Path) -> None:
             )
 
     # Drop large / object-heavy raw text fields from cache payload
-    drop_cols = [c for c in ("news_titles", "news_content", "news_title_sentiment_scores") if c in df_out.columns]
+    drop_cols = [
+        c
+        for c in ("news_titles", "news_content", "news_title_sentiment_scores")
+        if c in df_out.columns
+    ]
     for c in df_out.columns:
-        if df_out[c].dtype == object and c not in ("news_emb", NEWS_HYBRID_COLUMN, "symbol"):
+        if df_out[c].dtype == object and c not in (
+            "news_emb",
+            NEWS_HYBRID_COLUMN,
+            "symbol",
+        ):
             drop_cols.append(c)
 
     if drop_cols:
@@ -153,8 +162,11 @@ def _load_dataset_cache(cache_path: Path) -> pd.DataFrame | None:
         for col in ("news_emb", NEWS_HYBRID_COLUMN):
             if col in df.columns:
                 df[col] = df[col].apply(
-                    lambda b: np.frombuffer(b, dtype=np.float32).copy()
-                    if isinstance(b, (bytes, bytearray)) else b
+                    lambda b: (
+                        np.frombuffer(b, dtype=np.float32).copy()
+                        if isinstance(b, (bytes, bytearray))
+                        else b
+                    )
                 )
 
         if "news_titles" not in df.columns:
@@ -186,13 +198,15 @@ def _load_dataset_cache(cache_path: Path) -> pd.DataFrame | None:
 # Schema helpers
 # -----------------------------------------------------------------------------
 
+
 def _resolve_market_feature_cols(df: pd.DataFrame) -> list[str]:
     """Return canonical market feature columns present and numeric in df.
 
     This helper keeps training and single-cutoff paths aligned.
     """
     market_cols = [
-        c for c in _CANONICAL_MARKET_COLS
+        c
+        for c in _CANONICAL_MARKET_COLS
         if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
     ]
 
@@ -203,10 +217,7 @@ def _resolve_market_feature_cols(df: pd.DataFrame) -> list[str]:
     if not market_cols:
         raise ValueError("No canonical market feature columns available")
 
-    non_numeric = [
-        c for c in market_cols
-        if not pd.api.types.is_numeric_dtype(df[c])
-    ]
+    non_numeric = [c for c in market_cols if not pd.api.types.is_numeric_dtype(df[c])]
     if non_numeric:
         raise ValueError(f"Canonical market columns must be numeric: {non_numeric}")
 
@@ -216,6 +227,7 @@ def _resolve_market_feature_cols(df: pd.DataFrame) -> list[str]:
 # -----------------------------------------------------------------------------
 # Sentiment exports
 # -----------------------------------------------------------------------------
+
 
 def _export_sentiment_outputs(
     df_featured: pd.DataFrame,
@@ -228,7 +240,9 @@ def _export_sentiment_outputs(
     present_bar_cols = [col for col in bar_cols if col in df_featured.columns]
 
     if present_bar_cols:
-        bar_frame = df_featured.reset_index().rename(columns={df_featured.index.name or "index": "time"})
+        bar_frame = df_featured.reset_index().rename(
+            columns={df_featured.index.name or "index": "time"}
+        )
         bar_frame[present_bar_cols + ["time"]].to_csv(
             _SENTIMENT_EXPORT_DIR / f"sentiment_bars_{cache_hash}.csv",
             index=False,
@@ -247,6 +261,7 @@ def _export_sentiment_outputs(
 # Macro feature helpers
 # -----------------------------------------------------------------------------
 
+
 def _build_vnindex_features(df_vnindex: pd.DataFrame) -> pd.DataFrame:
     """Build VNINDEX macro features indexed by time."""
     vnidx_close = df_vnindex["close"]
@@ -259,13 +274,26 @@ def _build_vnindex_features(df_vnindex: pd.DataFrame) -> pd.DataFrame:
     # Orthogonal to absolute price-level features; safe under per-window instance norm.
     vnidx_ret_filled = vnidx_ret.fillna(0.0)
     vnidx_features["vnindex_mom_5d"] = vnidx_ret_filled.rolling(5, min_periods=1).sum()
-    vnidx_features["vnindex_mom_20d"] = vnidx_ret_filled.rolling(20, min_periods=1).sum()
+    vnidx_features["vnindex_mom_20d"] = vnidx_ret_filled.rolling(
+        20, min_periods=1
+    ).sum()
     return vnidx_features
 
-def _merge_vnindex_features_multi_symbol(df_all: pd.DataFrame, vnidx_features: pd.DataFrame) -> pd.DataFrame:
+
+def _merge_vnindex_features_multi_symbol(
+    df_all: pd.DataFrame, vnidx_features: pd.DataFrame
+) -> pd.DataFrame:
     """Safely merge VNINDEX features into multi-symbol training data by time column."""
-    df_left = df_all.reset_index().rename(columns={df_all.index.name or "index": "time"}).copy()
-    df_right = vnidx_features.reset_index().rename(columns={vnidx_features.index.name or "index": "time"}).copy()
+    df_left = (
+        df_all.reset_index()
+        .rename(columns={df_all.index.name or "index": "time"})
+        .copy()
+    )
+    df_right = (
+        vnidx_features.reset_index()
+        .rename(columns={vnidx_features.index.name or "index": "time"})
+        .copy()
+    )
 
     # Normalize timezone handling before merge:
     # convert tz-aware timestamps to naive local timestamps
@@ -289,7 +317,10 @@ def _merge_vnindex_features_multi_symbol(df_all: pd.DataFrame, vnidx_features: p
 
     return merged
 
-def _merge_vnindex_features_single_symbol(df_featured: pd.DataFrame, vnidx_features: pd.DataFrame) -> pd.DataFrame:
+
+def _merge_vnindex_features_single_symbol(
+    df_featured: pd.DataFrame, vnidx_features: pd.DataFrame
+) -> pd.DataFrame:
     """Merge VNINDEX features into a single-symbol frame by aligned index."""
     left = df_featured.copy()
     right = vnidx_features.copy()
@@ -318,7 +349,10 @@ def _merge_vnindex_features_single_symbol(df_featured: pd.DataFrame, vnidx_featu
 # Main pipeline
 # -----------------------------------------------------------------------------
 
-def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> CMTFDataset:
+
+def run_pipeline(
+    config: dict[str, Any], allow_missing_target: bool = False
+) -> CMTFDataset:
     """Execute the full CMTF data-ingestion pipeline.
 
     ``allow_missing_target``: default False preserves exact existing behaviour — every
@@ -337,10 +371,14 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
     interval: str = config.get("interval", "1D")
     ohlcv_source: str = config.get("ohlcv_source", "KBS")
     news_source: str = config.get("news_source", "VCI")
-    news_sources: tuple[str, ...] = tuple(config.get("news_sources", ("cafef_banking", "vietstock")))
+    news_sources: tuple[str, ...] = tuple(
+        config.get("news_sources", ("cafef_banking", "vietstock"))
+    )
     news_use_cache: bool = bool(config.get("news_use_cache", True))
     news_export_trace: bool = bool(config.get("news_export_trace", True))
-    news_similarity_threshold: float = float(config.get("news_similarity_threshold", 85.0))
+    news_similarity_threshold: float = float(
+        config.get("news_similarity_threshold", 85.0)
+    )
     log_news_coverage: bool = bool(config.get("log_news_coverage", True))
     seq_len: int = int(config.get("sequence_len", 30))
     horizon: int = int(config.get("horizon", 1))
@@ -351,9 +389,13 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
     norm_method: str = config.get("normalize_method", "zscore")
     rebuild_data: bool = bool(config.get("rebuild_data", False))
     news_sentiment_enabled: bool = bool(config.get("news_sentiment_enabled", False))
-    sentiment_output_dir: str | Path = config.get("sentiment_output_dir", "outputs/sentiment/latest")
+    sentiment_output_dir: str | Path = config.get(
+        "sentiment_output_dir", "outputs/sentiment/latest"
+    )
     news_sentiment_device: str = str(config.get("news_sentiment_device", "cpu"))
-    news_sentiment_export_trace: bool = bool(config.get("news_sentiment_export_trace", True))
+    news_sentiment_export_trace: bool = bool(
+        config.get("news_sentiment_export_trace", True)
+    )
     news_sentiment_batch_size: int = int(config.get("news_sentiment_batch_size", 32))
 
     if rebuild_data:
@@ -369,8 +411,12 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
             if not allow_missing_target:
                 cached_df = cached_df.dropna(subset=[target_col])
 
-            if news_sentiment_export_trace and any(col in cached_df.columns for col in SENTIMENT_TRACE_COLUMNS):
-                _export_sentiment_outputs(cached_df, article_trace=None, cache_hash=cfg_hash)
+            if news_sentiment_export_trace and any(
+                col in cached_df.columns for col in SENTIMENT_TRACE_COLUMNS
+            ):
+                _export_sentiment_outputs(
+                    cached_df, article_trace=None, cache_hash=cfg_hash
+                )
 
             dataset = CMTFDataset(
                 df_featured=cached_df,
@@ -379,7 +425,9 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
                 target_horizon_days=target_horizon_days,
                 allow_missing_target=allow_missing_target,
             )
-            logger.info("Pipeline complete (from cache) | dataset length = {}", len(dataset))
+            logger.info(
+                "Pipeline complete (from cache) | dataset length = {}", len(dataset)
+            )
             return dataset
 
     fetcher = VnstockDataFetcher()
@@ -393,7 +441,9 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
             device=news_sentiment_device,
         )
         sentiment_inferencer = PhoBERTInferencer(sentiment_bundle)
-        logger.info("Hybrid news sentiment enabled via sentiment-encoder PhoBERT handoff")
+        logger.info(
+            "Hybrid news sentiment enabled via sentiment-encoder PhoBERT handoff"
+        )
 
     encoder = NewsEncoder(
         sentiment_inferencer=sentiment_inferencer,
@@ -419,8 +469,8 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
                     start_ts = pd.Timestamp(start)
                     end_ts = pd.Timestamp(end)
                     df_news = df_news[
-                        (df_news["published_date"] >= start_ts) &
-                        (df_news["published_date"] <= end_ts)
+                        (df_news["published_date"] >= start_ts)
+                        & (df_news["published_date"] <= end_ts)
                     ]
             else:
                 df_news = fetcher.fetch_news_multi_source(
@@ -440,7 +490,9 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
         df_aligned = aligner.add_null_mask(df_aligned)
 
         if log_news_coverage:
-            bars_with_news = int(df_aligned["has_news"].sum()) if "has_news" in df_aligned else 0
+            bars_with_news = (
+                int(df_aligned["has_news"].sum()) if "has_news" in df_aligned else 0
+            )
             total_bars = len(df_aligned)
             pct = (100.0 * bars_with_news / total_bars) if total_bars else 0.0
             logger.info(
@@ -469,15 +521,23 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
         df_all = _merge_vnindex_features_multi_symbol(df_all, vnidx_features)
         logger.info("VN-Index macro features added (vnindex_ret, vnindex_vol_ratio)")
     except Exception:
-        logger.exception("VN-Index macro feature pipeline failed — proceeding without macro features")
+        logger.exception(
+            "VN-Index macro feature pipeline failed — proceeding without macro features"
+        )
         df_all["vnindex_ret"] = 0.0
         df_all["vnindex_vol_ratio"] = 1.0
 
     # Encode news
-    df_all = encoder.encode_dataframe(df_all, text_col="news_content", use_cache=(not rebuild_data))
+    df_all = encoder.encode_dataframe(
+        df_all, text_col="news_content", use_cache=(not rebuild_data)
+    )
 
-    if news_sentiment_export_trace and any(col in df_all.columns for col in SENTIMENT_TRACE_COLUMNS):
-        _export_sentiment_outputs(df_all, encoder.last_sentiment_trace, cache_hash=cfg_hash)
+    if news_sentiment_export_trace and any(
+        col in df_all.columns for col in SENTIMENT_TRACE_COLUMNS
+    ):
+        _export_sentiment_outputs(
+            df_all, encoder.last_sentiment_trace, cache_hash=cfg_hash
+        )
 
     if log_news_coverage and "has_news" in df_all.columns:
         has_news_count = int(df_all["has_news"].sum())
@@ -508,7 +568,9 @@ def run_pipeline(config: dict[str, Any], allow_missing_target: bool = False) -> 
             split_date=train_end,
             symbol=sym,
         )
-        df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols].astype("float32")
+        df_all.loc[sym_mask, market_feature_cols] = sym_df[market_feature_cols].astype(
+            "float32"
+        )
 
     # Keep target-valid rows only (skipped when allow_missing_target=True — the live-
     # inference path needs the most recent rows precisely BECAUSE their target is NaN).
@@ -630,12 +692,16 @@ def _compute_single_cutoff(
     df_featured["symbol"] = symbol
 
     try:
-        df_vnindex = fetcher.fetch_ohlcv("VNINDEX", fetch_start, fetch_end, "1D", ohlcv_source)
+        df_vnindex = fetcher.fetch_ohlcv(
+            "VNINDEX", fetch_start, fetch_end, "1D", ohlcv_source
+        )
         df_vnindex = df_vnindex[df_vnindex.index <= cutoff_ts]
         vnidx_features = _build_vnindex_features(df_vnindex)
         df_featured = _merge_vnindex_features_single_symbol(df_featured, vnidx_features)
     except Exception:
-        logger.exception("VN-Index macro feature pipeline failed in prepare_single_cutoff — using zeros")
+        logger.exception(
+            "VN-Index macro feature pipeline failed in prepare_single_cutoff — using zeros"
+        )
         df_featured["vnindex_ret"] = 0.0
         df_featured["vnindex_vol_ratio"] = 1.0
 
@@ -650,7 +716,9 @@ def _compute_single_cutoff(
         sentiment_inferencer = None
 
     encoder = NewsEncoder(sentiment_inferencer=sentiment_inferencer)
-    df_featured = encoder.encode_dataframe(df_featured, text_col="news_content", use_cache=True)
+    df_featured = encoder.encode_dataframe(
+        df_featured, text_col="news_content", use_cache=True
+    )
 
     market_cols = _resolve_market_feature_cols(df_featured)
 
@@ -670,7 +738,9 @@ def _compute_single_cutoff(
     market_window = window_df[market_cols].values.astype(np.float32)
     market_tabular = market_window[-1]
 
-    news_col = NEWS_HYBRID_COLUMN if NEWS_HYBRID_COLUMN in window_df.columns else "news_emb"
+    news_col = (
+        NEWS_HYBRID_COLUMN if NEWS_HYBRID_COLUMN in window_df.columns else "news_emb"
+    )
     if news_col in window_df.columns:
         news_embs = window_df[news_col].tolist()
         news_dim = len(news_embs[-1]) if isinstance(news_embs[-1], np.ndarray) else 773
@@ -684,7 +754,10 @@ def _compute_single_cutoff(
     news_mask = news_emb.sum(axis=-1) == 0
 
     title_score_map: dict[tuple[int, str], float] = {}
-    if encoder.last_sentiment_trace is not None and not encoder.last_sentiment_trace.empty:
+    if (
+        encoder.last_sentiment_trace is not None
+        and not encoder.last_sentiment_trace.empty
+    ):
         trace_df = encoder.last_sentiment_trace
         for row in trace_df.itertuples(index=False):
             key = (int(row.row_position), str(getattr(row, "title_raw", "")))
@@ -696,9 +769,11 @@ def _compute_single_cutoff(
                 key = (int(row.row_position), str(getattr(row, "title_raw", "")))
                 title_score_map[key] = float(row.sentiment_score)
 
-    window_df_featured_ilocs = [
-        df_featured.index.get_loc(ts) for ts in window_df.index
-    ] if encoder.last_sentiment_trace is not None else []
+    window_df_featured_ilocs = (
+        [df_featured.index.get_loc(ts) for ts in window_df.index]
+        if encoder.last_sentiment_trace is not None
+        else []
+    )
 
     articles_out: list[dict] = []
     if "news_titles" in window_df.columns:
@@ -708,13 +783,17 @@ def _compute_single_cutoff(
                 for title in titles:
                     score = title_score_map.get((idx, title))
                     if score is None and idx < len(window_df_featured_ilocs):
-                        score = title_score_map.get((window_df_featured_ilocs[idx], title))
-                    articles_out.append({
-                        "title": title,
-                        "published_at": str(row.name),
-                        "bar_index": idx,
-                        "sentiment_score": score,
-                    })
+                        score = title_score_map.get(
+                            (window_df_featured_ilocs[idx], title)
+                        )
+                    articles_out.append(
+                        {
+                            "title": title,
+                            "published_at": str(row.name),
+                            "bar_index": idx,
+                            "sentiment_score": score,
+                        }
+                    )
 
     sentiment_features = {}
     for col in SENTIMENT_TRACE_COLUMNS:

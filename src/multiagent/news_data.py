@@ -30,6 +30,7 @@ def load_news_index() -> dict:
     the true maximum instead.
     """
     import pandas as pd
+
     best_end: dict[str, str] = {}
     best_path: dict[str, str] = {}
     for f in glob.glob(str(_NEWS_DIR / "*_news.json")):
@@ -45,15 +46,25 @@ def load_news_index() -> dict:
         df = pd.DataFrame(arts)
         if "published_date" not in df or "title" not in df:
             continue
+
+        # Clean published_date column: extract first element if it's a list
+        def _extract_date(x):
+            if isinstance(x, list):
+                return x[0] if len(x) > 0 else None
+            return x
+
+        df["published_date"] = df["published_date"].apply(_extract_date)
         df["pub"] = pd.to_datetime(df["published_date"], errors="coerce")
         idx[sym] = df.dropna(subset=["pub"]).sort_values("pub")
     return idx
 
 
-def recent_headlines(news_index: dict, symbol: str, cutoff: str,
-                     lookback_days: int = 5, k: int = 15) -> list[str]:
+def recent_headlines(
+    news_index: dict, symbol: str, cutoff: str, lookback_days: int = 5, k: int = 15
+) -> list[str]:
     """Most recent k headlines published at/before cutoff, within lookback_days."""
     import pandas as pd
+
     df = news_index.get(symbol)
     if df is None or df.empty:
         return []
@@ -63,13 +74,15 @@ def recent_headlines(news_index: dict, symbol: str, cutoff: str,
     return [f"({r.pub.date()}) {str(r.title)[:140]}" for r in win.itertuples()]
 
 
-def recent_articles(news_index: dict, symbol: str, cutoff: str,
-                    lookback_days: int = 14, k: int = 30) -> list[dict]:
+def recent_articles(
+    news_index: dict, symbol: str, cutoff: str, lookback_days: int = 14, k: int = 30
+) -> list[dict]:
     """Structured (title, published_at) dicts for the RESEARCH branch's article
     retrieval — same filtering as ``recent_headlines`` but structured, not
     pre-formatted into a display string, since ``research_agent_node`` ranks and
     cites by published date rather than just printing titles."""
     import pandas as pd
+
     df = news_index.get(symbol)
     if df is None or df.empty:
         return []
@@ -77,13 +90,18 @@ def recent_articles(news_index: dict, symbol: str, cutoff: str,
     win = df[(df["pub"] <= c) & (df["pub"] > c - pd.Timedelta(days=lookback_days))]
     win = win.tail(k)
     return [
-        {"id": f"{symbol}-{i}", "title": str(r.title), "published_at": str(r.pub.date())}
+        {
+            "id": f"{symbol}-{i}",
+            "title": str(r.title),
+            "published_at": str(r.pub.date()),
+        }
         for i, r in enumerate(win.itertuples())
     ]
 
 
-def articles_in_range(news_index: dict, symbol: str, date_start: str, date_end: str,
-                      k: int = 40) -> list[dict]:
+def articles_in_range(
+    news_index: dict, symbol: str, date_start: str, date_end: str, k: int = 40
+) -> list[dict]:
     """Structured (title, published_at) dicts published within an EXPLICIT calendar
     range — the query's own [date_start, date_end], not a fixed lookback window
     counted backward from a single cutoff. This is what lets "phân tích tháng 3"
@@ -101,6 +119,7 @@ def articles_in_range(news_index: dict, symbol: str, date_start: str, date_end: 
     """
     import numpy as np
     import pandas as pd
+
     df = news_index.get(symbol)
     if df is None or df.empty:
         return []
@@ -113,6 +132,10 @@ def articles_in_range(news_index: dict, symbol: str, date_start: str, date_end: 
         sel = np.linspace(0, n - 1, k).round().astype(int)
         win = win.iloc[np.unique(sel)]
     return [
-        {"id": f"{symbol}-{i}", "title": str(r.title), "published_at": str(r.pub.date())}
+        {
+            "id": f"{symbol}-{i}",
+            "title": str(r.title),
+            "published_at": str(r.pub.date()),
+        }
         for i, r in enumerate(win.itertuples())
     ]

@@ -36,7 +36,10 @@ _RATE_LOCK = threading.Lock()
 _REQUEST_TIMESTAMPS: deque[float] = deque()
 _RATE_LIMIT_PER_MIN = max(1, int(os.getenv("VNSTOCK_RATE_LIMIT_PER_MIN", "16")))
 
-def _normalize_datetime_index_to_naive(df: pd.DataFrame, time_col: str = "time") -> pd.DataFrame:
+
+def _normalize_datetime_index_to_naive(
+    df: pd.DataFrame, time_col: str = "time"
+) -> pd.DataFrame:
     """Normalize a dataframe time column/index to timezone-naive datetime index."""
     out = df.copy()
 
@@ -54,6 +57,7 @@ def _normalize_datetime_index_to_naive(df: pd.DataFrame, time_col: str = "time")
     out.index.name = "time"
     out = out.sort_index()
     return out
+
 
 def _throttle_vnstock_requests() -> None:
     """Block until issuing another vnstock request is within minute budget.
@@ -140,6 +144,9 @@ class VnstockDataFetcher:
         logger.info("Fetching OHLCV | {} | {} → {} | {}", symbol, start, end, interval)
         df = self._fetch_ohlcv_raw(symbol, start, end, interval, source)
 
+        print(df.tail(10))
+        print(df.index.max())
+
         # Ensure datetime index
         df = _normalize_datetime_index_to_naive(df, time_col="time")
 
@@ -185,9 +192,7 @@ class VnstockDataFetcher:
         df = company.news()
         return df
 
-    def fetch_news(
-        self, symbol: str, source: str = "VCI"
-    ) -> pd.DataFrame:
+    def fetch_news(self, symbol: str, source: str = "VCI") -> pd.DataFrame:
         """Fetch all available news for a single symbol.
 
         Args:
@@ -206,14 +211,26 @@ class VnstockDataFetcher:
             return pd.DataFrame(columns=["published_date", "title", "content"])
 
         # --- Normalise published_date ---------------------------------
-        date_col_candidates = ["public_date", "published_date", "created_at", "updated_at", "publishedDate", "date", "publish_date"]
+        date_col_candidates = [
+            "public_date",
+            "published_date",
+            "created_at",
+            "updated_at",
+            "publishedDate",
+            "date",
+            "publish_date",
+        ]
         date_col = None
         for candidate in date_col_candidates:
             if candidate in df.columns:
                 date_col = candidate
                 break
         if date_col is None:
-            logger.warning("No date column found in news for {}. Columns: {}", symbol, list(df.columns))
+            logger.warning(
+                "No date column found in news for {}. Columns: {}",
+                symbol,
+                list(df.columns),
+            )
             return pd.DataFrame(columns=["published_date", "title", "content"])
 
         raw_date = df[date_col]
@@ -233,21 +250,39 @@ class VnstockDataFetcher:
             df = df.rename(columns={title_col: "title"})
 
         # --- Normalise content ----------------------------------------
-        content_candidates = ["content", "Content", "body", "description", "news_full_content", "news_short_content"]
+        content_candidates = [
+            "content",
+            "Content",
+            "body",
+            "description",
+            "news_full_content",
+            "news_short_content",
+        ]
         content_col = next((c for c in content_candidates if c in df.columns), None)
         if content_col is not None and content_col != "content":
             df = df.rename(columns={content_col: "content"})
 
         if "content" not in df.columns:
             # Fallback: concatenate title + description if available
-            desc_col = next((c for c in ["description", "Description", "summary"] if c in df.columns), None)
+            desc_col = next(
+                (
+                    c
+                    for c in ["description", "Description", "summary"]
+                    if c in df.columns
+                ),
+                None,
+            )
             if desc_col is not None:
-                df["content"] = df.get("title", "").astype(str) + " " + df[desc_col].astype(str)
+                df["content"] = (
+                    df.get("title", "").astype(str) + " " + df[desc_col].astype(str)
+                )
             else:
                 df["content"] = df.get("title", "").astype(str)
             logger.warning("No 'content' column for {}; using fallback", symbol)
 
-        df = df[["published_date", "title", "content"]].dropna(subset=["published_date"])
+        df = df[["published_date", "title", "content"]].dropna(
+            subset=["published_date"]
+        )
         df = df.sort_values("published_date").reset_index(drop=True)
         logger.info("News fetched | {} | {} articles", symbol, len(df))
         return df
@@ -300,9 +335,7 @@ class VnstockDataFetcher:
                 )
                 return df
         except Exception:
-            logger.warning(
-                "Web scraping failed for {} — falling back to VCI", symbol
-            )
+            logger.warning("Web scraping failed for {} — falling back to VCI", symbol)
 
         # Fallback to vnstock VCI API
         logger.info("Falling back to vnstock VCI news for {}", symbol)

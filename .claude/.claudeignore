@@ -1,0 +1,34 @@
+# Chặn các thư mục thư viện lập trình (Cực kỳ nặng, không được cho Claude quét)
+node_modules/
+bower_components/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Chặn môi trường ảo của Python (nếu có)
+venv/
+.venv/
+env/
+
+# Chặn các file tài liệu, media dung lượng lớn
+*.mp4
+*.mkv
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.zip
+*.tar.gz
+*.rar
+
+# Chặn thư mục lưu dữ liệu, database hoặc model AI (nếu đồ án của bạn có AI/Data)
+data/
+datasets/
+models/
+*.db
+*.sqlite3
+*.pkl
+*.h5
+*.onnx
