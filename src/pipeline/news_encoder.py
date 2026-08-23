@@ -26,27 +26,8 @@ _NEWS_DIM = 768
 _DEFAULT_MODEL_NAME = "dangvantuan/vietnamese-embedding"
 _EMBEDDINGS_CACHE_DIR = Path("./cache/embeddings")
 
-# Per-ARTICLE embedding cache (keyed on the article's own text content only — not on
-# which bar/row it was assigned to, and not on the whole dataframe). The whole-
-# dataframe cache above (`encode_dataframe`'s cache_key) invalidates completely
-# whenever ANY row changes — extending the pipeline's `end` date by even one day
-# changes len(df)/date range/content hash, forcing a full re-encode of the entire
-# historical corpus (confirmed: ~35-45 min for ~11k rows on CPU) every time a live-
-# inference query needs one new day.
-#
-# An earlier version of this cache was keyed per ROW (symbol+date+the row's full text
-# list). In practice that had a poor hit rate: a bar's list of assigned articles
-# shifts slightly between scrapes (a newly-discovered article changes the set, or
-# just its order), so the row's hash rarely matched even when almost all of its
-# individual articles were unchanged. Caching per INDIVIDUAL ARTICLE TEXT instead is
-# robust to exactly that: the same article's own text is byte-identical no matter
-# which bar's window it ends up in or what else is in that window, so it hits
-# regardless of how the surrounding row's article set is reshuffled. Pooling (mean,
-# or sentiment-weighted) is cheap and always redone fresh per row; only the
-# per-article embedding lookup benefits from the cache, so this also works when
-# sentiment-weighted pooling is enabled (the earlier row-level cache had to disable
-# itself there, since the pooling weights are part of what makes a row's output
-# unique).
+# Cache embeddings by article text. This preserves cache hits when article groups
+# or dates change, while each row's pooling is computed from its current articles.
 _ARTICLE_CACHE_PATH = _EMBEDDINGS_CACHE_DIR / "article_cache_v1.joblib"
 
 

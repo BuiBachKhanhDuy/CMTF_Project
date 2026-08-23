@@ -1,4 +1,4 @@
-"""Shared constants and utilities across all phases."""
+"""Shared utilities and path constants."""
 
 from __future__ import annotations
 
@@ -9,11 +9,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
-# ---------------------------------------------------------------------------
-# Walk-forward fold generator (shared between run_model_benchmark and
-# run_ablation_benchmark — single source of truth).
-# ---------------------------------------------------------------------------
 
 def generate_walkforward_folds(
     sorted_dates: "pd.DatetimeIndex | np.ndarray",
@@ -49,7 +44,7 @@ def generate_walkforward_folds(
         + (end.month - first_train_end.month)
     )
 
-    # Fallback: not enough data for n_folds — return single fold
+    # Use one split when the date range cannot support the requested folds.
     if remaining_months < test_months * 2:
         val_end = first_train_end + pd.DateOffset(months=test_months)
         return [
@@ -59,7 +54,7 @@ def generate_walkforward_folds(
             )
         ]
 
-    # Evenly space folds across the remaining window
+    # Evenly distribute folds across the remaining window.
     step = max(1, (remaining_months - test_months) // max(1, n_folds - 1))
     folds: list[tuple[str, str]] = []
     for i in range(n_folds):
@@ -72,9 +67,6 @@ def generate_walkforward_folds(
     return folds if folds else [(first_train_end.strftime("%Y-%m-%d"),
                                  (first_train_end + pd.DateOffset(months=test_months)).strftime("%Y-%m-%d"))]
 
-# ---------------------------------------------------------------------------
-# Directory constants
-# ---------------------------------------------------------------------------
 SENTIMENT_DATASET_ROOT = Path("data/sentiment")
 SENTIMENT_OUTPUT_ROOT = Path("outputs/sentiment/latest")
 JAVA_RUNTIME_ROOT = Path("cache/java_runtime")

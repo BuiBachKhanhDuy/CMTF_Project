@@ -1,20 +1,7 @@
-"""Metalabel-agent evaluation — reuses the EXISTING 280-row LLM sample (no re-run).
+"""Evaluate the metalabel veto against the frozen multi-agent sample.
 
-Compares three systems on the identical 280 (symbol, date) rows already used for the
-plain-LLM comparison (``h3_forecaster.json``), so the numbers are directly comparable
-to previously-reported figures, not a new sample:
-
-- **MAS (baseline):** deployed gate (validation-calibrated tau from ``VN_5d.json``) on
-  the frozen champion prediction. Same as the earlier "Champion MAS on the 280 sample."
-- **MAS + metalabel:** the same gate decision, additionally vetoed to abstain when the
-  metalabel agent flags one of the 5 pre-registered event categories in the real news
-  headlines from the 5 trading days before the cutoff.
-- **Plain LLM:** the existing independent-forecaster records (``a1_sign``/``a1_conf``)
-  from the same file — NOT re-run.
-
-The metalabel classifier itself is the only new LLM cost here (280 calls). The
-category list was pre-registered in ``metalabel_agent.py`` before this evaluation was
-run — no post-hoc tuning of which categories "work."
+The evaluation compares the base gate, the metalabel-enhanced gate, and stored
+independent-forecaster records on the same symbol-date rows.
 """
 
 from __future__ import annotations

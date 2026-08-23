@@ -1,41 +1,7 @@
 """Evaluation metrics for forecasting benchmarks.
 
-Refactored for financial forecasting:
-1. Direction metrics use a configurable dead-zone threshold instead of exact zero.
-2. Precision/Recall/F1 are symmetric over {-1, +1}, not biased to only 'up'.
-3. Base-rate DA is computed on the same active directional subset.
-4. Composite metrics use the corrected directional F1.
-
---- Fix pass (this file) ---
-FIX-1: Every directional function used to size the dead-zone threshold from
-       y_true's distribution and then apply that SAME threshold to y_pred.
-       If a model's predictions are much smaller in magnitude than actual
-       returns (small PredStd), most predictions fell inside the y_true-sized
-       dead zone and were labeled "no direction" (0) -- scored as wrong
-       whenever the true move was active. This deflated DA%/DA_skill% for
-       low-magnitude-but-correctly-signed models, independent of whether they
-       actually had directional skill.
-       Fix: when eps is not explicitly provided, each series gets its own
-       adaptive threshold from its own distribution. When eps IS provided,
-       it's applied identically to both series (deliberate fixed economic
-       threshold, e.g. transaction cost, in the same return units for both).
-FIX-2: sharpe_ratio had the same root-cause bug (thr from y_true, applied to
-       y_pred) which -- combined with the fact that Sharpe assigns 0 return
-       to "no trade" days while DA% scores 0-labeled predictions as wrong --
-       produced cases where Sharpe was strongly positive while DA_skill% was
-       strongly negative (Sharpe computed on a sparse subset of "loud enough"
-       trades, DA% penalizing everything below the y_true-sized threshold).
-       Fix: pred_sign threshold is now derived from y_pred's own distribution.
-FIX-3: modal_disagreement derived its threshold from y_pred alone and applied
-       it to BOTH anchor_pred and y_pred, inconsistent with the rest of the
-       file (which used y_true) and unfair whenever anchor_pred and y_pred
-       have different scales.
-       Fix: anchor_pred and y_pred each get their own adaptive threshold.
-FIX-4: paired_bootstrap_da derived its threshold from y_true alone and
-       applied it to BOTH preds_a and preds_b, which is symmetric between the
-       two models but still penalizes whichever model happens to have smaller
-       output magnitude, independent of directional correctness.
-       Fix: preds_a and preds_b each get their own adaptive threshold.
+Directional metrics use adaptive dead-zone thresholds, symmetric class metrics,
+and comparable active subsets for base-rate and model performance.
 """
 
 from __future__ import annotations
@@ -125,9 +91,7 @@ def _signed_labels(values: np.ndarray, eps: float | None = None) -> np.ndarray:
     labels[values < -thr] = -1
     return labels
 
-# ======================================================================
-# Directional metrics (refactored - consistent, per-series threshold)
-# ======================================================================
+# Directional metrics
 
 def directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray, eps: float | None = None) -> float:
     y_true = np.asarray(y_true, dtype=float)
@@ -136,7 +100,7 @@ def directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray, eps: float | No
     if len(y_true) == 0:
         return 0.0
 
-    # FIX-1: separate, per-series thresholds instead of reusing y_true's.
+    # Resolve thresholds independently for returns and predictions.
     thr_true, thr_pred = _resolve_pair_thresholds(y_true, y_pred, eps)
 
     true_sign = _signed_labels(y_true, eps=thr_true)
@@ -458,9 +422,7 @@ def calmar_ratio(returns: np.ndarray, periods_per_year: int = 252) -> float:
     return ann_return / mdd if mdd > 1e-12 else 0.0
 
 
-# ======================================================================
 # Main metric bundle
-# ======================================================================
 def compute_all(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -470,9 +432,7 @@ def compute_all(
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    # thr_true is still needed here (unchanged) to define base_rate_DA on
-    # the true-return active subset; directional_accuracy/precision/recall/f1
-    # now resolve their own per-series thresholds internally (FIX-1).
+    # The true-return threshold defines the active subset for the base rate.
     thr_true = _direction_threshold(y_true)
 
     da_val = directional_accuracy(y_true, y_pred)

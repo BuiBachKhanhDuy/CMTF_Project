@@ -41,11 +41,12 @@
       "special": true
     }
   },
+  "backend": "custom",
   "bos_token": "<s>",
-  "clean_up_tokenization_spaces": false,
   "cls_token": "<s>",
   "eos_token": "</s>",
-  "extra_special_tokens": {},
+  "is_local": false,
+  "local_files_only": false,
   "mask_token": "<mask>",
   "model_max_length": 1000000000000000019884624838656,
   "pad_token": "<pad>",

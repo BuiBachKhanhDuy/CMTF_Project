@@ -138,14 +138,19 @@ class ChronosMarketPredictor:
                     end,
                 )
 
+                # Chronos 1.x tokenizes contexts on CPU: its tokenizer owns
+                # ``boundaries``/``centers`` as ordinary CPU tensors (not
+                # model buffers).  ``ChronosPipeline.predict`` subsequently
+                # moves token ids and masks to ``self.model.device`` before
+                # running the model.  Moving this context batch to CUDA here
+                # therefore makes ``torch.bucketize`` mix CUDA inputs with CPU
+                # boundaries and fail.  Keep pipeline inputs on CPU regardless
+                # of where the Chronos model itself is loaded.
                 batch = torch.tensor(
                     log_returns_input[start:end],
                     dtype=torch.float32,
+                    device="cpu",
                 )
-
-                # Explicit device placement
-                if self.device != "cpu":
-                    batch = batch.to(self.device)
 
                 torch.manual_seed(seed + start)
 
@@ -292,16 +297,8 @@ class ChronosAdapter(BaseTorchMarketPredictor):
         self.input_projection = nn.Linear(input_dim, self.chronos_d_model)
         self.dropout = nn.Dropout(dropout)
 
-        # --- Frozen-probe mode (opt-in) --------------------------------------
-        # DEFAULT OFF: the projection stays trainable, matching the original
-        # "apple-to-apple" fine-tunable adapter (existing benchmark numbers
-        # unchanged). When enabled, input_projection is frozen so the whole
-        # market->pooled path is deterministic and its pooled outputs can be
-        # memoized (see encode_pooled_torch), collapsing the OOF/late-fusion
-        # cost from ``epochs x folds`` heavy T5 passes to one pass per unique
-        # window. NOTE: this is a genuine modelling change (a frozen random
-        # projection into a frozen foundation encoder), so it must be selected
-        # deliberately and re-validated, not treated as a free speedup.
+        # Freezing the projection permits pooled-embedding memoization. It is an
+        # opt-in modeling choice because it removes projection training.
         self.freeze_input_projection = bool(freeze_input_projection)
         if self.freeze_input_projection:
             for param in self.input_projection.parameters():

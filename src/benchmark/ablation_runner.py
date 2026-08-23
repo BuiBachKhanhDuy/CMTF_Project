@@ -1,19 +1,8 @@
-"""Ablation runner: train + evaluate a single AblationConfig cell.
+"""Train and evaluate one ``AblationConfig`` cell.
 
-Stateless function — takes config, data splits, returns metrics dict.
-
-Design:
-1. none   -> runner trains a backbone model directly
-2. early  -> EarlyFusionWrapper owns encoder training
-3. late   -> LateFusionWrapper owns encoder training
-4. cmtf   -> standalone Cross-Modal Temporal Fusion predictor
-
-Refactor notes:
-- FIX #5: encoder cache keys now include feature/schema/config/split identity
-  to prevent invalid cache reuse across incompatible ablation settings.
-- FIX #6: anchor predictions now come from a shared market-only baseline
-  per (backbone, horizon, seed, processed market input definition, split),
-  making ModalDisagreement / CompositeScore comparable across ablations.
+The runner supports direct market backbones plus early, late, and CMTF fusion.
+Cache keys include model, data, and split identities to prevent incompatible
+artifacts from being reused.
 """
 
 from __future__ import annotations
@@ -54,15 +43,8 @@ from src.pipeline.news_encoder import (
 SENTIMENT_FEATURE_COLUMNS = list(_PIPELINE_SENTIMENT_TRACE_COLS)
 _ALLOWED_WRAPPER_NEWS_DIMS = {768, 128}
 
-# Bump this whenever the target-scaling scheme OR the encoder training recipe
-# changes so that on-disk encoder/anchor/prediction caches trained under a
-# different scheme are invalidated.
-# unitstd_v2 = unit-std target scaling (1/train_std) for all trainable models
-# (matching the Phase-1 harness, run_model_benchmark.py) PLUS a unified canonical
-# encoder training recipe (cfg.market_epochs / cfg.market_patience) applied
-# identically across none/late/cmtf so a shared encoder is bit-identical
-# regardless of which cell trains it first. The recipe is also folded into the
-# encoder/anchor cache keys (recipe_sig) so mismatched recipes never share.
+# Cache-version identifier for unit-standardized targets and the shared encoder
+# training recipe. Update it when either behavior changes.
 _SCALING_VERSION = "unitstd_v2"
 
 # ---------------------------------------------------------------------------

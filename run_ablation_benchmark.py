@@ -643,8 +643,7 @@ def _run_table(
         fail_df.to_csv(fail_path, index=False)
         logger.warning("Saved {} failed cells to {}", len(failures), fail_path)
     elif fail_path.exists():
-        # No failures this run: clear any stale failure file left behind by a
-        # previous (since-fixed) run so it doesn't linger as a false positive.
+        # Remove a failure report when the current run completes successfully.
         fail_path.unlink()
         logger.warning("Cleared stale failure file {} (all cells succeeded)", fail_path)
 
@@ -908,13 +907,8 @@ def _regenerate_plots(horizon: int) -> None:
 def _prune_stale_rows(table: str, df: pd.DataFrame) -> pd.DataFrame:
     """Drop rows whose config key no longer appears in the current grid for ``table``.
 
-    ``generate_grid`` can change (e.g. the apples-to-apples fix that made the
-    "none" baseline use news_scope="matched"/sentiment_mode="scalars" instead
-    of "none"/"none"). Old rows computed under a since-removed config combo can
-    never be replaced by ``_merge_table_csv``'s key-based upsert — they just sit
-    in the CSV forever as stale duplicates (e.g. two "none" baselines). Prune
-    against the *unfiltered* grid so ``--model``-filtered runs still keep every
-    other model's current rows.
+    Prune against the unfiltered grid so ``--model``-filtered runs retain rows
+    for other models while removing configurations no longer in the grid.
     """
     current_configs = generate_grid(table=table)
     valid_keys = {
@@ -1068,7 +1062,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.gate_coverage is not None and args.gate_coverage < 0:
-        args.gate_coverage = None  # opt back into the legacy per-model auto-search
+        args.gate_coverage = None  # Enable per-model coverage selection.
 
     _configure_logging(verbose=args.verbose)
     _ABLATION_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1099,7 +1093,7 @@ def main() -> None:
     if args.gate:
         logger.warning(
             "Gate coverage: {}",
-            f"FIXED @ {args.gate_coverage:.0%} (apples-to-apples)" if args.gate_coverage is not None else "per-model auto-search (legacy, NOT apples-to-apples)",
+            f"FIXED @ {args.gate_coverage:.0%}" if args.gate_coverage is not None else "per-model auto-search",
         )
     logger.warning("═════════════════════════════════════════════")
 

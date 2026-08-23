@@ -111,7 +111,7 @@ class TestGenerateGrid:
             assert len(cell_ids) == len(set(cell_ids))
 
     def test_component_ablation_table_removed(self):
-        # The legacy component_ablation grid now lives in ablation_registry.
+        # Component studies are defined by the registry.
         assert generate_grid("component_ablation") == []
 
     def test_all_cmtf_cells_share_core_recipe(self):

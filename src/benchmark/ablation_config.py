@@ -1,20 +1,4 @@
-"""Ablation benchmark configuration and grid generation.
-
-Study table (see CMTF_FUSION_FINDINGS.md for the evidence behind the canonical
-CMTF design):
-
-    fusion_comparison
-        The main result. Backbone x fusion strategy (none / early / late / CMTF)
-        across every market backbone, plus a shuffled-news placebo. Proves CMTF
-        beats early/late/none and that the lift is genuine news signal.
-
-The leave-one-out CMTF component ablation now lives in the authoritative
-experiment registry (src/benchmark/ablation_registry.py, run via
-run_ablation_registry.py), which supersedes the old ``component_ablation`` grid
-table that used to be generated here.
-
-Each cell = one AblationConfig. Invalid cells are never generated.
-"""
+"""Configurations used by the fusion benchmark and component registry."""
 
 from __future__ import annotations
 
@@ -27,7 +11,7 @@ BACKBONE_MODELS = (
     "chronos",
 )
 
-# Architecture label for the renamed hybrid model
+# Model label used for the cross-modal fusion configuration.
 CMTF_MODEL = "cmtf"
 
 MODELS = BACKBONE_MODELS + (CMTF_MODEL,)
@@ -55,22 +39,8 @@ class AblationConfig:
     # For non-CMTF rows this must be None
     market_encoder_name: str | None = None
 
-    # Final output formulation for CMTF (see HybridFusionPredictor for the
-    # exact forward-pass formula). NONE of these apply a post-hoc lambda blend
-    # or anchor gate — predict() always returns the composed value directly.
-    # "anchored_fusion":    fusion_pred + news_residual (DEFAULT). Aux loss is
-    #                       anchored to the encoder's own trained scalar
-    #                       prediction (keeps the fusion head close to a known-
-    #                       good backbone during training); the deployed output
-    #                       is the raw fused prediction, no blending.
-    # "encoder_residual":   encoder_trained_pred + news_residual (news branch
-    #                       learns a fixed-weight additive correction on top of
-    #                       the encoder's own scalar output).
-    # "fusion_plus_news":   fusion_pred + news_residual (aux loss anchored to
-    #                       the fusion model's own market head instead of the
-    #                       encoder's). Numerically near-identical to
-    #                       anchored_fusion; kept as a separate ablation row.
-    # "market_plus_fusion": market_pred + fusion_delta                            (DEPRECATED / harmful)
+    # CMTF output formulation. The predictor returns the selected formulation
+    # directly; it does not apply a post-processing blend.
     output_mode: str = "market_plus_fusion"
 
     # B3 control: if True, permute train/val news rows to destroy the
@@ -106,11 +76,7 @@ class AblationConfig:
     n_heads: int = 2
     dropout: float = 0.2
     sign_penalty_weight: float = 0.005
-    # LEVER 3 (differentiable Sharpe surrogate). DA/Sharpe are sign/decision
-    # objectives but the fused head trains as a point regressor, so it ~optimises
-    # IC while barely touching DA/Sharpe. This term optimises a scale-invariant
-    # negative-Sharpe surrogate on soft signed positions. DEFAULT 0.0 => legacy
-    # objective (cache-identical); raise it (+ sign_penalty_weight) for the sweep.
+    # Optional differentiable Sharpe surrogate for the fusion loss.
     sharpe_surrogate_weight: float = 0.0
     sharpe_surrogate_k: float = 3.0
     encoder_lr_scale: float = 0.1
@@ -127,13 +93,8 @@ class AblationConfig:
     # Variance regularization strength
     variance_reg_coeff: float = 0.001
 
-    # News-gate mixing mode:
-    #   "fixed"   -> news_gate_alpha is a fixed scalar hyperparameter (DEFAULT,
-    #                byte-identical to every historical cached cell).
-    #   "learned" -> a small trainable gate head predicts a per-sample mixing
-    #                coefficient g in [0,1] from [market_emb, pooled_news],
-    #                replacing the fixed alpha scalar end-to-end. See
-    #                HybridFusionPredictor._apply_news_gate.
+    # A fixed gate uses ``news_gate_alpha``; a learned gate predicts a
+    # per-sample mixing coefficient from the market and news embeddings.
     gate_mode: str = "fixed"
 
     def is_valid(self) -> bool:
@@ -260,8 +221,7 @@ class AblationConfig:
             parts.append(f"nh={self.n_heads}")
             parts.append(f"do={self.dropout}")
             parts.append(f"spw={self.sign_penalty_weight}")
-            # Appended only when enabled so legacy cells keep byte-identical
-            # cell_ids (and therefore their on-disk prediction caches).
+            # Include surrogate parameters only when the surrogate is enabled.
             if self.sharpe_surrogate_weight > 0.0:
                 parts.append(f"shw={self.sharpe_surrogate_weight}")
                 parts.append(f"shk={self.sharpe_surrogate_k}")
@@ -276,40 +236,8 @@ class AblationConfig:
         return "__".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Canonical CMTF design — single source of truth
-# ---------------------------------------------------------------------------
-# Every CMTF cell in the study derives from this dict, so all CMTF rows share an
-# identical training recipe (enabling L1 encoder-cache sharing within a backbone/
-# seed) and every component ablation isolates exactly one change. The values
-# encode the validated findings in CMTF_FUSION_FINDINGS.md:
-#   * output_mode="anchored_fusion"   -> train the fusion head to predict the
-#     full news-using target (fusion_pred + news_residual) and DEPLOY that
-#     prediction directly, no post-hoc blend. The aux loss (small weight) keeps
-#     the fusion head close to the encoder's own trained scalar during training.
-#     NOTE (2026-07-12 correction): earlier revisions of this comment and
-#     CMTF_FUSION_FINDINGS.md described a validation-selected lambda blend
-#     ("anchor + lambda*(...)") — that mechanism (`fusion_selection.
-#     select_additive_lambda`) was NEVER wired into `HybridFusionPredictor`;
-#     it was dead code and has been removed. `predict()` always returns the
-#     raw fused prediction. Treat any remaining references to a CMTF lambda
-#     guard as historical/superseded.
-#   * news_gate_alpha=1.0             -> the news gate is load-bearing: only with
-#     the full sigmoid gate does news become genuinely DA-positive when anchored
-#     (the softened 0.3 gate did not achieve genuine dominance).
-#   * use_two_stage=False             -> single-stage frozen-encoder fusion.
-#     Preserves the backbone's directional accuracy AND keeps the anchor honest
-#     (two-stage's apparent gain was mostly encoder fine-tuning, not news).
-#   * fusion_style="learned"          -> minimal [market_latent, attn_out] core;
-#     handcrafted interaction terms are a component to ablate, not a default.
-#   * news_scope="all"                -> component ablation (seed 42) showed
-#     cross-symbol news dominates matched-only news on DA/Sharpe/IC. Adopted as
-#     the canonical default; the matched-only variant is now the ablation row.
-#     NOTE: pending multi-seed confirmation (single-seed rows were below base
-#     rate); revisit if it does not survive additional seeds.
-#   * use_positional_encoding=False   -> component ablation (seed 42) showed the
-#     news positional encoding hurt every metric; disabled by default. The
-#     positional-encoding-on variant is now the ablation row.
+# Canonical CMTF settings. Registry cells inherit these values and override one
+# setting at a time, keeping component comparisons controlled.
 CMTF_CORE: dict = dict(
     fusion_type="cmtf",
     news_scope="all",
@@ -354,25 +282,10 @@ def _cmtf(encoder: str, **overrides) -> AblationConfig:
 
 
 def _baseline(model: str, fusion: str) -> AblationConfig:
-    """A non-CMTF baseline row (market-only / early / late fusion).
+    """Create a market-only, early-fusion, or late-fusion baseline.
 
-    NEWS-PARITY FIX: early/late now use ``news_scope="all"`` to match CMTF's
-    ``CMTF_CORE`` (cross-symbol pooled news). Previously they used
-    ``news_scope="matched"`` while CMTF used "all", so "early/late vs CMTF"
-    secretly compared different NEWS sets — CMTF's IC/Sharpe edge could reflect
-    "more news" rather than "better fusion". With all news-using fusion cells on
-    the same pooled news tensor, the comparison isolates the fusion mechanism.
-    This is cache-safe: ``news_scope`` is NOT part of the shared market-encoder
-    cache key (see ``_encoder_cache_key`` in ablation_runner.py) and the market
-    recipe is unchanged, so ``late`` still reloads the exact same frozen market
-    encoder CMTF/none already trained — only the small news head is refit.
-
-    APPLES-TO-APPLES FIX (market): all rows use sentiment_mode="scalars" so the
-    market feature set / encoder is identical across none/early/late/cmtf (the
-    "scalars" branch in ``_apply_sentiment_mode`` is a no-op on the market
-    window). ``none`` keeps ``news_scope="matched"`` since ``fusion_type="none"``
-    never reads the news tensors (see run_ablation_cell); its news_scope is
-    irrelevant to results and left as-is to document the anchor's cache-identity.
+    Fusion baselines use the same pooled-news scope and market features as CMTF
+    so that the comparison isolates the fusion method.
     """
     news_scope = "matched" if fusion == "none" else "all"
     return AblationConfig(

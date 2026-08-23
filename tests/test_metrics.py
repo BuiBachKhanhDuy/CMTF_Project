@@ -44,7 +44,7 @@ class TestRMSE:
 
 class TestDirectionalAccuracy:
     def test_perfect(self):
-        # Predictions in the same return-units scale as y_true; FIX-1 gives
+        # Predictions use the same return scale as y_true; this gives
         # each series its own adaptive threshold, so both must be comparable.
         y_true = np.array([0.1, -0.2, 0.3])
         y_pred = np.array([0.08, -0.15, 0.25])   # same scale, same direction

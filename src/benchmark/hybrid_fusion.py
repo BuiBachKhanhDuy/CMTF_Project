@@ -263,14 +263,7 @@ class HybridFusionPredictor(nn.Module):
         self.seq_len = int(seq_len)
         self.huber_delta = float(huber_delta)
         self.sign_penalty_weight = float(sign_penalty_weight)
-        # LEVER 3 (differentiable Sharpe surrogate). DA and Sharpe are sign/
-        # decision-layer objectives, but the fused head is trained as a point
-        # regressor (Huber + a tiny sign penalty), so it ~optimises IC while
-        # barely touching DA/Sharpe. This term adds a scale-invariant, fully
-        # differentiable negative-Sharpe surrogate on soft signed positions
-        # (tanh(k*pred)) so gradient descent can push directional structure out
-        # of the tails and into the bulk. DEFAULT 0.0 => exactly the legacy
-        # objective (no cached result changes); opt in per cell for the sweep.
+        # Optional differentiable Sharpe surrogate on soft signed positions.
         self.sharpe_surrogate_weight = float(max(0.0, sharpe_surrogate_weight))
         self.sharpe_surrogate_k = float(max(1e-3, sharpe_surrogate_k))
 
@@ -306,15 +299,7 @@ class HybridFusionPredictor(nn.Module):
             )
         self.variance_reg_coeff = float(max(0.0, variance_reg_coeff))
         self.output_mode = output_mode
-        # Model-selection + regularisation knobs (both validated via controlled,
-        # placebo-checked A/B on real 20D data — see CMTF_FUSION_FINDINGS.md):
-        #   * select_by_ic: pick the epoch with the highest validation rank-IC
-        #     instead of the lowest Huber loss. In SINGLE-STAGE (frozen encoder)
-        #     this ties loss-selection; in TWO-STAGE it raises IC further but
-        #     TRADES AWAY directional accuracy (DA). Hence default OFF; opt-in
-        #     only when IC is the sole objective.
-        #   * fusion_weight_decay: heavier decay did NOT help CMTF (unlike the
-        #     late-fusion news branch) — 1e-5 is best. Exposed for research only.
+        # Select by rank IC only when that metric is the optimization objective.
         self.select_by_ic = bool(select_by_ic)
         self.fusion_weight_decay = float(fusion_weight_decay)
 
@@ -339,14 +324,13 @@ class HybridFusionPredictor(nn.Module):
             nn.ReLU(),
         )
 
-                # Positional encoding for news sequence
+        # Positional encoding for the news sequence.
         self.news_pos_enc: nn.Embedding | None = None
         if use_positional_encoding:
             self.news_pos_enc = nn.Embedding(self.seq_len, self.fusion_market_dim)
             nn.init.normal_(self.news_pos_enc.weight, std=0.02)
 
-        # Null news token (ALWAYS present: _encode_news_tokens prepends it to the
-        # news sequence regardless of whether positional encoding is enabled).
+        # Null-news token provides one valid attention slot for every sample.
         self.null_news_token = nn.Parameter(torch.zeros(1, 1, self.fusion_market_dim))
         nn.init.normal_(self.null_news_token, std=0.01)
 
@@ -383,14 +367,7 @@ class HybridFusionPredictor(nn.Module):
                 nn.Sigmoid(),
             )
 
-        # --- Learned gate-mixing head (gate_mode="learned") ---
-        # Replaces the fixed news_gate_alpha scalar with a lightweight,
-        # end-to-end trainable per-sample mixing coefficient g in [0,1]:
-        #   gate_input = concat([market_emb, pooled_news]) -> Linear -> GELU
-        #              -> Linear -> Sigmoid -> g
-        # Minimal parameter count, backward compatible (only built when
-        # gate_mode="learned" AND use_news_gate=True; gate_mode="fixed" keeps
-        # the exact legacy scalar-alpha behaviour byte-identical).
+        # Learned gate-mixing head for per-sample news weights in ``[0, 1]``.
         self.learned_gate_head: nn.Module | None = None
         if self.use_news_gate and self.gate_mode == "learned":
             gate_in_dim = self.market_d_model + self.fusion_market_dim
@@ -1171,13 +1148,7 @@ class HybridFusionPredictor(nn.Module):
             if scheduler is not None:
                 scheduler.step(val_loss)
 
-            # Selection metric (lower is better). ROOT-CAUSE FIX: the old default
-            # selected the epoch by validation Huber loss, which tracks neither
-            # DA nor the sign-based Sharpe the research prioritises (CMTF could
-            # lower loss / raise IC while DEGRADING DA/Sharpe below market-only).
-            # The new default maximises a DA-aware blend of rank-IC and DA-skill
-            # (see fusion_selection.selection_score). select_by_ic still forces
-            # pure rank-IC for IC-only studies.
+            # Select the epoch by directional score or rank IC, as configured.
             if self.select_by_ic:
                 selection_metric = -val_ic
             else:

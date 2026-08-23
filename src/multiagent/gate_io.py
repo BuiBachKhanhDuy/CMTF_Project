@@ -1,22 +1,7 @@
-"""Frozen GatePolicy artifact I/O + offline calibration (plan §4).
+"""Persist and calibrate validation-based ``GatePolicy`` artifacts.
 
-The deployed decision layer is a single validation-calibrated
-:class:`~src.benchmark.decision_policy.GatePolicy`. This module serialises it to
-JSON with full provenance (version stamps, calibration coverage, source config
-hash + seed), reloads it with a hard staleness check, and calibrates it from the
-frozen validation predictions the ablation registry writes to
-``cache/predictions`` — so the deployed gate is calibrated on the *exact same*
-frozen predictions the registry gated in-memory (runtime == research).
-
-R1 rules enforced here:
-- A missing artifact raises :class:`ArtifactMissingError` (no ad-hoc tau).
-- A version-stamp mismatch raises :class:`StalePolicyError` (no stale fallback).
-- Calibration reads VALIDATION predictions only; TEST never enters (leak-free).
-
-The CMTF champion is a single POOLED model over the whole symbol universe, so the
-honest artifact is one universe policy per horizon (``VN_{H}d.json``), consumed by
-both the single-name ``gate_agent`` and the ``rank_agent``. We do not fabricate
-per-symbol policies from ~40 thin validation samples each.
+Policies include their calibration provenance and schema version. Calibration
+uses validation predictions only, with one pooled policy per horizon.
 """
 
 from __future__ import annotations
@@ -37,31 +22,18 @@ from src.benchmark.metrics import compute_all
 
 from .loaders import ArtifactMissingError
 
-# Bumped whenever the artifact schema or the calibration procedure changes, so an
-# old on-disk policy can never be silently loaded against new calibration logic.
-# v2: added the val_gated_*/val_base_rate_DA% disclosure numbers (below) — an old
-# v1 artifact has no honest per-horizon operating-point numbers to disclose, so it
-# must be recalibrated rather than silently served with a stale schema.
+# Increment when the policy schema or calibration procedure changes.
 GATE_ARTIFACT_SCHEMA_VERSION = 2
 
-# The pre-registered champion (plan §0): cell 0 = CMTF_CORE. The gate is
-# calibrated on this cell's validation predictions, never a point-estimate winner.
+# Default registry cell used to calibrate the gate.
 CORE_CELL_ID = "0"
 
-# Per-horizon override, adopted only after a real, validation-then-single-test-check
-# confirmation (never picked by looking at test first): cell 13 (`recency_gate_k=5`,
-# a wider/slower recency-decay window than CMTF_CORE's default k=3) gives a real,
-# out-of-sample improvement at 5D (DA 60.2% vs 54.4%, Sharpe 0.65 vs 0.25, IC 0.24 vs
-# 0.13) and 20D (DA 83.6% vs 75.4%, Sharpe 1.13 vs 0.99) — confirmed on the real TEST
-# set, not just validation, and checked exactly once per cell/horizon. Cell 13 made
-# 1D WORSE (DA 51.9% vs 62.4%) and is deliberately NOT applied there; 1D keeps
-# CORE_CELL_ID unless a horizon-specific alternative is separately validated for it.
+# Horizon-specific cell overrides used by the deployed policy.
 CORE_CELL_BY_HORIZON: dict[int, str] = {5: "13", 20: "13"}
 
 
 def core_cell_for(horizon: int) -> str:
-    """The validated champion cell for ``horizon`` — CORE_CELL_ID unless a
-    horizon-specific override above has been confirmed out-of-sample."""
+    """Return the configured registry cell for ``horizon``."""
     return CORE_CELL_BY_HORIZON.get(int(horizon), CORE_CELL_ID)
 
 

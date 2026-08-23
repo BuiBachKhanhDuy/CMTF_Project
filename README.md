@@ -1,292 +1,251 @@
-# Cross-Modal Temporal Fusion (CMTF) — Vietnamese Stock Prediction
+# Cross-Modal Temporal Fusion for Vietnamese Bank Stocks
 
-A multimodal time-series forecasting system that fuses **OHLCV market data** with **Vietnamese financial news embeddings** through a FiLM-conditioned fusion architecture, benchmarked against Amazon Chronos foundation model baselines.
+This repository contains an end-to-end research and inference system for forecasting forward returns of Vietnamese bank stocks. It combines OHLCV-derived market features, time-aligned Vietnamese financial news, and sentiment features, then evaluates market-only and news-aware models across 1-, 5-, and 20-trading-day horizons.
 
-## Prerequisites
+The project has five connected parts:
 
-Install these on the target machine **before** cloning:
+1. Collect and align market data and Vietnamese news.
+2. Train a Vietnamese sentiment encoder (optional when using the included artifacts).
+3. Benchmark market-only and hybrid forecasting models.
+4. Run fusion and component ablations, including validation-calibrated decision gates.
+5. Serve grounded single-stock, ranking, and research requests through a LangGraph multi-agent workflow and CLI chatbot.
 
-| Requirement | Why | Notes |
-|---|---|---|
-| **Python 3.11** (3.11.x) | Matches the pinned toolchain (`torch`, `chronos-forecasting`, `sentence-transformers` wheels). | 3.12+/3.14 may fail to resolve wheels. Verify with `python --version`. |
-| **Git + Git LFS** | Sentiment checkpoints (`phobert.pt` ≈ 542 MB) are stored via LFS. | `git lfs install` once per machine. |
-| **~4 GB free disk** | Pip packages + runtime caches (`cache/` grows to several GB). | |
-| **Network access** | The data pipeline fetches live OHLCV (vnstock/VCI) and scrapes Vietnamese news (CafeF/VnExpress/Vietstock/Google News). | Vietnam-facing endpoints; a proxy may block them. |
-| **Ollama + `qwen2.5:7b-instruct`** (optional) | Only for real-LLM narration in `chat.py --llm` and the H3/H4/H5 LLM evals. | Server at `http://localhost:11434`. The default (LLM-free) path needs none. |
+> This is research software, not investment advice. Forecasts, rankings, and trade-style labels are experimental outputs.
 
-> Reproducibility note: a small **offline demo bundle** IS committed (deploy checkpoints,
-> frozen predictions, news index, and the 6 current-champion dataset parquets under
-> `cache/`), so the real-time multi-agent chatbot (`python chat.py`) runs immediately after
-> Setup — no rebuild, no network. Reproducing the *full* research (all benchmarks/ablations)
-> still rebuilds the heavy caches from the pipeline (Steps 1–6), which re-fetches live data,
-> so regenerated numbers track — but are not bit-for-bit identical with — the committed
-> `results/` tables. See [Reproducibility & Caches](#reproducibility--caches).
+## What the code supports
+
+- **Universe:** `VCB`, `BID`, `CTG`, `TCB`, `MBB`, `ACB`, and `VPB`
+- **Horizons:** 1, 5, and 20 trading days
+- **Inputs:** daily OHLCV features, technical indicators, scraped financial news, news embeddings, and optional sentiment features
+- **Forecast models:** Chronos zero-shot, LSTM, CNN-LSTM, GPT4TS, Random Forest, linear/MLP summary baselines, their hybrid variants, and CMTF configurations
+- **Evaluation:** MAE, RMSE, directional accuracy, Sharpe, information coefficient, classification metrics, effective sample size, calibration, coverage diagnostics, and placebo tests
+- **Product layer:** deterministic or Ollama-narrated multi-agent predictions, rankings, grounded research digests, trace files, and deployment-readiness checks
+
+## Requirements
+
+- Python 3.11 recommended
+- Git and Git LFS when cloning artifacts stored with LFS
+- Network access for a fresh market/news build and for downloading model dependencies
+- Optional: Ollama with `qwen2.5:7b-instruct` for LLM narration and the LLM-dependent evaluations
+
+The pipeline can use CUDA when PyTorch detects it; CPU execution is supported but full benchmark and ablation runs can be slow.
 
 ## Setup
 
+From the repository root:
+
 ```powershell
-# 1. Enable Git LFS (once per machine), then clone
 git lfs install
-git clone <repo-url>
-cd ChatbotThesis
-git lfs pull                       # pulls phobert.pt / custom_transformer.pt
+git lfs pull
 
-# 2. Create & activate a Python 3.11 virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1       # Windows PowerShell
-# source .venv/bin/activate        # macOS / Linux
-
-# 3. Install dependencies
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
-
-# 4. Verify the install (fast, offline — mocked HTTP)
-pytest -v
+python -m pip install -r requirements.txt
 ```
 
-## Run the Live Demo Immediately (no rebuild, no network)
-
-The offline demo bundle is committed, so straight after Setup you can run the real-time
-multi-agent chatbot on the cached research book:
+If `python` is not on your PATH, use `.\.venv\Scripts\python.exe` in the commands below. Verify the environment with:
 
 ```powershell
-python -m src.multiagent check-deploy --all   # expect 1D/5D/20D READY
-python chat.py                                 # interactive; type: VCB  then  VCB 2025-08-13
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
-`check-deploy` verifies the gate policies, frozen predictions, and deploy checkpoints are all
-present. In `chat.py`, an in-book date answers instantly from a real forward pass of the
-committed champion checkpoints. For real-LLM narration, start Ollama first
-(`ollama pull qwen2.5:7b-instruct`) and run `python chat.py --llm`. The full end-to-end
-research run below is only needed to regenerate benchmarks/ablations from scratch.
+## Quick start: use the included product artifacts
 
-## End-to-End Run
-
-Run the phases in order. Each step writes caches consumed by the next, so a first full run
-is sequential; later runs reuse `cache/` and are fast. Every command assumes the activated
-`.venv`. On Windows, prefix env-vars with `$env:` (shown inline).
-
-### Step 1 — Sentiment encoder (Phase 1/2)
-
-Trains the Vietnamese sentiment models. Checkpoints already ship under
-`outputs/sentiment/latest/` (via LFS), so this step is optional unless you want to retrain.
+The repository is configured to retain an offline demo bundle under `cache/` (prediction stores, deploy checkpoints, news index, and selected datasets). Check that all required 1D, 5D, and 20D artifacts are available:
 
 ```powershell
-python run_sentiment_benchmark.py --variant both      # PhoBERT + custom transformer
-python run_sentiment_benchmark.py --variant phobert --skip-dataset-download
+.\.venv\Scripts\python.exe -m src.multiagent check-deploy --all
 ```
 
-### Step 2 — Data pipeline (Phase 1)
-
-Fetches OHLCV + news for the configured symbols/date range and builds the feature dataset
-into `cache/dataset/`. **Requires network.** Throttle vnstock with
-`$env:VNSTOCK_RATE_LIMIT_PER_MIN="16"` if the API rate-limits you.
+Start the interactive chatbot:
 
 ```powershell
-python pipeline.py
+.\.venv\Scripts\python.exe chat.py
 ```
 
-### Step 3 — Baseline + CMTF benchmark (Phase 2)
+Useful prompts inside the chatbot:
 
-Trains/evaluates Chronos, LSTM, RF, CNN-LSTM, and CMTF; writes `results/*.csv` + figures.
+```text
+VCB
+VCB 2025-08-13
+rank VCB,BID,CTG 2025-08-13
+BID có nên mua 5 ngày tới
+symbols
+help
+quit
+```
+
+For LLM narration, start Ollama separately and use:
 
 ```powershell
-python run_model_benchmark.py                          # all stages, all horizons
-python run_model_benchmark.py --horizons 1 5 20        # pick horizons
-python run_model_benchmark.py --stage hpo              # Optuna HPO only
-python run_model_benchmark.py --stage predict          # train/predict only
-python run_model_benchmark.py --stage plot             # regenerate plots only
-python run_model_benchmark.py --skip-chronos           # skip the slow zero-shot baseline
-# valid --stage values: data | predict | hpo | plot
+ollama pull qwen2.5:7b-instruct
+ollama serve
+.\.venv\Scripts\python.exe chat.py --llm
 ```
 
-### Step 4 — Fusion ablations (Phase 3)
+## End-to-end workflow
+
+The commands below are ordered for a full regeneration. Dataset construction fetches market data and web news, so reruns are not expected to reproduce historical metrics bit-for-bit. Most scripts reuse compatible artifacts in `cache/` unless `--no-cache` is supplied.
+
+### 1. Train or refresh the sentiment model (optional)
+
+The sentiment pipeline can train the custom Transformer, PhoBERT, or both from the data under `data/sentiment/`.
 
 ```powershell
-# Fusion-strategy comparison table + gated decision policy
-python run_ablation_benchmark.py --horizons 1 5 20 --gate --gate-coverage 0.25
-python run_ablation_benchmark.py --stage plot          # regenerate ablation figures
-
-# Config-driven component-ablation registry (all cells, 3 seeds)
-python run_ablation_registry.py --cells all --horizons 1 5 20 --seeds 1 42 123
+.\.venv\Scripts\python.exe run_sentiment_benchmark.py --variant both
+.\.venv\Scripts\python.exe run_sentiment_benchmark.py --variant phobert --skip-dataset-download
 ```
 
-### Step 5 — Train + persist deploy checkpoints (required for live inference)
+### 2. Build a dataset
 
-The multi-agent system serves predictions from `cache/deploy_models/`. Persist the champion
-checkpoints for every horizon (set `SAVE_DEPLOY_MODEL=1`):
+`pipeline.py` is the basic data-ingestion entry point. Its checked-in configuration currently uses `VCB` and `BID`, a 2022-01-01 to 2026-03-31 range, 30-step sequences, and 1-day labels.
 
 ```powershell
-$env:SAVE_DEPLOY_MODEL="1"
-python run_ablation_registry.py --cells 0 --horizons 1 5 20 --seeds 1 42 123
-$env:SAVE_DEPLOY_MODEL=""
-
-# Freeze the validation-calibrated gate policy per horizon → results/gate_policies/VN_{H}d.json
-python -m src.multiagent calibrate --horizon 1
-python -m src.multiagent calibrate --horizon 5
-python -m src.multiagent calibrate --horizon 20
-
-# Verify the graph has everything it needs (gate policy + frozen preds + deploy checkpoints)
-python -m src.multiagent check-deploy --all
+.\.venv\Scripts\python.exe pipeline.py
 ```
 
-### Step 6 — Multi-agent evaluation & A/B tests (Phase 4)
+For the full seven-stock, three-horizon research configuration, the benchmark runners build their own pipeline configuration in code.
+
+### 3. Run the model benchmark
+
+The model benchmark uses the seven-stock universe, 2020-01-01 to 2026-03-31 data, a 30-day context, training through 2024-06-30, validation through 2024-12-31, and test data afterward. It writes per-horizon CSVs and figures to `results/`.
 
 ```powershell
-python run_ab_benchmark.py --symbols VCB BID --horizons 1 5 20   # MAS vs CMTF-only A/B
-python -m src.multiagent eval --horizon 5                        # A0–A5 agent ladder
-python -m src.multiagent h3 --mode forecaster --horizon 5        # MAS vs plain LLM
-python -m src.multiagent metalabel-eval --horizon 5
-python -m src.multiagent h4-interaction-eval --horizon 5
-python -m src.multiagent h5-reasoning-eval --horizon 5
+# Full benchmark for 1D, 5D, and 20D
+.\.venv\Scripts\python.exe run_model_benchmark.py
+
+# Smaller targeted runs
+.\.venv\Scripts\python.exe run_model_benchmark.py --horizons 5 --symbols VCB BID
+.\.venv\Scripts\python.exe run_model_benchmark.py --horizons 5 --experiments "LSTM Baseline" "CNN-LSTM"
+.\.venv\Scripts\python.exe run_model_benchmark.py --stage plot
+.\.venv\Scripts\python.exe run_model_benchmark.py --skip-chronos
 ```
 
-### Step 7 — Real-time chatbot & live prediction (Phase 5)
+Valid stages are `data`, `predict`, `hpo`, and `plot`. Use `--folds N` for walk-forward evaluation and `--no-cache` only when a fresh inference/training run is intended.
+
+### 4. Compare fusion strategies
+
+The fusion benchmark compares backbone/fusion combinations (`none`, `early`, `late`, and `cmtf`), including shuffled-news placebo controls. Results are written below `results/ablation/`.
 
 ```powershell
-# Interactive CLI (deterministic, grounded, no LLM required)
-python chat.py
-
-# Interactive CLI with real LLM narration (needs Ollama running + model pulled)
-#   ollama serve   &&   ollama pull qwen2.5:7b-instruct
-python chat.py --llm
-
-# One-shot orchestrator-routed live prediction, with a full node trace
-python -m src.multiagent predict --symbol VCB --cutoff 2025-08-13 --horizon 5 --trace
-python -m src.multiagent rank --symbols VCB,BID,CTG --horizon 5 --cutoff 2025-08-13
-python -m src.multiagent research --symbol VCB --cutoff 2025-08-13
-
-# End-to-end product demo report
-python -m tools.e2e_demo
+.\.venv\Scripts\python.exe run_ablation_benchmark.py --horizons 1 5 20 --gate
+.\.venv\Scripts\python.exe run_ablation_benchmark.py --horizons 5 --model cmtf --seeds 42
+.\.venv\Scripts\python.exe run_ablation_benchmark.py --stage plot
 ```
 
-Inside `chat.py`, type e.g. `VCB`, `VCB 2025-08-13`, `BID có nên mua 5 ngày tới`,
-`rank VCB,BID,CTG 2025-08-13`, or `help` / `symbols` / `quit`. Dates inside the cached
-research book answer instantly; a date outside it triggers a real live forward pass
-(fetches OHLCV + news for the universe — can take minutes on a cold process).
+### 5. Run the component-ablation registry
 
-## Reproducibility & Caches
+The registry is the authoritative runner for component-level CMTF studies. It evaluates pre-registered cells over default seeds `1 42 123`, writes aggregated tables and reports below `results/ablation_registry/<horizon>d/`, and computes gated metrics at fixed coverage.
 
-- **Git-tracked (survive a clone):** all source (`src/`, `run_*.py`, `chat.py`), `tests/`,
-  `results/` tables + figures + all gate policies (`VN_{1,5,20}d.json`), sentiment
-  checkpoints (`outputs/sentiment/latest/`, via LFS), and the **offline demo bundle** under
-  `cache/`: `deploy_models/` (champion checkpoints, all 3 horizons), `predictions/` (frozen
-  book), `news/` (news index), and the 6 current-champion `dataset/*.parquet` files.
-- **Git-ignored (rebuilt locally):** the heavy regenerable caches — `cache/encoders/`,
-  `cache/dataset_splits/`, `cache/embeddings/`, stale `cache/dataset/*.parquet`,
-  `artifacts/`, `data/external/`, and `*.zip`. These are only needed to regenerate the full
-  benchmarks/ablations (Steps 1–6); the live demo does not need them.
-- **Determinism:** benchmarks seed all RNGs (`--seeds`), but the data pipeline fetches
-  live web data, so re-scraped news changes over time — regenerated metrics track the
-  committed `results/` closely rather than reproducing them bit-for-bit.
+```powershell
+# Fast smoke run
+.\.venv\Scripts\python.exe run_ablation_registry.py --cells 0 0p --seeds 42 --horizons 5
+
+# Full registry
+.\.venv\Scripts\python.exe run_ablation_registry.py --cells all --horizons 1 5 20 --seeds 1 42 123
+```
+
+### 6. Prepare deployable multi-agent artifacts
+
+The live prediction path requires a three-seed CMTF checkpoint ensemble, frozen prediction stores, and a gate policy calibrated on validation predictions. Persist checkpoints during the core-cell run, then calibrate each horizon.
+
+```powershell
+$env:SAVE_DEPLOY_MODEL = "1"
+.\.venv\Scripts\python.exe run_ablation_registry.py --cells 0 --horizons 1 5 20 --seeds 1 42 123
+Remove-Item Env:SAVE_DEPLOY_MODEL
+
+.\.venv\Scripts\python.exe -m src.multiagent calibrate --horizon 1
+.\.venv\Scripts\python.exe -m src.multiagent calibrate --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent calibrate --horizon 20
+
+.\.venv\Scripts\python.exe -m src.multiagent calibrate-interaction --horizon 1
+.\.venv\Scripts\python.exe -m src.multiagent calibrate-interaction --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent calibrate-interaction --horizon 20
+
+.\.venv\Scripts\python.exe -m src.multiagent check-deploy --all
+```
+
+### 7. Evaluate and use the multi-agent system
+
+The graph routes requests through an orchestrator, parallel market/news evidence collection, prediction, a calibrated decision gate, cross-horizon interaction, risk and metalabel vetoes, narration, critic verification, and a reasoning reflection pass.
+
+```powershell
+# A single live, traced prediction
+.\.venv\Scripts\python.exe -m src.multiagent predict --symbol VCB --cutoff 2025-08-13 --horizon 5 --trace
+
+# Ranking and grounded research branches
+.\.venv\Scripts\python.exe -m src.multiagent rank --symbols VCB,BID,CTG --cutoff 2025-08-13 --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent research --symbol VCB --cutoff 2025-08-13 --eval
+
+# Evaluation studies
+.\.venv\Scripts\python.exe run_ab_benchmark.py --symbols VCB BID --horizons 1 5 20
+.\.venv\Scripts\python.exe -m src.multiagent eval --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent h3 --mode forecaster --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent metalabel-eval --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent h4-interaction-eval --horizon 5
+.\.venv\Scripts\python.exe -m src.multiagent h5-reasoning-eval --horizon 5 --eval-mode
+
+# Product demonstration report; --eval avoids LLM calls
+.\.venv\Scripts\python.exe -m tools.e2e_demo --eval
+```
+
+Run `.\.venv\Scripts\python.exe -m src.multiagent --help` for the full command reference, including `batch-predict`, output files, JSON records, and trace transcripts.
+
+## Outputs and artifact layout
+
+| Location | Contents |
+|---|---|
+| `results/model_benchmark_<horizon>d.csv` | Forecast-model benchmark metrics |
+| `results/figures/` | Benchmark charts and per-symbol heatmaps |
+| `results/ablation/` | Fusion-comparison outputs |
+| `results/ablation_registry/<horizon>d/` | Registry tables, ranking, placebo analysis, coverage diagnostics, and Markdown report |
+| `results/gate_policies/` | Validation-calibrated gate policies |
+| `results/horizon_interaction/` | Cross-horizon interaction policies |
+| `results/agent_ablation/` | Multi-agent evaluation outputs and demonstration reports |
+| `cache/predictions/` | Cached prediction stores used by evaluation/product flows |
+| `cache/deploy_models/` | Deployable CMTF checkpoint ensemble and metadata |
+| `cache/dataset/` | Selected retained dataset artifacts; other datasets are regenerated locally |
+| `research/` | Thesis-facing methodology and result documents by project phase |
+
+## Project layout
+
+```text
+pipeline.py                     Basic ingestion entry point
+run_sentiment_benchmark.py      Vietnamese sentiment training/evaluation
+run_model_benchmark.py          Forecast-model benchmark
+run_ablation_benchmark.py       Fusion-strategy benchmark
+run_ablation_registry.py        Config-driven CMTF component ablations
+run_ab_benchmark.py             Multi-agent versus CMTF-only A/B benchmark
+chat.py                         Interactive Vietnamese chatbot
+tools/e2e_demo.py               Product-path demonstration report
+src/pipeline/                   Fetching, scraping, alignment, features, datasets
+src/sentiment/                  Sentiment data, models, training, inference, handoff
+src/benchmark/                  Models, fusion, metrics, calibration, ablations, plots
+src/multiagent/                 LangGraph workflow, live inference, policies, evaluations
+tests/                          Unit and integration-style tests
+research/                       Phase-by-phase research documentation
+```
 
 ## Tests
 
 ```powershell
-pytest -v                                              # full suite (mocked HTTP, offline)
-pytest tests/test_news_scraper_parsing.py -v           # parser-only crawler tests
-$env:RUN_LIVE_SCRAPER="1"; pytest -m smoke tests/test_news_scraper_smoke.py -v  # live crawler
+.\.venv\Scripts\python.exe -m pytest -v
+.\.venv\Scripts\python.exe -m pytest tests/test_news_scraper_parsing.py -v
 ```
 
-## Project Structure
+The live scraper smoke test requires external access:
 
-```
-├── pipeline.py                  # Entry point (Phase 1): data ingestion pipeline
-├── run_model_benchmark.py       # Entry point (Phase 2): model training & evaluation
-├── run_sentiment_benchmark.py   # Entry point (Phase 1/2): PhoBERT sentiment training
-├── run_ablation_benchmark.py    # Entry point (Phase 3): fusion-strategy ablation
-├── run_ablation_registry.py     # Entry point (Phase 3): component-ablation registry
-├── run_ab_benchmark.py          # Entry point (Phase 4): multiagent A/B test + plots
-├── chat.py                      # Entry point (Phase 5): interactive chatbot CLI
-├── src/
-│   ├── pipeline/                # Data ingestion & preprocessing
-│   │   ├── orchestrator.py      # End-to-end pipeline orchestration
-│   │   ├── data_fetcher.py      # vnstock API + multi-source news
-│   │   ├── news_scraper.py      # CafeF + VnExpress + Vietstock scraping
-│   │   ├── temporal_aligner.py  # Leakage-free news → bar assignment
-│   │   ├── feature_engineer.py  # 15 technical indicators + normalization
-│   │   ├── news_encoder.py      # PhoBERT → 768-dim embeddings
-│   │   └── dataset_builder.py   # PyTorch Dataset with walk-forward splits
-│   ├── benchmark/               # Model implementations & evaluation
-│   │   ├── metrics.py           # MAE, RMSE, DA%, Sharpe, IC, F1 + composite
-│   │   ├── baseline_models.py   # LSTM, RF, Chronos, CNN-LSTM, CNN-LSTM CMTF
-│   │   ├── baseline_hpo.py      # Optuna HPO for baseline models
-│   │   ├── chronos_encoder.py   # Zero-shot + Chronos embeddings
-│   │   ├── fusion_wrappers.py   # News fusion heads (early/late/hybrid/residual)
-│   │   ├── ablation_runner.py   # Phase 3 ablation harness
-│   │   ├── calibration.py       # Prediction calibration checks
-│   │   ├── cross_sectional_ic.py # Cross-sectional IC evaluation
-│   │   └── plots.py             # A/B benchmark visualizations
-│   ├── sentiment/               # Vietnamese news sentiment (PhoBERT)
-│   │   ├── modeling.py          # PhoBERT + Custom Transformer architectures
-│   │   ├── training.py          # Sentiment model training loop
-│   │   ├── inference.py         # Deployed sentiment scorer
-│   │   └── handoff.py           # Sentiment encoder → pipeline artifact handoff
-│   └── multiagent/              # LangGraph multi-agent inference system (Phase 4/5)
-│       ├── graph.py             # StateGraph topology + run_graph()
-│       ├── config.py            # All tunable parameters
-│       ├── state.py             # Typed shared state definition
-│       ├── loaders.py           # Lazy model artifact loading
-│       ├── live_inference.py    # Real-time inference for the chatbot
-│       ├── frozen_predictions.py, gate_io.py, guards.py, trace.py, news_data.py
-│       ├── eval_ladder.py, metalabel_eval.py, h3_faithfulness.py, improved_ensemble.py
-│       └── agents/              # 11 specialized agent nodes (market, news, predict,
-│                                 # research, rank, risk, gate, metalabel, critic,
-│                                 # narrator, orchestrator)
-├── tools/
-│   └── e2e_demo.py              # Phase 5 end-to-end product demo/report generator
-├── tests/                       # Unit tests
-├── results/                     # Benchmark outputs (CSV + figures)
-└── docs/reference/              # Stable reference docs (see below)
+```powershell
+$env:RUN_LIVE_SCRAPER = "1"
+.\.venv\Scripts\python.exe -m pytest -m smoke tests/test_news_scraper_smoke.py -v
+Remove-Item Env:RUN_LIVE_SCRAPER
 ```
 
-### Documentation
+## Research documents
 
-Thesis-facing writeups live in [research/](research/) (tracked, one folder per phase) — start
-there on a fresh clone. The `docs/` reference notes below are **git-ignored** (local only):
-
-- [research/](research/) — phase-by-phase research documents (Phases 1–5), **tracked**
-- [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) — Phase 2/3 fusion research findings *(local)*
-- [docs/reference/RESULTS_IMPROVEMENT_LEVERS.md](docs/reference/RESULTS_IMPROVEMENT_LEVERS.md) — Phase 3 improvement-lever experiments *(local)*
-- [docs/reference/CACHING_GUIDE.md](docs/reference/CACHING_GUIDE.md) — cache layout for ablation/benchmark runs *(local)*
-- [docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md](docs/reference/RELATED_WORK_AND_RESEARCH_PLAN.md) — literature review & research agenda *(local)*
-- [docs/reference/MULTIAGENT_SYSTEM.md](docs/reference/MULTIAGENT_SYSTEM.md) — Phase 4/5 multiagent architecture, workflow & results *(local)*
-- [docs/reference/MULTIAGENT_REDESIGN_PLAN.md](docs/reference/MULTIAGENT_REDESIGN_PLAN.md) — Phase 4 design rationale / decision log *(local)*
-- [docs/report.md](docs/report.md) — full thesis document (LaTeX source, local/untracked)
-
-## Stack
-
-- **Python 3.11** · PyTorch · Amazon Chronos T5-Small · PhoBERT
-- **Data:** vnstock v3.x (OHLCV) · CafeF + VnExpress + Vietstock (news)
-- **Symbols:** VCB, BID — Vietnamese banking large-caps
-- **Date Range:** 2022-01-01 to 2026-03-31
-
-## Experiments
-
-| # | Experiment | Description |
-|---|-----------|-------------|
-| 1 | Chronos Zero-Shot | Foundation model predicts directly (no training) |
-| 2 | CMTF | LoRA-tuned Chronos backbone with FiLM + GRN fusion of market + news embeddings |
-| 3 | LSTM Baseline | Sequence model baseline on close windows |
-| 4 | LSTM + CMTF | LSTM embeddings fused with CMTF (residual-gated) |
-| 5 | Random Forest Baseline | Tabular baseline over engineered market features |
-| 6 | Chronos Fine-Tuned (LoRA) | Market-only Chronos baseline fine-tuned with LoRA |
-
-## Key Results (20-Day Horizon, VCB + BID)
-
-| Model | DA% | Sharpe | F1 | IC |
-|-------|-----|--------|----|----|
-| Chronos Zero-Shot | 46.8 | -0.32 | 0.48 | -0.13 |
-| **CMTF** | **68.7** | **1.19** | **0.61** | **0.46** |
-| LSTM Baseline | 55.7 | 0.32 | 0.63 | 0.28 |
-| LSTM + CMTF | 57.8 | 0.81 | 0.65 | 0.28 |
-| Random Forest Baseline | 52.9 | 0.02 | 0.46 | 0.01 |
-| Chronos Fine-Tuned (LoRA) | 47.5 | 0.03 | 0.64 | -0.15 |
-
-CMTF is the strongest model on the 20-day horizon by RMSE, DA%, Sharpe, IC, and composite score.
-
-See [docs/reference/CMTF_FUSION_FINDINGS.md](docs/reference/CMTF_FUSION_FINDINGS.md) for current methodology and results, and [docs/report.md](docs/report.md) for the full thesis writeup.
+Start with [research/README.md](research/README.md). It links the project’s five phase directories: data/baselines, CMTF fusion, ablation studies, multi-agent system, and the realtime chatbot.
 
 ## License
 
-Academic use only. See report for citations.
+Academic and research use only.

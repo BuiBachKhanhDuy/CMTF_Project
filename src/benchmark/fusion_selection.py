@@ -1,48 +1,14 @@
-"""fusion_selection.py
+"""Numpy-only validation-selection utilities for fusion strategies.
 
-Shared, numpy-only validation-selection utilities for fusion strategies.
-
-Motivation
-----------
-Both LateFusionWrapper and the CMTF HybridFusionPredictor previously selected
-their fusion (branch epoch AND additive weight) purely by validation rank-IC
-(late) or validation Huber loss (cmtf). Neither objective tracks the metrics the
-research actually cares about — directional accuracy (DA) and the sign-based
-Sharpe ratio. As a result fusion could raise IC while *degrading* DA/Sharpe
-below the market-only baseline (empirically: CMTF 20D IC 0.175 -> 0.225 but
-Sharpe 0.94 -> 0.75), and at weak horizons (5D) fusion collapsed well below the
-baseline because there was no downside guard.
-
-This module provides:
-  * ``rank_ic``          — scale-free rank correlation (IC).
-  * ``da_fraction``      — sign-based directional accuracy on the active subset.
-  * ``selection_score``  — a DA-aware blend of IC and DA-skill used for epoch
-                           selection (``HybridFusionPredictor``) and decision-gate
-                           calibration (``decision_policy.py``).
-
-Sign-based metrics (DA, Sharpe) depend only on the sign of the prediction, so
-selecting on a DA-aware objective directly protects them; the IC term keeps the
-rank-ordering gains that news genuinely provides.
-
-NOTE (2026-07-12): this module previously also defined ``select_additive_lambda``
-— a post-hoc ``market + lambda*news`` blend selector with a block-stability
-guard. It was removed because it was **dead code**: no production path ever
-called it. ``HybridFusionPredictor.predict()`` always returns the raw fused
-prediction directly ("no lambda guard", see ``hybrid_fusion.py``) and
-``LateFusionWrapper`` never imported this module either. The historical
-findings that motivated it are kept in ``CMTF_FUSION_FINDINGS.md`` (marked
-superseded) for the record, but there is no live lambda-blend anywhere in the
-model path today.
+The selection score combines rank information with directional performance for
+use by fusion training and decision-gate calibration.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-# Blended-objective weights. DA/Sharpe are the PRIORITY metrics, so DA-skill and
-# a sign-based Sharpe term dominate the objective; IC is demoted to a low-weight
-# tiebreaker so it can never "buy" a DA/Sharpe loss (the IC-up / Sharpe-down
-# trade we explicitly want to avoid at long horizons).
+# Weights for the directional validation objective.
 DEFAULT_W_IC: float = 0.25
 DEFAULT_W_DA: float = 2.0
 DEFAULT_W_SHARPE: float = 1.0

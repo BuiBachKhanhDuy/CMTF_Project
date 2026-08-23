@@ -1,14 +1,4 @@
-"""CMTF Data Pipeline — End-to-end orchestration.
-
-Wires together data fetching, temporal alignment, feature engineering,
-news encoding, macro-feature merge, and dataset construction.
-
-Refactor goals:
-1. Keep training and single-cutoff paths aligned on the same canonical market schema.
-2. Use explicit dataset/schema versioning so caches invalidate when pipeline logic changes.
-3. Merge VNINDEX macro features safely by timestamp column in multi-symbol training path.
-4. Preserve reproducibility while making failures more diagnosable.
-"""
+"""Build datasets from market data, aligned news, and engineered features."""
 
 from __future__ import annotations
 
@@ -32,15 +22,7 @@ from .dataset_builder import CMTFDataset
 _DATASET_CACHE_DIR = Path("./cache/dataset")
 _SENTIMENT_EXPORT_DIR = Path("./artifacts/hybrid_sentiment")
 
-# -----------------------------------------------------------------------------
-# Explicit dataset/schema versioning
-# Bump whenever any of the following changes:
-# - feature schema
-# - normalization logic
-# - macro merge behavior
-# - cache payload semantics
-# - target construction assumptions
-# -----------------------------------------------------------------------------
+# Increment these versions when the dataset schema or merge behavior changes.
 _DATASET_SCHEMA_VERSION = "dataset_schema_v2"
 _VNINDEX_MERGE_VERSION = "vnindex_merge_on_time_v2_mom"
 

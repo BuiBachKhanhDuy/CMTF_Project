@@ -1,19 +1,7 @@
-"""Live CMTF inference — real forward pass for ANY (symbol, cutoff), incl. today.
+"""Live CMTF inference for a symbol, cutoff date, and forecast horizon.
 
-This is the product path that makes the system realtime rather than a frozen-cache
-replay. It reuses the EXACT training data pipeline (``_extract_and_split`` →
-``run_pipeline``) to build features for the requested cutoff, so per-symbol z-score
-normalization is fit on train data and applied to the query date identically to
-training — eliminating train/serve skew by construction (verified: the loaded
-champion reproduces the cached predictions bit-for-bit, max_abs_diff = 0).
-
-The deployed gate was calibrated on the 3-seed ensemble, so we load all cached
-deploy seeds and average them, exactly matching ``gate_pred`` in the frozen cache.
-
-Cost note: for a cutoff not already covered by the cached dataset parquet, the
-pipeline refetches OHLCV + news and recomputes embeddings for the whole universe
-(cross-symbol news is required by the all-scope champion) — this is the real
-realtime latency. For cutoffs inside the cached range it is fast (parquet hit).
+The serving path reuses the training feature pipeline and averages the deployed
+ensemble. Dates outside the cached dataset require a fresh market and news build.
 """
 
 from __future__ import annotations
@@ -37,19 +25,19 @@ class LivePrediction:
     symbol: str
     date: str
     horizon: int
-    gate_pred: float          # 3-seed ensemble mean (matches the calibrated gate)
+    gate_pred: float          # Ensemble mean used by the calibrated gate.
     seed_preds: list[float]
-    truth: float | None       # realised return if the date is old enough, else None
+    truth: float | None       # Realized return when it is available.
     n_symbols_in_universe: int
-    attn_weights: np.ndarray | None = None    # (S,) per-trailing-day attention, 3-seed mean
-    recency_gate: np.ndarray | None = None    # (S,) per-trailing-day recency gate, 3-seed mean
+    attn_weights: np.ndarray | None = None    # (S,) mean trailing-day attention.
+    recency_gate: np.ndarray | None = None    # (S,) mean trailing-day recency gate.
 
 
 def deploy_checkpoint_paths(horizon: int, deploy_dir: str | Path = _DEPLOY_DIR) -> list[Path]:
-    """Glob the deploy checkpoints for this horizon — the single source of truth for
-    "does a live-inference champion exist for this horizon", shared with
-    ``readiness.py`` so the two can never drift out of sync on the glob pattern.
-    ``deploy_dir`` is overridable (readiness tests point it at a tmp_path fixture)."""
+    """Return deployment checkpoints for a horizon.
+
+    ``deploy_dir`` is configurable for readiness checks and tests.
+    """
     return sorted(Path(p) for p in glob.glob(str(Path(deploy_dir) / f"cmtf_lstm_{horizon}d_seed*.pt")))
 
 
@@ -67,18 +55,10 @@ def _deploy_models(horizon: int):
 
 @lru_cache(maxsize=4)
 def _pipeline_splits(horizon: int, end: str | None, allow_missing_target: bool = False):
-    """Build the full (all-symbol) normalized splits for the requested end date.
+    """Build normalized all-symbol splits for a requested end date.
 
-    Cached per (horizon, end, allow_missing_target): reusing the training pipeline
-    guarantees identical normalization. `end=None` uses the config default (the
-    research range).
-
-    ``allow_missing_target=True`` (used only by the Tier-2 live fetch in
-    ``predict_live``) keeps rows whose forward-return target is NaN — i.e. the most
-    recent ~horizon days, which can never have a target because the future hasn't
-    happened. Tier 1 (the cached research range) never needs this: every date in
-    that range is old enough to have a real target, and keeping the default False
-    there preserves the exact bit-for-bit reproduction of the frozen research splits.
+    ``allow_missing_target`` retains recent rows that lack a future return, which
+    is required when serving the latest available date.
     """
     from run_ablation_benchmark import _build_pipeline_config, _extract_and_split
     cfg = _build_pipeline_config(horizon)

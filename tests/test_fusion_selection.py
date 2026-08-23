@@ -1,12 +1,4 @@
-"""Tests for the DA/Sharpe-first blended selection score used for CMTF epoch
-selection (``HybridFusionPredictor``) and decision-gate calibration
-(``decision_policy.py``).
-
-NOTE (2026-07-12): this file previously also tested ``select_additive_lambda``,
-a post-hoc market+lambda*news blend selector. That function was removed as dead
-code (never called by any production path — see ``fusion_selection.py`` module
-docstring), so its tests are removed too.
-"""
+"""Tests for the directional selection score used by CMTF and the gate."""
 
 from __future__ import annotations
 

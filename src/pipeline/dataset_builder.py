@@ -69,14 +69,8 @@ class CMTFDataset(Dataset):
         if "has_news" not in df.columns:
             raise ValueError("Missing 'has_news' column")
 
-        # --------------------------------------------------
-        # ✅ CRITICAL FIX: drop invalid targets FIRST
-        # (skipped when allow_missing_target=True — live inference needs the most
-        # recent rows precisely BECAUSE their target is NaN; the future hasn't
-        # happened yet, so there's no label to require. See run_pipeline's own
-        # allow_missing_target for the full rationale — this is the same escape
-        # hatch, needed here too since this filter is independent of that one.)
-        # --------------------------------------------------
+        # Training requires a finite target. Live inference retains recent rows
+        # whose forward returns are not yet observable.
         if not allow_missing_target:
             valid_mask = np.isfinite(df[self.target_col])
             df = df.loc[valid_mask].reset_index(drop=True)

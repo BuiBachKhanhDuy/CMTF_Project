@@ -878,9 +878,7 @@ def main() -> None:
 
     horizons = [int(h) for h in config.get("target_horizons_days", [1])]
 
-    # Walk-forward fold support: build fold list once from the full date range.
-    # With --folds 1 (default), this yields a single (train_end, val_end) pair
-    # identical to the fixed config split — fully backward-compatible.
+    # Build walk-forward folds once from the full date range.
     if args.folds > 1:
         all_dates = pd.date_range(config["start"], config["end"], freq="B")
         fold_pairs = generate_walkforward_folds(
@@ -922,9 +920,7 @@ def main() -> None:
                         fold_label, fold_idx + 1, len(fold_pairs), fold_train_end, fold_val_end)
         fold_config = {**config, "train_end": fold_train_end, "val_end": fold_val_end}
 
-    # NOTE: for --folds 1 (default), fold_config equals config exactly.
-    # Multi-fold aggregation (nest the horizon loop inside the fold loop)
-    # is deferred; the helper in src/common.py is the single source of truth.
+    # ``fold_config`` is the configured split when ``--folds`` is one.
 
     # E1: Build dataset once per fold — all horizons share the same pipeline output
     # (compute_technical produces fwd_ret_1d/5d/20d together; only train_end matters

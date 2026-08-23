@@ -169,10 +169,8 @@ _NOTES_4: dict[str, str] = {
     "15": "output_mode='fusion_plus_news': fusion_pred + news_residual with "
           "no DA anchor guard. Reconfirms the DA-vs-IC tradeoff documented "
           "in CMTF_FUSION_FINDINGS.md.",
-    "16": "output_mode='market_plus_fusion' (DEPRECATED / previously shown "
-          "harmful): re-predicts the market from a projection instead of "
-          "using the encoder's trained head. Kept as a negative-control "
-          "reconfirmation row.",
+    "16": "output_mode='market_plus_fusion': projects market features instead "
+          "of using the encoder's trained head; retained as a negative control.",
     "17": "use_two_stage=True: end-to-end encoder fine-tuning during fusion "
           "training, vs CMTF_CORE's frozen single-stage encoder. Reconfirms "
           "whether the two-stage gain (if any) is genuine news signal or "
